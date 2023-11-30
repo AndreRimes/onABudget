@@ -24,7 +24,7 @@ export const UserProvider = ({ children }) => {
           const currentY = currentDate.getFullYear();
 
           const newMonths = [];
-          await Promise.all(result.mouths.map(async (id) => {
+          await Promise.all(result.months.map(async (id) => {
             const m = await pb.collection('month').getOne(id);
             newMonths.push(m);
             const [mouth, year] = (m.date.split('/'))
@@ -47,11 +47,10 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     async function updateSpent(sum) {
       const res = await pb.collection('month').update(currentMonth.id, { spent: sum })
-      console.log(res);
     }
     let sum = 0;
     const newSpent = {}
-    currentMonth?.compras.map((compra) => {
+    currentMonth?.compras?.map((compra) => {
       sum += compra.price;
       newSpent[compra.categoria] = (newSpent[compra.categoria] || 0) + compra.price
     })
@@ -61,30 +60,96 @@ export const UserProvider = ({ children }) => {
 
     setSpent(newSpent)
 
-  }, [currentMonth?.compras,months])
+  }, [currentMonth?.compras])
 
- async function addCompra(compra,month){
-    const updatedMonth = await pb.collection('month').update(month.id,{compras: JSON.stringify([...month.compras,compra]), spent: compra.price + month.spent  })
+  async function addCompra(compra, month, i) {
+    let updatedMonth;
+  
+    if (i !== -1) {
+      const updatedCompras = [];
 
-    const newMonths = []
-    months.map((m)=>{
-      if(m.id === month.id){
-        newMonths.push(updatedMonth)
-      }else{
-        newMonths.push(m)
+      month.compras.map((c,index)=>{
+        if(index == i){
+          updatedCompras.push(compra)
+        }else{
+          updatedCompras.push(c)
+        }
+      })
+
+      updatedMonth = await pb.collection('month').update(month.id, {
+        compras: JSON.stringify(updatedCompras),
+        spent: month.spent - month.compras[i].price + compra.price,
+      });
+    } else {
+      updatedMonth = await pb.collection('month').update(month.id, {
+        compras: JSON.stringify([...month.compras, compra]),
+        spent: compra.price + month.spent,
+      });
+    }
+  
+    const newMonths = months.map((m) => (m.id === month.id ? updatedMonth : m));
+  
+    if (month.id === currentMonth.id) {
+      setCurrentMonth(updatedMonth);
+    }
+  
+    setMonths(newMonths);
+    console.log(updatedMonth);
+    return updatedMonth;
+  }
+  
+
+  async function createMonth(data) {
+    try {
+      const month = await pb.collection('month').create({ ...data, userId: pb.authStore.model?.id, });
+      const User = await pb.collection('users').update(pb.authStore.model?.id, { months: [...user.months, month.id] });
+      console.log(User);
+      setMonths([...months, month])
+      setUser(User)
+
+      const currentDate = new Date();
+      const currentM = currentDate.getMonth() + 1;
+      const currentY = currentDate.getFullYear();
+
+      const [m, year] = (month.date.split('/'))
+      if (m === currentM.toString() && year === currentY.toString()) {
+        setCurrentMonth(month);
       }
-    })
-
-    if(month.id === currentMonth.id){
-      setCurrentMonth(updatedMonth)
+      return month
+    } catch (e) {
+      console.log(e)
     }
 
-    setMonths(newMonths)
   }
 
 
+  async function deleteCompra(index, month) {
+    const newCompras = month.compras.filter((compra, i) => {
+      return index !== i
+    })
+    const preco = month.compras[index].price
+    try {
+      const updatedMonth = await pb.collection('month').update(month.id, { compras: newCompras, spent: month.spent - preco });
+      const newMonths = []
+      months.map((m) => {
+        if (m.id === month.id) {
+          newMonths.push(updatedMonth)
+        } else {
+          newMonths.push(m)
+        }
+      })
+      setMonths(newMonths)
+      if (month.id === currentMonth.id) {
+        setCurrentMonth(updatedMonth);
+      }
+      return updatedMonth
+    } catch (e) {
+      console.log(e)
+    }
+  }
+
   return (
-    <UserContext.Provider value={{ user, months, currentMonth,spent,addCompra}}>
+    <UserContext.Provider value={{ user, months, currentMonth, spent, addCompra, createMonth, deleteCompra }}>
       {children}
     </UserContext.Provider>
   );
