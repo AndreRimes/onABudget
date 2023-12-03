@@ -2,3 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+input[type="number"] {
+    -moz-appearance: textfield; /* Firefox */
+  }
+  
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none; /* WebKit browsers like Safari and Chrome */
+    margin: 0; /* Removes the inner padding in Chrome and Safari on macOS */
+  }

@@ -30,7 +30,6 @@ export default function Home() {
         <Graph setMonth={setMonth} setIsModalOpen={setIsModalOpen} />
       </div>
 
-      <button onClick={() => setIsModalOpen(true)}>Open Modal</button>
     </div>
   )
 }

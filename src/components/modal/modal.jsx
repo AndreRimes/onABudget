@@ -35,7 +35,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                         {isInput && <CompraInput index={-1} setEditCompra={setEditCompra}  dateValue={''} categoriaValue={''} storeValue={''} priceValue={''} setMonth={setMonth} setIsInput={setIsInput} month={month} />}
                         {month && month.compras && month.compras.map((compra, index) => (
                              editCompra === index ? <> <CompraInput index={index} key={index} setEditCompra={setEditCompra}  dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} /> </> : <>
-                                <div className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " key={index}>
+                                <div key={index} className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " >
                                     <h3 className="w-[11%] flex items-center justify-center">{compra.date}</h3>
                                     <h3 className="w-[11%] flex items-center justify-center">{compra.store}</h3>
                                     <h3 className="w-[11%] flex items-center justify-center">{compra.categoria}</h3>
