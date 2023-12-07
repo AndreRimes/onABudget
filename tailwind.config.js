@@ -20,6 +20,20 @@ module.exports = {
         'Error': '#CF6679',
         'tx': 'rgba(255, 255, 255, 0.80)',
       },
+      animation:{
+        dropTop: 'dropTop 0.2s ease-in',
+        notification:'notification 0.3s ease-out'
+      },
+      keyframes:{
+        notification:{
+          '0%':{transform:'translateY(-120vh)',opacity:'0'},
+          '100%':{transform:'translateY(-30vh)',opacity:'1'}
+        },
+        dropTop:{
+            '0%': {transform: 'translate(50%,50%)', opacity:'0',scale:'0.5' },
+            '100%': {transform:'translate(0%,0%)',opacity:'1',scale:'1'}
+        },
+      }
     },
   },
   plugins: [],

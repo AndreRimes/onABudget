@@ -11,8 +11,8 @@ import { useUser } from "@/Domain/userContext";
 export default function Modal({ setIsModalOpen, month, setMonth }) {
     const [isInput, setIsInput] = useState();
     const [selected, setSelected] = useState()
-    const { deleteCompra } = useUser();
-    const [editCompra, setEditCompra] = useState(-1)
+    const { deleteCompra,deleteMonth } = useUser();
+    const [editCompra, setEditCompra] = useState(-2)
 
     async function handleDelete(index, month) {
         const deletedMonth = await deleteCompra(index, month)
@@ -20,9 +20,21 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
     }
 
 
+    async function handleDeleteMonth(id){
+        const res =  await deleteMonth(id);
+        console.log('res: ' , res)
+        setIsModalOpen(false);
+        setMonth({})
+        console.log('month in handleDeletedMonth: ',  month);
+    }
+
+    useEffect(()=>{
+        console.log('Month use effect: ', month);
+    },[month])
+
     return (
         <Overlay setIsModalOpen={setIsModalOpen}>
-            <div onClick={(e) => e.stopPropagation()} className="bg-Dark text-white w-2/3 h-5/6 rounded-2xl flex items-center justify-center ">
+            <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop text-white w-2/3 h-5/6 rounded-2xl flex items-center justify-center ">
                 {Object.keys(month).length === 0 ? <CreateMonth setMonth={setMonth} /> : (<>
                     <div className="w-full h-[90%] flex flex-col items-center justify-center">
                         <div className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-10 ">
@@ -30,11 +42,21 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                             <h3 className="w-[11%] flex items-center justify-center">Loja</h3>
                             <h3 className="w-[11%] flex items-center justify-center">Categoria</h3>
                             <h3 className="w-[11%] flex items-center justify-center">Preco</h3>
-                            <h3 className="w-[11%] ">Ajustes</h3>
+                            {/* <h3 className="w-[11%] ">Ajustes</h3> */}
+                            <div className="w-[11%] flex items-center justify-center">
+                                {selected === -1 ?
+                                    <>
+                                        <Image onClick={()=> handleDeleteMonth(month.id)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} />
+                                        <Image className="cursor-pointer" src={edit} width={24} height={24} />
+                                        
+                                    </> : (<>
+                                        <Image src={dots} width={30} height={30} alt='3 dots' className="cursor-pointer" onClick={()=>setSelected(-1)}  />
+                                    </>)}
+                            </div>
                         </div>
-                        {isInput && <CompraInput index={-1} setEditCompra={setEditCompra}  dateValue={''} categoriaValue={''} storeValue={''} priceValue={''} setMonth={setMonth} setIsInput={setIsInput} month={month} />}
+                        {isInput && <CompraInput index={-1} setEditCompra={setEditCompra} dateValue={''} categoriaValue={''} storeValue={''} priceValue={''} setMonth={setMonth} setIsInput={setIsInput} month={month} />}
                         {month && month.compras && month.compras.map((compra, index) => (
-                             editCompra === index ? <> <CompraInput index={index} key={index} setEditCompra={setEditCompra}  dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} /> </> : <>
+                            editCompra === index ? <> <CompraInput index={index} key={index} setEditCompra={setEditCompra} dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} /> </> : <>
                                 <div key={index} className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " >
                                     <h3 className="w-[11%] flex items-center justify-center">{compra.date}</h3>
                                     <h3 className="w-[11%] flex items-center justify-center">{compra.store}</h3>

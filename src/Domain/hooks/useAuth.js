@@ -1,12 +1,13 @@
 import pb from '../pocketbase';
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useUser } from '../userContext';
 
 export default function useAuth() {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState(false)
+    const {setTeste} = useUser();
     const router = useRouter()
-
 
     function logout() {
         pb.authStore.clear()
@@ -14,7 +15,8 @@ export default function useAuth() {
     }
 
     function isLoged() {
-        if (!pb.authStore.isValid) {
+        console.log()
+        if (!pb.authStore.isValid ||  !pb.authStore?.model?.id) {
             router.push('/login')
         }
     }
@@ -23,6 +25,7 @@ export default function useAuth() {
         setLoading(true)
         try {
             const user = await pb.collection('users').authWithPassword(email, password);
+            setTeste(true)
             setLoading(false)
             setError(false)
             router.push('/')

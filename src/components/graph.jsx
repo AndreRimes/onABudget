@@ -15,15 +15,13 @@ export default function Graph({ setMonth, setIsModalOpen }) {
 
     useEffect(() => {
         if (months) {
-            const orderedMonths =  months.sort((a, b) => {
-                const yearA = parseInt(a.date.split('/')[2]);
-                const yearB = parseInt(b.date.split('/')[2]);
-
+            const orderedMonths = months.sort((a, b) => {
+                const [monthA, yearA] = a.date.split('/').map(Number);
+                const [monthB, yearB] = b.date.split('/').map(Number);
+             
                 if (yearA !== yearB) {
-                    return yearA - yearB; 
+                    return yearA - yearB;
                 } else {
-                    const monthA = parseInt(a.date.split('/')[0]);
-                    const monthB = parseInt(b.date.split('/')[0]);
                     return monthA - monthB;
                 }
             });
@@ -67,7 +65,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
 
     return (
         <div className="w-11/12 h-[90%] p-5 py-10 rounded-xl bg-Primary flex flex-col items-center justify-center">
-            {!months || months.length === 0 || !chartData.labels || chartData.labels.length === 0 || !chartData.datasets[0].data.length ? (
+            {!months || months.length === 0 || !chartData?.labels || chartData.labels.length === 0 || !chartData.datasets[0].data.length ? (
                 <Loading />
             ) : (
                 <>
