@@ -10,7 +10,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
     const chartRef = useRef()
     ChartJS.register(...registerables);
 
-    const colors = ['#BB86FC', "#03DAC5"]
+    const colors = ['#BB86FC', "#03DAC5",'#610C9F','#E3651D','#005B41','#4477CE']
 
 
     useEffect(() => {

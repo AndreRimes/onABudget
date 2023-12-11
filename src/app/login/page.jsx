@@ -20,7 +20,7 @@ export default function Login() {
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
             <div className="w-2/5 h-4/5 bg-Primary rounded-xl flex flex-col items-center">
-                {error?<Error/>:<div className='h-8'></div>}
+                {error ? <Error message={'Error Senha ou email Invalidos'} /> : <div className='h-8'></div>}
                 <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
                 <div className="w-32 h-32 rounded-full flex items-center justify-center border border-tx">
                     <Image src={graphImage} width={85} height={85} alt="graph image" />
@@ -43,7 +43,10 @@ export default function Login() {
                             className="bg-tx px-2 w-full h-10 text-Dark rounded-lg"
                             onChange={(e) => setPassword(e.target.value)}
                         />
-                        <Link href="/signup" className='underline'>Nao possui uma Conta? </Link>
+                        <div className='flex flex-col'>
+                            <Link href="/signup" className='underline'>Nao possui uma Conta? </Link>
+                            <Link href='/password-reset' className='underline'>Esqueceu sua Senha?</Link>
+                        </div>
                     </div>
                 </div>
                 {loading ? (

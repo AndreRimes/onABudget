@@ -28,7 +28,7 @@ export default function Signup() {
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
             <div className="w-2/5 h-4/5 bg-Primary rounded-xl flex flex-col items-center">
-                {error ? <Error /> : <div className='h-8'></div>}
+                {error ? <Error message={'Email ja esta sendo utilizado'}/> : <div className='h-8'></div>}
                 <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
                 <div className="w-32 h-32 rounded-full flex items-center justify-center border border-tx">
                     <Image src={graphImage} width={85} height={85} alt="graph image" />

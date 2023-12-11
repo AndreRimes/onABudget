@@ -4,7 +4,7 @@ import threeDots from '../../public/3Dots.png'
 
 export default function Profile({ user, currentMonth, setIsModalProfile }) {
     return (
-        <div className='w-2/5 h-[90%] flex flex-col justify-evenly bg-Primary  rounded-xl text-xl px-10'>
+        <div className='w-2/5 h-full flex flex-col justify-evenly bg-Primary  rounded-xl text-xl px-10'>
             <div className="w-full flex items-end justify-end">
                 <Image onClick={() => setIsModalProfile(true)} className="cursor-pointer" src={threeDots} width={24} height={24} />
             </div>

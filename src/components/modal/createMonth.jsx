@@ -1,18 +1,25 @@
 import Image from "next/image"
 import calendario from '../../../public/calendario.png'
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { useUser } from "@/Domain/userContext";
 
 
 
-export default function CreateMonth({ setMonth }) {
+export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, setSelected }) {
   const mesRef = useRef();
   const budgetRef = useRef();
-  const { createMonth } = useUser();
+  const { createMonth,updateMonth } = useUser();
   const [dateMessage, setDateMessage] = useState('')
   const [values, setValues] = useState(["", "", "", "", "", ""]);
 
-
+  useEffect(() => {
+    if (isUpdate && month) {
+      const [monthPart, yearPart] = month.date.split('/');
+      const newValues = [...monthPart.split(''), ...yearPart.split('')];
+      setValues(newValues);
+      budgetRef.current.value = month.budget
+    }
+  }, [isUpdate, month]);
 
 
   const KEYBOARDS = {
@@ -57,24 +64,42 @@ export default function CreateMonth({ setMonth }) {
 
 
   async function handleClick() {
-    const data = {
-      date: values[0] + values[1] + '/' + values[2] + values[3] + values[4] + values[5],
-      budget: budgetRef.current.value,
-      spent: 0,
-      compras: JSON.stringify([])
-    }
+    if (!isUpdate) {
+      const data = {
+        date: values[0] + values[1] + '/' + values[2] + values[3] + values[4] + values[5],
+        budget: budgetRef.current.value,
+        spent: 0,
+        compras: JSON.stringify([])
+      }
 
-    const newMonth = await createMonth(data);
-    if (newMonth) {
-      setMonth(newMonth);
+      const newMonth = await createMonth(data);
+      if (newMonth) {
+        setMonth(newMonth);
+      }
+    } else {
+      const updatedMonth = await updateMonth(month.id,budgetRef.current.value);
+      setSelected()
+      setEditCompra()
+      setMonth(updatedMonth);
+
     }
+  }
+
+  function handleBack() {
+    setSelected()
+    setEditCompra()
   }
 
   return (
     <div className="w-3/5 h-4/5">
+      {isUpdate ? <>
+        <div className="w-full flex justify-end">
+          <h1 onClick={() => handleBack()} className="cursor-pointer text-xl font-bold hover:scale-125 transition-all duration-300 ease-out">X</h1>
+        </div>
+      </> : <></>}
       <div className="flex flex-col items-center justify-evenly h-[85%] w-full">
         <Image src={calendario} width={100} height={100} />
-        <h1 className="text-4xl font-semibold">Novo Mes</h1>
+        {isUpdate ? <h1 className="text-4xl font-semibold">Update Mes</h1> : <h1 className="text-4xl font-semibold">Novo Mes</h1>}
         <div className="w-2/3 flex flex-col  ">
           <h3 className="ml-12">Data: </h3>
           <div className="flex flex-row justify-center w-full ">
@@ -85,10 +110,11 @@ export default function CreateMonth({ setMonth }) {
                   id={`input-${index}`}
                   pattern="[0-9]"
                   maxLength="1"
-                  className=" text-black border-2 border-black w-[10%] h-[80%] pl-4 rounded-lg bg-tx mr-2 font-bold"
+                  className={`text-black border-2 border-black w-[10%] h-[80%] pl-4 rounded-lg bg-tx mr-2 font-bold ${isUpdate ? 'cursor-not-allowed' : ''}`}
                   value={value}
                   onChange={(e) => handleChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
+                  disabled={isUpdate} // Disable input when isUpdate is true
                 />
                 {index === 1 ? <div className="h-14 w-7 text-5xl">/</div> : <></>}
               </>
@@ -111,7 +137,7 @@ export default function CreateMonth({ setMonth }) {
           onClick={() => handleClick()}
           className="bg-Secundary w-1/2 h-10 rounded-xl hover:scale-110 transition-all ease-out duration-200 mt-4"
         >
-          Criar
+          {isUpdate ? 'Salvar' : 'Criar'}
         </button>
       </div>
     </div>
