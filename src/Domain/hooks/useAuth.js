@@ -84,10 +84,10 @@ export default function useAuth() {
         try {
             const res = await pb.collection('users').confirmPasswordReset(token, pass1, pass2);
             router.push('/login')
-            return res
+            return true
         }
         catch (e) {
-            console.log(e);
+            return false
         }
     }
 

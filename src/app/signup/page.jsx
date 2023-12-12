@@ -35,31 +35,34 @@ export default function Signup() {
                 </div>
                 <div className="flex flex-col items-center justify-evenly h-2/5 w-full">
                     <div className="w-1/2">
-                        <h3 className="ml-1">Email: </h3>
-                        <input
-                            type="text"
-                            placeholder="email: "
-                            className="bg-tx px-2 w-full h-10 text-Dark rounded-lg"
-                            onChange={(e) => setEmail(e.target.value)}
-                        />
+                        <div className="input-group">
+                            <input 
+                            onChange={(e)=> setEmail(e.target.value)}
+                            type="email"
+                            className={`w-full input ${email!== '' ? 'inputFocus' : '' }`}
+                            />
+                            <label className={`user-label ${email!== '' ? 'labelFocus' : '' } `}>Email</label>
+                        </div>
                     </div>
                     <div className="w-1/2">
-                        <h3 className="ml-1">Nome: </h3>
-                        <input
-                            type="text"
-                            placeholder="Nome: "
-                            className="bg-tx px-2 w-full h-10 text-Dark rounded-lg"
-                            onChange={(e) => setName(e.target.value)}
-                        />
+                        <div className="input-group">
+                            <input
+                                type="Nome"
+                                className={`w-full input ${name !== '' ? 'inputFocus' : ''}`}
+                                onChange={(e) => setName(e.target.value)}  
+                            />
+                                <label className={`user-label ${name !== '' ? 'labelFocus' : ''} `}>Nome</label>
+                        </div>
                     </div>
                     <div className="w-1/2">
-                        <h3 className="ml-1">Senha: </h3>
-                        <input
-                            type="password"
-                            placeholder="Senha: "
-                            className="bg-tx px-2 w-full h-10 text-Dark rounded-lg"
-                            onChange={(e) => setPassword(e.target.value)}
-                        />
+                        <div className="input-group">
+                            <input
+                                type="password"
+                                className={`w-full input ${password !== '' ? 'inputFocus' : ''}`}
+                                onChange={(e) => setPassword(e.target.value)}  
+                            />
+                                <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
+                        </div>
                         <Link href="/login" className='underline'>Ja possui uma conta? </Link>
                     </div>
                 </div>

@@ -2,22 +2,23 @@ import Image from "next/image"
 import calendario from '../../../public/calendario.png'
 import { useRef, useState, useEffect } from "react"
 import { useUser } from "@/Domain/userContext";
+import Error from "../error";
 
 
 
 export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, setSelected }) {
   const mesRef = useRef();
-  const budgetRef = useRef();
   const { createMonth,updateMonth } = useUser();
   const [dateMessage, setDateMessage] = useState('')
   const [values, setValues] = useState(["", "", "", "", "", ""]);
+  const [budget,setBudget] = useState('')
 
   useEffect(() => {
     if (isUpdate && month) {
       const [monthPart, yearPart] = month.date.split('/');
       const newValues = [...monthPart.split(''), ...yearPart.split('')];
       setValues(newValues);
-      budgetRef.current.value = month.budget
+      setBudget(month.budget)
     }
   }, [isUpdate, month]);
 
@@ -29,12 +30,13 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
   };
   const handleChange = (index, value) => {
     const newValues = [...values];
-    newValues[index] = value;
+    if (!isNaN(value)) {
+      newValues[index] = value;
 
     setValues(newValues);
-
     if (value && index < 5) {
       document.querySelector(`#input-${index + 1}`).focus();
+    }
     }
   };
 
@@ -63,11 +65,19 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
   };
 
 
+
   async function handleClick() {
     if (!isUpdate) {
+
+      console.log(parseInt(values[0] + values[1]))
+      if(parseInt(values[0] + values[1]) > 31){
+        setDateMessage('Data Invalida');
+        return
+      }
+
       const data = {
         date: values[0] + values[1] + '/' + values[2] + values[3] + values[4] + values[5],
-        budget: budgetRef.current.value,
+        budget: parseInt(budget),
         spent: 0,
         compras: JSON.stringify([])
       }
@@ -77,7 +87,7 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
         setMonth(newMonth);
       }
     } else {
-      const updatedMonth = await updateMonth(month.id,budgetRef.current.value);
+      const updatedMonth = await updateMonth(month.id, parseInt(budget));
       setSelected()
       setEditCompra()
       setMonth(updatedMonth);
@@ -88,6 +98,14 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
   function handleBack() {
     setSelected()
     setEditCompra()
+  }
+
+  function handleChangeBudget(e) {
+    const inputValue = e.target.value;
+  
+    if (!isNaN(inputValue)) {
+      setBudget(inputValue);
+    } 
   }
 
   return (
@@ -101,41 +119,44 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
         <Image src={calendario} width={100} height={100} />
         {isUpdate ? <h1 className="text-4xl font-semibold">Update Mes</h1> : <h1 className="text-4xl font-semibold">Novo Mes</h1>}
         <div className="w-2/3 flex flex-col  ">
-          <h3 className="ml-12">Data: </h3>
           <div className="flex flex-row justify-center w-full ">
             {values.map((value, index) => (
               <>
-                <input
+                <div className="input-group text-tx">
+                  <input
                   key={index}
+                  type="text"
                   id={`input-${index}`}
                   pattern="[0-9]"
-                  maxLength="1"
-                  className={`text-black border-2 border-black w-[10%] h-[80%] pl-4 rounded-lg bg-tx mr-2 font-bold ${isUpdate ? 'cursor-not-allowed' : ''}`}
-                  value={value}
+                  className={`text-tx border-2 w-[80%] h-[100%] p-2 rounded-lg mr-2 font-bold input ${isUpdate ? 'cursor-not-allowed' : ''}  ${value.length !== 0  ? 'inputFocus' : ''}`}
                   onChange={(e) => handleChange(index, e.target.value)}
+                  style={{color:'white'}}
                   onKeyDown={(e) => handleKeyDown(index, e)}
-                  disabled={isUpdate} // Disable input when isUpdate is true
-                />
-                {index === 1 ? <div className="h-14 w-7 text-5xl">/</div> : <></>}
+                  value={value}
+                  disabled={isUpdate} 
+                  maxLength="1"
+                  />
+                  <label className={`user-label ${value.length  !== 0? 'labelFocus' : ''} `}> {index<=1? 'M' : 'Y'} </label>
+                </div>
+                {index === 1 ? <div className="h-14 w-7 flex items-center justify-center mr-10 text-5xl">/</div> : <></>}
               </>
-            ))}
+            ))} 
           </div>
-          <h3 style={{ color: dateMessage === 'Mes Invalido' || dateMessage === 'Ano deve Conter 4 Digitos' ? 'red' : 'black' }}>
-            {dateMessage}
-          </h3>
         </div>
-        <div className="w-1/2">
-          <h3 className="ml-1">Budget do mes: </h3>
-          <input
-            ref={budgetRef}
-            type="number"
-            placeholder="Budget: "
-            className="bg-tx px-2 w-full h-10 text-Dark rounded-lg"
-          />
+        <div className="w-2/3">
+        <div className="input-group">
+              <input
+                type="text"
+                className={`w-full input ${budget.length !== 0  ? 'inputFocus' : ''}`}
+                onChange={(e) => handleChangeBudget(e)}  
+                value={budget}
+                />
+                <label className={`user-label ${budget.length !== 0? 'labelFocus' : ''} `}>Budget</label>
+          </div>
         </div>
         <button
           onClick={() => handleClick()}
-          className="bg-Secundary w-1/2 h-10 rounded-xl hover:scale-110 transition-all ease-out duration-200 mt-4"
+          className="bg-Secundary w-2/3 h-10 rounded-xl hover:scale-110 transition-all ease-out duration-200 mt-4"
         >
           {isUpdate ? 'Salvar' : 'Criar'}
         </button>

@@ -42,7 +42,7 @@ export default function Table({ spent, currentMonth }) {
                 </div>
                 {/* BODY */}
                 <StyledContainer>
-                <div className='w-full max-h-[120px] overflow-y-auto'> 
+                <div className='w-full max-h-[120px] overflow-y-auto mb-1'> 
                     {spent && Object.keys(spent).map((key, index) => (
                         <div
                             onMouseEnter={() => handleEnter(key)}

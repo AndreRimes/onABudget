@@ -49,7 +49,6 @@ export default function Graph({ setMonth, setIsModalOpen }) {
     }, [months]);
 
     function handleClick(event) {
-
         if (getElementsAtEvent(chartRef.current, event)[0]) {
             setMonth(months[getElementsAtEvent(chartRef.current, event)[0].index])
             setIsModalOpen(true)
@@ -103,7 +102,8 @@ export default function Graph({ setMonth, setIsModalOpen }) {
                 </>
             )}
             <div className='w-full h-10 flex justify-end mb-4 text-black font-bold'>
-                <span onClick={() => handleMonth()} className="h-10 hover:scale-125 transition-all duration-300 ease-out w-10 p-0 rounded-full bg-Secundary flex items-center justify-center cursor-pointer ">+</span>
+                {/* <span onClick={() => handleMonth()} className="h-10 hover:scale-125 transition-all duration-300 ease-out w-10 p-0 rounded-full bg-Secundary flex items-center justify-center cursor-pointer ">+</span> */}
+                <button onClick={handleMonth} className='button px-3  '>Criar Mes</button>
             </div>
         </div>
     );

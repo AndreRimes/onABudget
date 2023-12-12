@@ -6,7 +6,10 @@ export default function Profile({ user, currentMonth, setIsModalProfile }) {
     return (
         <div className='w-2/5 h-full flex flex-col justify-evenly bg-Primary  rounded-xl text-xl px-10'>
             <div className="w-full flex items-end justify-end">
-                <Image onClick={() => setIsModalProfile(true)} className="cursor-pointer" src={threeDots} width={24} height={24} />
+                <Image onClick={() => setIsModalProfile(true)} className="cursor-pointer hover:scale-125 transition-all duration-300 ease-in " src={threeDots} width={24} height={24} />
+            </div>
+            <div className="profile w-32 h-32 " style={{borderRadius: '127px', background: 'linear-gradient(145deg, #202122, #272829)', boxShadow: '24px 24px 51px #1e1e1f,-24px -24px 51px #2a2c2d'}}>
+                
             </div>
             <h1>{user.username}</h1>
             <h1>Budget: {currentMonth?.budget}</h1>
