@@ -41,7 +41,7 @@ export default function CompraInput({
         setStore("");
         setCategoria("");
         setPrice("");
-        setEditCompra(-1)
+        setEditCompra(-2)
         setIsInput(false);
     }
 
@@ -77,7 +77,7 @@ export default function CompraInput({
     return (
         <>
             <div className={`w-1/3 flex items-center justify-center rounded-2xl mb-2 text-black ${meessage === 'Data Invalida' ? 'bg-Error' : ''} `}> {meessage} </div>
-            <div className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5">
+            <div key={index} className="w-2/3 min-h-[48px] h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " >
                 <div className="w-[16%] h-6 flex flex-row">
                     <input
                         type="number"

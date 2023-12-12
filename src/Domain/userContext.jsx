@@ -127,12 +127,31 @@ export const UserProvider = ({ children }) => {
     }
   }
 
+  async function updateMonth(id,budget){
+    try{
+      const updatedMonth = await pb.collection('month').update(id,{budget:budget});
+
+      const newMonths = months.filter((month)=>month.id !== id);
+      newMonths.push(updatedMonth)
+
+      setMonths(newMonths)
+
+      if(currentMonth.id === id){
+        setCurrentMonth(updatedMonth)
+      }
+
+      return updatedMonth
+    }catch(e){
+      console.log(e)
+    }
+  }
+
   async function deleteMonth(id){
     try{
       const deleteMonth = await pb.collection('month').delete(id);
       const newMonths = months.filter((month) => month.id !== id);
       // [x] set newMonths
-      // [] set user.months
+      // [x] set user.months
       // [x] month -> ja setei no front
       setMonths(newMonths);
       setUser({...user, months:newMonths})
@@ -211,8 +230,9 @@ export const UserProvider = ({ children }) => {
 
   }
 
+
   return (
-    <UserContext.Provider value={{ user, months, currentMonth, spent, addCompra, createMonth, deleteCompra,updateUsername,updateEmail,updatePassword,setTeste,deleteMonth}}>
+    <UserContext.Provider value={{ user, months, currentMonth, spent, addCompra, createMonth, deleteCompra,updateUsername,updateEmail,updatePassword,setTeste,deleteMonth,updateMonth}}>
       {children}
     </UserContext.Provider>
   );
