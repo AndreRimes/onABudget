@@ -65,6 +65,7 @@ export const UserProvider = ({ children }) => {
 
     setSpent(newSpent)
 
+
   }, [currentMonth?.compras])
 
   async function addCompra(compra, month, i) {
