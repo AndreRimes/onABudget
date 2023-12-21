@@ -38,7 +38,7 @@ export default function Home() {
         <Graph setMonth={setMonth} setIsModalOpen={setIsModalOpen} />
       </div>
 
-      <button onClick={() => logout()}>LOGOUT</button>
+      {/* <button onClick={() => logout()}>LOGOUT</button> */}
     </div>
 
   )

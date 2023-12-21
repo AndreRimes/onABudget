@@ -1,5 +1,5 @@
 import Overlay from "./overlay"
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import CompraInput from "./input";
 import Image from "next/image";
 import dots from '../../../public/3Dots.png'
@@ -39,7 +39,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                         <div className="w-full h-[90%] flex flex-col items-center justify-center">
                             <div className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-10 ">
                                 <h3 className="w-[11%] flex items-center justify-center">Data</h3>
-                                <h3 className="w-[11%] flex items-center justify-center">Loja</h3>
+                                <h3 className="w-[11%]  flex items-center justify-center">Loja</h3>
                                 <h3 className="w-[11%] flex items-center justify-center">Categoria</h3>
                                 <h3 className="w-[11%] flex items-center justify-center">Preco</h3>
                                 <div className="w-[11%] flex items-center justify-center">
@@ -50,7 +50,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
 
                                         </> : (<>
                                             <Image src={dots} width={30} height={30} alt='3 dots' className="cursor-pointer" onClick={() => setSelected(-1)} />
-                                       </>)}
+                                        </>)}
                                 </div>
                             </div>
 
@@ -61,11 +61,13 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                     {month && month.compras && month.compras.map((compra, index) => (
                                         editCompra === index ? <> <CompraInput index={index} key={index} setEditCompra={setEditCompra} dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} /> </> : <>
                                             <div key={index} className="min-w-[66%] min-h-[48px] h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " >
-                                                <h3 className="w-[11%] flex items-center justify-center">{compra.date}</h3>
-                                                <h3 className="w-[11%] flex items-center justify-center">{compra.store}</h3>
+                                                <h3 className="w-[11%] h-full flex items-center justify-center">{compra.date}</h3>
+                                                <h3 className="h-full flex items-center justify-center text-center">
+                                                    {compra.store.length > 10 ? `${compra.store.slice(0, 10)}...` : compra.store}
+                                                </h3>
                                                 <h3 className="w-[11%] flex items-center justify-center">{compra.categoria}</h3>
-                                                <h3 className="w-[11%] flex items-center justify-center">${compra.price}</h3>
-                                                <div className="w-[11%] flex items-center justify-center">
+                                                <h3 className="w-[11%] h-full flex items-center justify-center">${(compra.price).toFixed(2)}</h3>
+                                                <div className="w-[11%] h-full flex items-center justify-center">
                                                     {selected === index ?
                                                         <>
                                                             <Image onClick={() => handleDelete(index, month)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} />

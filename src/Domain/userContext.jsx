@@ -2,6 +2,7 @@
 import pb from './pocketbase';
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation'
+import gmail from '../email/GmailApi.js'
 
 
 
@@ -12,13 +13,12 @@ export const UserProvider = ({ children }) => {
   const [months, setMonths] = useState([]);
   const [currentMonth, setCurrentMonth] = useState()
   const [spent, setSpent] = useState()
-  const [teste,setTeste] = useState(false)
+  const [teste, setTeste] = useState(false)
   const router = useRouter()
 
 
   // Find the user and the currentMonth 
   useEffect(() => {
-    console.log("RODOOOOO")
     async function getUser() {
       if (pb.authStore.isValid && pb.authStore.model?.id) {
         try {
@@ -27,29 +27,67 @@ export const UserProvider = ({ children }) => {
           const currentM = currentDate.getMonth() + 1;
           const currentY = currentDate.getFullYear();
 
-          const newMonths = [];
-          await Promise.all(result.months.map(async (id) => {
+          let cm = {}
+          var newMonths = [];
+          for (const id of result.months) {
             const m = await pb.collection('month').getOne(id);
             newMonths.push(m);
-            const [mouth, year] = (m.date.split('/'))
-            if (mouth === currentM.toString() && year === currentY.toString()) {
+            const [month, year] = m.date.split('/');
+            if (month === currentM.toString() && year === currentY.toString()) {
               setCurrentMonth(m);
+              cm = m
             }
-          }));
-          setMonths(newMonths);
+          }
+
+          await processCompras(gmail, pb, newMonths, result.lastSearch, cm);
+
+          await pb.collection('users').update(result.id, {lastSearch: new Date});
           setUser(result);
         } catch (e) {
-          console.error("Error fetching user data", e);
+          console.error("Error fetching user data: ", e);
         }
       }
     }
-    getUser();
-  },  [pb.authStore.isValid, pb.authStore.model?.id, teste]);
 
+    getUser();
+  }, [pb.authStore.isValid, pb.authStore.model?.id, teste]);
+
+
+  async function processCompras(gmail, pb, newMonths, searchQuery,cm) {
+    const compras = await gmail.readInboxContent("from:pncalerts@visa.com", searchQuery);
   
+    for (const compra of compras) {
+      const [dia, mes, ano] = compra.date.split('/');
+      const key = `${mes}/${ano}`;
+      const matchingMonth = newMonths.find((month) => month.date === key);
+  
+      if (matchingMonth) {
+        const comprasArray = JSON.stringify([...matchingMonth.compras, compra]);
+        try {
+          const updatedMonth = await pb.collection('month').update(
+            matchingMonth.id,
+            { compras: comprasArray, spent: matchingMonth.spent + compra.price },
+            { requestKey: null }
+          );
+            
+          if(updatedMonth.id === cm.id){
+            setCurrentMonth(updatedMonth)
+          }
+          
+          newMonths = newMonths.filter((month) => month.id !== updatedMonth.id);
+          newMonths.push(updatedMonth);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    setMonths(newMonths);
+  }
+
 
 
   useEffect(() => {
+    console.log(currentMonth);
     async function updateSpent(sum) {
       const res = await pb.collection('month').update(currentMonth.id, { spent: sum })
     }
@@ -65,18 +103,19 @@ export const UserProvider = ({ children }) => {
 
     setSpent(newSpent)
 
+
   }, [currentMonth?.compras])
 
   async function addCompra(compra, month, i) {
     let updatedMonth;
-  
+
     if (i !== -1) {
       const updatedCompras = [];
 
-      month.compras.map((c,index)=>{
-        if(index == i){
+      month.compras.map((c, index) => {
+        if (index == i) {
           updatedCompras.push(compra)
-        }else{
+        } else {
           updatedCompras.push(c)
         }
       })
@@ -91,24 +130,21 @@ export const UserProvider = ({ children }) => {
         spent: compra.price + month.spent,
       });
     }
-  
+
     const newMonths = months.map((m) => (m.id === month.id ? updatedMonth : m));
-  
+
     if (month.id === currentMonth.id) {
       setCurrentMonth(updatedMonth);
     }
-  
+
     setMonths(newMonths);
-    console.log(updatedMonth);
     return updatedMonth;
   }
-  
+
 
   async function createMonth(data) {
     try {
       const month = await pb.collection('month').create({ ...data, userId: user.id });
-      console.log(user.id)
-      console.log([...user.months, month.id])
       const User = await pb.collection('users').update(user.id, { months: [...user.months, month.id] });
       setMonths([...months, month])
       setUser(User)
@@ -127,43 +163,43 @@ export const UserProvider = ({ children }) => {
     }
   }
 
-  async function updateMonth(id,budget){
-    try{
-      const updatedMonth = await pb.collection('month').update(id,{budget:budget});
+  async function updateMonth(id, budget) {
+    try {
+      const updatedMonth = await pb.collection('month').update(id, { budget: budget });
 
-      const newMonths = months.filter((month)=>month.id !== id);
+      const newMonths = months.filter((month) => month.id !== id);
       newMonths.push(updatedMonth)
 
       setMonths(newMonths)
 
-      if(currentMonth.id === id){
+      if (currentMonth.id === id) {
         setCurrentMonth(updatedMonth)
       }
 
       return updatedMonth
-    }catch(e){
+    } catch (e) {
       console.log(e)
     }
   }
 
-  async function deleteMonth(id){
-    try{
+  async function deleteMonth(id) {
+    try {
       const deleteMonth = await pb.collection('month').delete(id);
       const newMonths = months.filter((month) => month.id !== id);
       // [x] set newMonths
       // [x] set user.months
       // [x] month -> ja setei no front
       setMonths(newMonths);
-      setUser({...user, months:newMonths})
+      setUser({ ...user, months: newMonths })
 
-      console.log(user);
+      
 
-      if(id === currentMonth.id){
+      if (id === currentMonth.id) {
         setCurrentMonth({})
       }
 
       return deleteMonth;
-    }catch(e){
+    } catch (e) {
       return e
     }
   }
@@ -193,38 +229,38 @@ export const UserProvider = ({ children }) => {
     }
   }
 
-  async function updateUsername(newUsername){
-      try{
-        const User = await pb.collection('users').update(user.id,{username:newUsername});
-        setUser(User)
-        console.log(User)
-        return 'Username atualizado com sucesso'
-      }catch(e){
-        return 'Erro ao atualizar o username'
-      }
+  async function updateUsername(newUsername) {
+    try {
+      const User = await pb.collection('users').update(user.id, { username: newUsername });
+      setUser(User)
+      console.log(User)
+      return 'Username atualizado com sucesso'
+    } catch (e) {
+      return 'Erro ao atualizar o username'
+    }
   }
 
 
-  async function updateEmail(newEmail){
-    try{
-    const res = await pb.collection('users').requestEmailChange(newEmail);
-    pb.authStore.clear();
-    router.push('/login')
-    return res
-    }catch(e){
+  async function updateEmail(newEmail) {
+    try {
+      const res = await pb.collection('users').requestEmailChange(newEmail);
+      pb.authStore.clear();
+      router.push('/login')
+      return res
+    } catch (e) {
       console.log(e)
       return e
     }
   }
 
 
-  async function updatePassword(newPassword,confirmPassword){
-    try{
-      const res = await pb.collection('users').requestPasswordReset(user.email); 
+  async function updatePassword(newPassword, confirmPassword) {
+    try {
+      const res = await pb.collection('users').requestPasswordReset(user.email);
       pb.authStore.clear();
       router.push('/login')
       return res
-    }catch(e){
+    } catch (e) {
       return e
     }
 
@@ -232,7 +268,7 @@ export const UserProvider = ({ children }) => {
 
 
   return (
-    <UserContext.Provider value={{ user, months, currentMonth, spent, addCompra, createMonth, deleteCompra,updateUsername,updateEmail,updatePassword,setTeste,deleteMonth,updateMonth}}>
+    <UserContext.Provider value={{ user, months, currentMonth, spent, addCompra, createMonth, deleteCompra, updateUsername, updateEmail, updatePassword, setTeste, deleteMonth, updateMonth }}>
       {children}
     </UserContext.Provider>
   );
