@@ -49,7 +49,7 @@ export default function Table({ spent, currentMonth }) {
                             onMouseLeave={() => handleLeave(key)}
                             key={index} className='w-full h-1/6 flex flex-row justify-evenly rounded-lg'
                             style={{ backgroundColor: `${hovered == key ? '#343536' : ''}` }} >
-                            <h2 className='w-24 flex items-center justify-center'>{key}</h2>
+                            <h2 className='w-24 flex items-center justify-center'>{!key ? 'Desconhecido' : key}</h2>
                             <h2 className='w-24 flex items-center justify-center'>{spent[key]}</h2>
                             <h2 className='w-24 flex items-center justify-center'>-----</h2>
                             <h2 className='w-24 flex items-center justify-center'>{(spent[key] * 100 / currentMonth?.budget).toFixed(2)}%</h2>
@@ -61,8 +61,8 @@ export default function Table({ spent, currentMonth }) {
                 <div>
                     <div className='w-full flex flex-row justify-evenly'>
                         <h2 className='w-24 flex items-center justify-center'>Total</h2>
-                        <h2 className='w-24 flex items-center justify-center'>{currentMonth?.spent}</h2>
-                        <h2 className='w-24 flex items-center justify-center'>{currentMonth?.budget}</h2>
+                        <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent).toFixed(2)}</h2>
+                        <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.budget).toFixed(2)}</h2>
                         <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent * 100 / currentMonth?.budget).toFixed(2)}%</h2>
                     </div>
                 </div>

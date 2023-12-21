@@ -19,7 +19,6 @@ export const UserProvider = ({ children }) => {
 
   // Find the user and the currentMonth 
   useEffect(() => {
-    console.log("RODOOOO");
     async function getUser() {
       if (pb.authStore.isValid && pb.authStore.model?.id) {
         try {
@@ -28,58 +27,67 @@ export const UserProvider = ({ children }) => {
           const currentM = currentDate.getMonth() + 1;
           const currentY = currentDate.getFullYear();
 
+          let cm = {}
           var newMonths = [];
-          await Promise.all(result.months.map(async (id) => {
+          for (const id of result.months) {
             const m = await pb.collection('month').getOne(id);
             newMonths.push(m);
-            const [mouth, year] = (m.date.split('/'))
-            if (mouth === currentM.toString() && year === currentY.toString()) {
+            const [month, year] = m.date.split('/');
+            if (month === currentM.toString() && year === currentY.toString()) {
               setCurrentMonth(m);
-            }
-          }));
-
-          const compras = await gmail.readInboxContent("from:pncalerts@visa.com", result.lastSearch);
-
-          for (const compra of compras) {
-            const [dia, mes, ano] = compra.date.split('/');
-            const key = `${mes}/${ano}`;
-            const matchingMonth = newMonths.find((month) => month.date === key);
-            console.log('matchingMonth: ', matchingMonth);
-
-            if (matchingMonth) {
-              const comprasArray = JSON.stringify([...matchingMonth.compras, compra]);
-              try {
-                const updatedMonth = await pb.collection('month').update(
-                  matchingMonth.id,
-                  { compras: comprasArray },
-                  { requestKey: null }
-                );
-
-                newMonths = newMonths.filter((month) => month.id !== updatedMonth.id);
-                newMonths.push(updatedMonth);
-                console.log('UPDATED MONTH: ', updatedMonth);
-              } catch (e) {
-                console.error(e);
-              }
+              cm = m
             }
           }
 
+          await processCompras(gmail, pb, newMonths, result.lastSearch, cm);
 
-          setMonths(newMonths);
+          await pb.collection('users').update(result.id, {lastSearch: new Date});
           setUser(result);
         } catch (e) {
           console.error("Error fetching user data: ", e);
         }
       }
     }
+
     getUser();
-    console.log('OURSIDE GET USER');
   }, [pb.authStore.isValid, pb.authStore.model?.id, teste]);
 
+
+  async function processCompras(gmail, pb, newMonths, searchQuery,cm) {
+    const compras = await gmail.readInboxContent("from:pncalerts@visa.com", searchQuery);
+  
+    for (const compra of compras) {
+      const [dia, mes, ano] = compra.date.split('/');
+      const key = `${mes}/${ano}`;
+      const matchingMonth = newMonths.find((month) => month.date === key);
+  
+      if (matchingMonth) {
+        const comprasArray = JSON.stringify([...matchingMonth.compras, compra]);
+        try {
+          const updatedMonth = await pb.collection('month').update(
+            matchingMonth.id,
+            { compras: comprasArray, spent: matchingMonth.spent + compra.price },
+            { requestKey: null }
+          );
+            
+          if(updatedMonth.id === cm.id){
+            setCurrentMonth(updatedMonth)
+          }
+          
+          newMonths = newMonths.filter((month) => month.id !== updatedMonth.id);
+          newMonths.push(updatedMonth);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    }
+    setMonths(newMonths);
+  }
 
 
 
   useEffect(() => {
+    console.log(currentMonth);
     async function updateSpent(sum) {
       const res = await pb.collection('month').update(currentMonth.id, { spent: sum })
     }
@@ -130,7 +138,6 @@ export const UserProvider = ({ children }) => {
     }
 
     setMonths(newMonths);
-    console.log(updatedMonth);
     return updatedMonth;
   }
 
@@ -138,8 +145,6 @@ export const UserProvider = ({ children }) => {
   async function createMonth(data) {
     try {
       const month = await pb.collection('month').create({ ...data, userId: user.id });
-      console.log(user.id)
-      console.log([...user.months, month.id])
       const User = await pb.collection('users').update(user.id, { months: [...user.months, month.id] });
       setMonths([...months, month])
       setUser(User)
@@ -187,7 +192,7 @@ export const UserProvider = ({ children }) => {
       setMonths(newMonths);
       setUser({ ...user, months: newMonths })
 
-      console.log(user);
+      
 
       if (id === currentMonth.id) {
         setCurrentMonth({})

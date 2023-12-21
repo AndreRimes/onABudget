@@ -45,7 +45,7 @@ class GmailAPI {
       refresh_token: process.env.NEXT_PUBLIC_REFRESH_TOKEN,
       grant_type: "refresh_token",
     });
-    
+
     var config = {
       method: "post",
       url: "https://accounts.google.com/o/oauth2/token",
@@ -147,7 +147,6 @@ class GmailAPI {
         }
     }
 
-     console.log(compras);
      return compras;
   };
 }
