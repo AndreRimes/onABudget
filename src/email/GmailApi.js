@@ -130,19 +130,21 @@ class GmailAPI {
         const message = await this.readGmailContent(messages[i].threadId); 
         const encodedMessage = await message.payload.body.data
         const decodedStr = Buffer.from(encodedMessage, "base64").toString("ascii");
-        const date = new Date(message.payload.headers[16].value)
+        const date = new Date(message.payload.headers[16].value);
+
         var day = date.getDate()
         var month = (date.getMonth() + 1)
         var year = date.getFullYear()
 
-        if(lastSearch === '' || yearSearch < year || monthSearch < month || daySearch < day ){
+        if(lastSearch === '' || yearSearch < year || monthSearch < month || daySearch < day){
           const transactionInfo = extractTransactionInfo(decodedStr);
           const compra = {
             categoria: '',
             date: day.toString() + "/" + month.toString() + '/' + yearSearch.toString(),
             price: transactionInfo.transactionAmount,
-            store : transactionInfo.merchant
+            store : transactionInfo.merchant,
           }
+          
           compras.push(compra)
         }
     }

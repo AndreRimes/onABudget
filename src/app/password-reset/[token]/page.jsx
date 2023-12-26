@@ -96,16 +96,16 @@ export default function ConfirmPasswordReset({ params }) {
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
-            <div className="w-2/5 h-3/5 bg-Primary rounded-xl flex flex-col justify-center items-center">
+            <div className="w-2/5 h-3/5 bg-Primary rounded-xl flex flex-col justify-evenly items-center">
                 {error ? <Error message={"Error ao atualizar a senha"} /> : <div className='h-8'></div>}
-                <div className="w-full h-[10%] flex flex-col items-center mt-10">
+                <div className="w-full h-[2%] flex flex-col items-center">
                     <h1 className="text-2xl font-bold">Esqueceu sua Senha?</h1>
                     <div className="h-10 flex items-center justify-center"></div>
                 </div>
 
-                <div className="w-full h-1/2 flex flex-col items-center justify-evenly">
-                    <div className="flex flex-col items-center justify-evenly h-2/5 w-full">
-                        <div className="w-1/2 mb-3">
+                <div className="w-full h-2/3 flex flex-col items-center justify-evenly">
+                    <div className="flex h-[80%] flex-col items-center justify-evenly  w-full">
+                        <div className="w-1/2">
                             <div className="input-group">
                                 <input
                                     ref={senha1Ref}
@@ -121,7 +121,7 @@ export default function ConfirmPasswordReset({ params }) {
                             </div>
                         </div>
 
-                        <div className="w-1/2 mb-3">
+                        <div className="w-1/2 ">
                             <div className="input-group">
                                 <input
                                     ref={senha2Ref}
@@ -136,8 +136,10 @@ export default function ConfirmPasswordReset({ params }) {
                                 </label>
                             </div>
                         </div>
-                        <h1 className='text-red-500 text-lg font-semibold '>{message}</h1>
+                        {(senha1 !== '' || senha2 !== '') && <h1 className='text-red-500 text-md font-semibold '>{message}</h1>}
                     </div>
+
+
                     <button
                         onClick={() => handleClick()}
                         className={`${loading || message !== '' ? "bg-gray-500 cursor-not-allowed" : "bg-Secundary hover:scale-110"} w-1/2 h-10 rounded-xl transition-all ease-out duration-200`}

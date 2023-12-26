@@ -71,13 +71,14 @@ export default function PasswordReset() {
                                     value={emailValue}
                                     type="email"
                                     className={`w-full input ${emailValue !== '' ? 'inputFocus' : ''}`}
+                                    disabled={success}
                                 />
                                 <label className={`user-label ${emailValue !== '' ? 'labelFocus' : ''}`}>
                                     Email
                                 </label>
                             </div>
 
-                            <h1 className="text-Error font-semibold mt-1 ">{message}</h1>
+                            {emailValue !== '' && <h1 className="text-Error font-semibold mt-1 ">{message}</h1>}
                         </div>
                     </div>
                     <button

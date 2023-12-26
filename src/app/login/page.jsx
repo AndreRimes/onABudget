@@ -2,7 +2,7 @@
 import Image from 'next/image';
 import graphImage from '../../../public/graph.png';
 import useAuth from '@/Domain/hooks/useAuth';
-import { useState,useRef } from 'react'
+import { useState, useRef } from 'react'
 import Loading from '@/components/loading'
 import Error from '@/components/error';
 import Link from 'next/link';
@@ -11,11 +11,19 @@ export default function Login() {
     const { login, loading, error } = useAuth();
     const [email, setEmail] = useState('')
     const [password, setPassword] = useState('')
+    const [isValidEmail, setisValidEmail] = useState(false)
 
 
     function handleClick() {
         login({ email: email, password: password });
     }
+
+    function handleChange(e) {
+        setEmail(e.target.value);
+        const emailPattern = /^[a-z0-9.]+@[a-z0-9]+\.[a-z]+(\.[a-z]+)?$/i;
+        setisValidEmail(emailPattern.test(e.target.value))
+    }
+
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
@@ -28,44 +36,47 @@ export default function Login() {
                     </div>
                 </div>
 
-                <div className="flex flex-col items-center justify-evenly h-[35%] w-full">
+                <div className="flex flex-col items-center justify-evenly h-[43%] w-full">
                     <div className="w-1/2">
                         <div className="input-group">
-                            <input 
-                            onChange={(e)=> setEmail(e.target.value)}
-                            type="email"
-                            className={`w-full input ${email!== '' ? 'inputFocus' : '' }`}
+                            <input
+                                onChange={(e) => handleChange(e)}
+                                type="email"
+                                className={`w-full input ${email !== '' ? 'inputFocus' : ''}`}
                             />
-                            <label className={`user-label ${email!== '' ? 'labelFocus' : '' } `}>Email</label>
+                            <label className={`user-label ${email !== '' ? 'labelFocus' : ''} `}>Email</label>
                         </div>
                     </div>
 
-                    <div className="w-1/2 h-2/5">
-                        <div className="input-group">
+                    <div className="w-1/2 h-3/5 flex flex-col items-center justify-evenly ">
+                        <div className="input-group w-full">
                             <input
                                 type="password"
                                 className={`w-full input ${password !== '' ? 'inputFocus' : ''}`}
-                                onChange={(e) => setPassword(e.target.value)}  
+                                onChange={(e) => setPassword(e.target.value)}
                             />
-                                <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
+                            <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
                         </div>
 
-                        <div className='flex flex-col justify-envenly '>
+                        <div className='h-[45%] flex flex-col justify-evenly w-full '>
                             <Link href="/signup" className='underline mt-1'>Nao possui uma Conta? </Link>
-                            <Link href='/password-reset' className='underline mt-2'>Esqueceu sua Senha?</Link>
+                            <Link href='/password-reset' className='underline '>Esqueceu sua Senha?</Link>
                         </div>
+                        
                     </div>
                 </div>
                 <div className='w-full flex items-center justify-center'>
                     {loading ? (
-                    <Loading />
+                        <Loading />
                     ) : (
                         <button
                             onClick={() => handleClick()}
-                            className="bg-Secundary w-1/2 h-10 rounded-xl hover:scale-110 transition-all ease-out duration-200 mt-3"
+                            className={`${isValidEmail && password !== '' ? ' bg-Secundary hover:scale-110 transition-all ease-out duration-200 cursor-pointer' : 'bg-gray-500 cursor-not-allowed'} w-1/2 h-10 rounded-xl mt-3`}
+                            disabled={!isValidEmail || password === ''}
                         >
                             Mandar
                         </button>
+
                     )}
                 </div>
             </div>
