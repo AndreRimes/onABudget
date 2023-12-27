@@ -39,10 +39,11 @@ export const UserProvider = ({ children }) => {
             }
           }
 
+          setUser(result);
+          setMonths(newMonths);
           await processCompras(gmail, pb, newMonths, result.lastSearch, cm);
 
           await pb.collection('users').update(result.id, {lastSearch: new Date});
-          setUser(result);
         } catch (e) {
           console.error("Error fetching user data: ", e);
         }

@@ -21,9 +21,9 @@ export default function Home() {
     setMonth(currentMonth)
   }, [currentMonth]);
 
-  if (Object.keys(user).length === 0) {
-    return <Loading />;
-  }
+  // if (Object.keys(user).length === 0) {
+  //   return <Loading />;
+  // }
 
   return (
     <div className='flex flex-col justify-evenly w-screen h-screen'>
@@ -31,7 +31,7 @@ export default function Home() {
       {isModalProfile && <ModalProfile user={user} setIsModalProfile={setIsModalProfile} />}
       <div className='w-full h-1/2 flex flex-row justify-evenly mt-4'>
         <Profile user={user} currentMonth={currentMonth} setIsModalProfile={setIsModalProfile} />
-        <Table spent={spent} currentMonth={currentMonth} />
+        <Table spent={spent} currentMonth={currentMonth} user={user} />
       </div>
 
       <div className='w-full h-3/5 flex felx-col items-center justify-center '>

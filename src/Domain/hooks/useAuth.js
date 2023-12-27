@@ -37,9 +37,10 @@ export default function useAuth() {
     }
 
     async function signup(data) {
-        setLoading(true)
+        setLoading(true);
         try {
-            const user = await pb.collection('users').create(data)
+            const user = await pb.collection('users').create(data);
+            console.log(user)
             setLoading(false)
             setError(false)
             router.push('/login')

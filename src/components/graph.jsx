@@ -10,7 +10,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
     const chartRef = useRef()
     ChartJS.register(...registerables);
 
-    const colors = ['#BB86FC', "#03DAC5",'#610C9F','#E3651D','#005B41','#4477CE']
+    const colors = ['#BB86FC', "#03DAC5", '#610C9F', '#E3651D', '#005B41', '#4477CE']
 
 
     useEffect(() => {
@@ -18,22 +18,22 @@ export default function Graph({ setMonth, setIsModalOpen }) {
             const orderedMonths = months.sort((a, b) => {
                 const [monthA, yearA] = a.date.split('/').map(Number);
                 const [monthB, yearB] = b.date.split('/').map(Number);
-             
+
                 if (yearA !== yearB) {
                     return yearA - yearB;
                 } else {
                     return monthA - monthB;
                 }
             });
-            
+
             setChartData({
                 labels: orderedMonths.map((month) => month.date),
                 datasets: [
                     {
-                        label:'Budgets',
+                        label: 'Budgets',
                         data: orderedMonths.map((month) => month.budget),
                         backgroundColor: '#CF6679',
-                        borderRadius:10,
+                        borderRadius: 10,
                     },
                     {
                         label: 'Gastos',
@@ -42,7 +42,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
                         borderColor: '#FFFFFF',
                         borderRadius: 10
                     },
-                    
+
                 ]
             })
         }
@@ -98,13 +98,11 @@ export default function Graph({ setMonth, setIsModalOpen }) {
                             maintainAspectRatio: false,
                         }}
                     />
-
+                    <div className='w-full h-10 flex justify-end mb-4 text-black font-bold'>
+                        <button onClick={handleMonth} className='button px-3  '>Criar Mes</button>
+                    </div>
                 </>
             )}
-            <div className='w-full h-10 flex justify-end mb-4 text-black font-bold'>
-                {/* <span onClick={() => handleMonth()} className="h-10 hover:scale-125 transition-all duration-300 ease-out w-10 p-0 rounded-full bg-Secundary flex items-center justify-center cursor-pointer ">+</span> */}
-                <button onClick={handleMonth} className='button px-3  '>Criar Mes</button>
-            </div>
         </div>
     );
 }
