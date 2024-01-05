@@ -26,6 +26,8 @@ export const UserProvider = ({ children }) => {
           const currentDate = new Date();
           const currentM = currentDate.getMonth() + 1;
           const currentY = currentDate.getFullYear();
+          console.log(currentM);
+          console.log(currentY)
 
           let cm = {}
           var newMonths = [];
@@ -33,7 +35,10 @@ export const UserProvider = ({ children }) => {
             const m = await pb.collection('month').getOne(id);
             newMonths.push(m);
             const [month, year] = m.date.split('/');
-            if (month === currentM.toString() && year === currentY.toString()) {
+            console.log(month);
+            console.log(year);
+
+            if (parseInt(month) === currentM && parseInt(year) === currentY) {
               setCurrentMonth(m);
               cm = m
             }
@@ -155,7 +160,7 @@ export const UserProvider = ({ children }) => {
       const currentY = currentDate.getFullYear();
 
       const [m, year] = (month.date.split('/'))
-      if (m === currentM.toString() && year === currentY.toString()) {
+      if (parseInt(m) === currentM && parseInt(year) === currentY) {
         setCurrentMonth(month);
       }
       return month

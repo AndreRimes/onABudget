@@ -45,8 +45,8 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                 <div className="w-[11%] flex items-center justify-center">
                                     {selected === -1 ?
                                         <>
-                                            <Image onClick={() => handleDeleteMonth(month.id)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} />
-                                            <Image onClick={() => setEditCompra(-1)} className="cursor-pointer" src={edit} width={24} height={24} />
+                                            <Image onClick={() => handleDeleteMonth(month.id)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} alt='delete Month' />
+                                            <Image onClick={() => setEditCompra(-1)} className="cursor-pointer" src={edit} width={24} height={24} alt='edit month' />
 
                                         </> : (<>
                                             <Image src={dots} width={30} height={30} alt='3 dots' className="cursor-pointer" onClick={() => setSelected(-1)} />
@@ -59,8 +59,12 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                 <div className="w-full min-h-[100%] h-full max-h-[100%] overflow-y-auto flex flex-col items-center">
                                     {isInput && <CompraInput index={-1} setEditCompra={setEditCompra} dateValue={''} categoriaValue={''} storeValue={''} priceValue={''} setMonth={setMonth} setIsInput={setIsInput} month={month} />}
                                     {month && month.compras && month.compras.map((compra, index) => (
-                                        editCompra === index ? <> <CompraInput index={index} key={index} setEditCompra={setEditCompra} dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} /> </> : <>
-                                            <div key={index} className="min-w-[66%] min-h-[48px] h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5 " >
+                                        editCompra === index ?
+                                            <>
+                                                <CompraInput key={index} index={index} setEditCompra={setEditCompra} dateValue={compra.date} categoriaValue={compra.categoria} storeValue={compra.store} priceValue={compra.price} setMonth={setMonth} setIsInput={setIsInput} month={month} />
+                                            </>
+                                            :
+                                            <div key={index} className="min-w-[66%] min-h-[48px] h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-5" >
                                                 <h3 className="w-[11%] h-full flex items-center justify-center">{compra.date}</h3>
                                                 <h3 className="h-full flex items-center justify-center text-center">
                                                     {compra.store.length > 10 ? `${compra.store.slice(0, 10)}...` : compra.store}
@@ -70,15 +74,15 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                                 <div className="w-[11%] h-full flex items-center justify-center">
                                                     {selected === index ?
                                                         <>
-                                                            <Image onClick={() => handleDelete(index, month)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} />
-                                                            <Image onClick={() => setEditCompra(index)} className="cursor-pointer" src={edit} width={24} height={24} />
+                                                            <Image onClick={() => handleDelete(index, month)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} alt='delete purchase' />
+                                                            <Image onClick={() => setEditCompra(index)} className="cursor-pointer" src={edit} width={24} height={24}  alt='edit purchase' />
                                                         </>
                                                         : <>
                                                             <Image src={dots} width={30} height={30} alt='3 dots' className="cursor-pointer" onClick={(e) => setSelected(index)} />
                                                         </>}
                                                 </div>
                                             </div>
-                                        </>
+
                                     ))}
                                 </div>
                             </StyledContainer>
