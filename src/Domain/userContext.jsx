@@ -2,7 +2,6 @@
 import pb from './pocketbase';
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation'
-import gmail from '../email/GmailApi.js'
 
 
 
@@ -59,39 +58,7 @@ export const UserProvider = ({ children }) => {
   }, [pb.authStore.isValid, pb.authStore.model?.id, teste]);
 
 
-  async function processCompras(gmail, pb, newMonths, searchQuery,cm) {
-    const compras = await gmail.readInboxContent("from:pncalerts@visa.com", searchQuery);
   
-    for (const compra of compras) {
-      const [dia, mes, ano] = compra.date.split('/');
-      const key = `${mes}/${ano}`;
-      const matchingMonth = newMonths.find((month) => month.date === key);
-  
-      if (matchingMonth) {
-        const comprasArray = JSON.stringify([...matchingMonth.compras, compra]);
-        try {
-          const updatedMonth = await pb.collection('month').update(
-            matchingMonth.id,
-            { compras: comprasArray, spent: matchingMonth.spent + compra.price },
-            { requestKey: null }
-          );
-            
-          if(updatedMonth.id === cm.id){
-            setCurrentMonth(updatedMonth)
-          }
-          
-          newMonths = newMonths.filter((month) => month.id !== updatedMonth.id);
-          newMonths.push(updatedMonth);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    setMonths(newMonths);
-  }
-
-
-
   useEffect(() => {
     console.log(currentMonth);
     async function updateSpent(sum) {

@@ -14,10 +14,6 @@ export default function Table({ spent, currentMonth }) {
         setHovered(null);
     }
 
-    useEffect(() => {
-        console.log(hovered)
-    }, [hovered]);
-
     return (
         <div className='w-2/5 h-full bg-Primary rounded-xl text-xl px-10' >
             <div className='w-full h-1/3 flex flex-row items-center justify-center'>
