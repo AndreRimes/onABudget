@@ -7,7 +7,9 @@ import Table from '@/components/table'
 import Graph from '@/components/graph'
 import Modal from '@/components/modal/modal'
 import ModalProfile from '@/components/modal/modalProfile'
-import Loading from '@/components/loading'
+import ModalTutorial from '@/components/modal/modalTutorial'
+
+
 
 export default function Home() {
   const { isLoged, logout } = useAuth()
@@ -21,14 +23,12 @@ export default function Home() {
     setMonth(currentMonth)
   }, [currentMonth]);
 
-  // if (Object.keys(user).length === 0) {
-  //   return <Loading />;
-  // }
 
   return (
     <div className='flex flex-col justify-evenly w-screen h-screen'>
       {isModalOpen && <Modal setIsModalOpen={setIsModalOpen} month={month} setMonth={setMonth} />}
       {isModalProfile && <ModalProfile user={user} setIsModalProfile={setIsModalProfile} />}
+      {user && user.tutorialComplete === false && <ModalTutorial setMonth={setMonth}/>}
       <div className='w-full h-1/2 flex flex-row justify-evenly mt-4'>
         <Profile user={user} currentMonth={currentMonth} setIsModalProfile={setIsModalProfile} />
         <Table spent={spent} currentMonth={currentMonth} user={user} />
@@ -38,7 +38,6 @@ export default function Home() {
         <Graph setMonth={setMonth} setIsModalOpen={setIsModalOpen} />
       </div>
 
-      {/* <button onClick={() => logout()}>LOGOUT</button> */}
     </div>
 
   )

@@ -1,13 +1,12 @@
 import Image from "next/image"
 import calendario from '../../../public/calendario.png'
-import { useRef, useState, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { useUser } from "@/Domain/userContext";
 import Error from "../error";
 
 
 
 export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, setSelected }) {
-  const mesRef = useRef();
   const { createMonth, updateMonth } = useUser();
   const [dateMessage, setDateMessage] = useState('')
   const [values, setValues] = useState(["", "", "", "", "", ""]);
@@ -69,8 +68,7 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
   async function handleClick() {
     if (!isUpdate) {
 
-      console.log(parseInt(values[0] + values[1]))
-      if (parseInt(values[0] + values[1]) > 31) {
+      if (parseInt(values[0] + values[1]) > 12) {
         setDateMessage('Data Invalida');
         return
       }
@@ -120,7 +118,7 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
         <h1 className="text-4xl font-semibold">{isUpdate ? 'Update Mes' : 'Novo Mes'}</h1>
         {dateMessage !== '' &&  <Error message={dateMessage} />}
         <div className="w-2/3 flex flex-col  ">
-          <div className="flex flex-row justify-center w-full" >
+          <div className="flex flex-row justify-center w-full">
             {values.map((value, index) => (
               <div key={index} className={`flex flex-row justify-center w-[100%] `}>
                 <div className="input-group text-tx">

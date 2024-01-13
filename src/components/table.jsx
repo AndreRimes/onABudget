@@ -20,8 +20,7 @@ export default function Table({ spent, currentMonth }) {
                 {!currentMonth ? (
                     <div className="w-full bg-Dark rounded-md animate-pulse h-1/3 "></div>
                 ) : (
-                    spent &&
-                    Object.keys(spent).map((key, index) => (
+                    spent && Object.keys(spent).map((key, index) => (
                         <div
                             key={index}
                             onMouseEnter={() => handleEnter(key)}
@@ -57,7 +56,7 @@ export default function Table({ spent, currentMonth }) {
                                 key={index} className='w-full h-1/6 flex flex-row justify-evenly rounded-lg'
                                 style={{ backgroundColor: `${hovered === key ? '#343536' : ''}` }} >
                                 <h2 className='w-24 flex items-center justify-center'>{!key ? 'Desconhecido' : key}</h2>
-                                <h2 className='w-24 flex items-center justify-center'>{spent[key]}</h2>
+                                <h2 className='w-24 flex items-center justify-center'>{(spent[key]).toFixed(2)}</h2>
                                 <h2 className='w-24 flex items-center justify-center'>-----</h2>
                                 <h2 className='w-24 flex items-center justify-center'>{(spent[key] * 100 / currentMonth?.budget).toFixed(2)}%</h2>
                             </div>

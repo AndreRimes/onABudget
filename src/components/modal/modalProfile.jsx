@@ -1,11 +1,15 @@
 import Overlay from "./overlay";
 import { useState, useRef, useEffect } from "react";
 import { useUser } from "@/Domain/userContext";
+import useAuth from "@/Domain/hooks/useAuth";
+import Image from "next/image";
+import logoutImg from "../../../public/logout.png"
 
 export default function ModalProfile({ user, setIsModalProfile }) {
     const [edit, setEdit] = useState('')
     const [message, setMessage] = useState('')
     const { updateUsername, updateEmail, updatePassword } = useUser();
+    const { logout } = useAuth();
 
     const usernameRef = useRef(null);
     const emailRef = useRef(null);
@@ -86,6 +90,10 @@ export default function ModalProfile({ user, setIsModalProfile }) {
                 <h1 className="text-3xl font-semibold">Seu Perfil</h1>
                 <div className="h-[2px] w-[80%] bg-white"></div>
                 <div className="w-2/3 h-[70%]  bg-Primary rounded-xl p-10">
+                    <div className="w-full h-[24px] flex justify-end">
+                        <Image onClick={() => logout()} className="cursor-pointer hover:scale-125 transition-all duration-200 ease-out" src={logoutImg} width={24} height={24} />
+                    </div>
+
                     <div className="animate-notification w-full flex justify-center  ">
                         <h1 className="w-3/4 bg-Error flex center justify-center rounded-md text-lg font-semibold items-center">{message}</h1>
                     </div>

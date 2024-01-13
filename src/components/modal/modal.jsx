@@ -8,12 +8,14 @@ import lixo from '../../../public/lixo.png'
 import edit from '../../../public/edit.png'
 import { useUser } from "@/Domain/userContext";
 import StyledContainer from "../scrollBar";
+import Error from "../error";
 
 export default function Modal({ setIsModalOpen, month, setMonth }) {
     const [isInput, setIsInput] = useState();
     const [selected, setSelected] = useState()
     const { deleteCompra, deleteMonth } = useUser();
     const [editCompra, setEditCompra] = useState(-2)
+    const [error, setError] = useState()
 
     async function handleDelete(index, month) {
         const deletedMonth = await deleteCompra(index, month)
@@ -23,8 +25,12 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
 
     async function handleDeleteMonth(id) {
         const res = await deleteMonth(id);
-        setIsModalOpen(false);
-        setMonth({})
+        if (res === "Erro: Mes atual nao pode ser deletado, mas pode ser editado") {
+            setError(res)
+        } else {
+            setIsModalOpen(false);
+            setMonth({})
+        }
     }
 
 
@@ -36,7 +42,8 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                     <CreateMonth setMonth={setMonth} isUpdate={true} month={month} setEditCompra={setEditCompra} setSelected={setSelected} />
                 </> : <>
                     {Object.keys(month).length === 0 ? <CreateMonth setMonth={setMonth} isUpdate={false} month={month} /> : (<>
-                        <div className="w-full h-[90%] flex flex-col items-center justify-center">
+                        <div className="w-full h-[90%] flex flex-col items-center justify-evenly">
+                            {error && <Error message={error} />}
                             <div className="w-2/3 h-12 bg-Primary flex flex-row items-center justify-between px-10 rounded-2xl mb-10 ">
                                 <h3 className="w-[11%] flex items-center justify-center">Data</h3>
                                 <h3 className="w-[11%]  flex items-center justify-center">Loja</h3>
@@ -75,7 +82,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                                     {selected === index ?
                                                         <>
                                                             <Image onClick={() => handleDelete(index, month)} className="mr-4 cursor-pointer" src={lixo} width={24} height={24} alt='delete purchase' />
-                                                            <Image onClick={() => setEditCompra(index)} className="cursor-pointer" src={edit} width={24} height={24}  alt='edit purchase' />
+                                                            <Image onClick={() => setEditCompra(index)} className="cursor-pointer" src={edit} width={24} height={24} alt='edit purchase' />
                                                         </>
                                                         : <>
                                                             <Image src={dots} width={30} height={30} alt='3 dots' className="cursor-pointer" onClick={(e) => setSelected(index)} />

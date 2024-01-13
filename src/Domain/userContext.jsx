@@ -25,17 +25,13 @@ export const UserProvider = ({ children }) => {
           const currentDate = new Date();
           const currentM = currentDate.getMonth() + 1;
           const currentY = currentDate.getFullYear();
-          console.log(currentM);
-          console.log(currentY)
 
-          let cm = {}
+          let cm 
           var newMonths = [];
           for (const id of result.months) {
             const m = await pb.collection('month').getOne(id);
             newMonths.push(m);
             const [month, year] = m.date.split('/');
-            console.log(month);
-            console.log(year);
 
             if (parseInt(month) === currentM && parseInt(year) === currentY) {
               setCurrentMonth(m);
@@ -43,24 +39,26 @@ export const UserProvider = ({ children }) => {
             }
           }
 
-          setUser(result);
+          console.log(!cm)
+          if (!cm) {
+            setUser({...result, tutorialComplete : false})
+          } else {
+            setUser(result);
+          }
           setMonths(newMonths);
-          await processCompras(gmail, pb, newMonths, result.lastSearch, cm);
 
-          await pb.collection('users').update(result.id, {lastSearch: new Date});
         } catch (e) {
           console.error("Error fetching user data: ", e);
         }
       }
     }
 
-    getUser();
+    getUser().then(console.log(currentMonth));
   }, [pb.authStore.isValid, pb.authStore.model?.id, teste]);
 
 
-  
+
   useEffect(() => {
-    console.log(currentMonth);
     async function updateSpent(sum) {
       const res = await pb.collection('month').update(currentMonth.id, { spent: sum })
     }
@@ -130,6 +128,13 @@ export const UserProvider = ({ children }) => {
       if (parseInt(m) === currentM && parseInt(year) === currentY) {
         setCurrentMonth(month);
       }
+
+      if (!user.tutorialComplete) {
+        const newUser = await pb.collection('users').update(user.id, { tutorialComplete: true })
+        setUser(newUser);
+      }
+
+
       return month
     } catch (e) {
       console.log(e)
@@ -157,19 +162,14 @@ export const UserProvider = ({ children }) => {
 
   async function deleteMonth(id) {
     try {
+      if (id === currentMonth.id) {
+        return "Erro: Mes atual nao pode ser deletado, mas pode ser editado"
+      }
       const deleteMonth = await pb.collection('month').delete(id);
       const newMonths = months.filter((month) => month.id !== id);
-      // [x] set newMonths
-      // [x] set user.months
-      // [x] month -> ja setei no front
+
       setMonths(newMonths);
-      setUser({ ...user, months: newMonths })
-
-      
-
-      if (id === currentMonth.id) {
-        setCurrentMonth({})
-      }
+      setUser({ ...user, months: newMonths.map((m) => m.id)})
 
       return deleteMonth;
     } catch (e) {
