@@ -75,73 +75,79 @@ export default function Signup() {
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
-            <div className="w-2/5 h-4/5 bg-Primary rounded-xl flex flex-col items-center">
+            <div className="w-[85%] h-[75%] lg:w-2/5 lg:h-4/5 bg-Primary rounded-xl flex flex-col items-center justify-between">
                 {error ? <Error message={'Email ou username ja esta sendo utilizado'} /> : <div className='h-8'></div>}
-                <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
-                <div className="w-32 h-32 rounded-full flex items-center justify-center border border-tx">
-                    <Image src={graphImage} width={85} height={85} alt="graph image" />
-                </div>
-                <div className={`flex flex-col items-center justify-evenly ${password ===''? 'h-[50%]' : 'h-[56%]'} w-full`}>
-                    <div className="w-1/2">
-                        <div className="input-group">
-                            <input
-                                onChange={(e) => handleChangeEmail(e)}
-                                type="email"
-                                className={`w-full input ${email !== '' ? 'inputFocus' : ''}`}
-                            />
-                            <label className={`user-label ${email !== '' ? 'labelFocus' : ''} `}>Email</label>
-                        </div>
-                    </div>
-                    <div className="w-1/2">
-                        <div className="input-group">
-                            <input
-                                type="Nome"
-                                className={`w-full input ${name !== '' ? 'inputFocus' : ''}`}
-                                onChange={(e) => setName(e.target.value)}
-                            />
-                            <label className={`user-label ${name !== '' ? 'labelFocus' : ''} `}>Nome</label>
-                        </div>
-                    </div>
-                    <div className="w-1/2">
-                        <div className="input-group">
-                            <input
-                                type="password"
-                                className={`w-full input ${password !== '' ? 'inputFocus' : ''}`}
-                                onChange={(e) => handleChangePassword(e)}
-                            />
-                            <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
-                        </div>
-                        {password !== '' && <ul className='w-[200%]'>
-                            <li className={`${validPassword[0] ? 'text-green-600' : 'text-red-600'}`} > Senha deve conter pelo menos 7 characteres</li>
-                            <li className={`${validPassword[1] ? 'text-green-600' : 'text-red-600'}`} > Senha deve conter pelo menos 1 numero</li>
-                            <li className={`${validPassword[2] ? 'text-green-600' : 'text-red-600'}`} > Senha deve conter pelo menos 1 charactere especial</li>
-                        </ul>}
+                <div className="lg:h-[30%] w-full flex flex-col items-center ">
+                    <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
 
-                        <Link href="/login" className='underline'>Ja possui uma conta? </Link>
+                    <div className="w-[23vw] h-[23vw] lg:w-[7.8vw] lg:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
+                        <Image src={graphImage} className="w-[100%] h-[100%] rounded-full" alt="graph image" />
                     </div>
                 </div>
-                
-                {loading ? (
-                    <Loading />
-                ) : (
-                    <button
-                        onClick={() => handleClick()}
-                        className={` w-1/2 h-10 rounded-xl  ${email.trim() === '' ||
+
+                <div className='w-full lg:h-[70%] h-[60%] flex flex-col items-center justify-evenly'>
+                    <div className={`flex flex-col items-center justify-evenly ${password === '' ? 'h-[75%] lg:h-[70%]' : 'h-[80%]'} w-full`}>
+                        <div className="w-2/3 lg:w-1/2">
+                            <div className="input-group">
+                                <input
+                                    onChange={(e) => handleChangeEmail(e)}
+                                    type="email"
+                                    className={`w-full input ${email !== '' ? 'inputFocus' : ''}`}
+                                />
+                                <label className={`user-label ${email !== '' ? 'labelFocus' : ''} `}>Email</label>
+                            </div>
+                        </div>
+                        <div className="w-2/3 lg:w-1/2">
+                            <div className="input-group">
+                                <input
+                                    type="Nome"
+                                    className={`w-full input ${name !== '' ? 'inputFocus' : ''}`}
+                                    onChange={(e) => setName(e.target.value)}
+                                />
+                                <label className={`user-label ${name !== '' ? 'labelFocus' : ''} `}>Nome</label>
+                            </div>
+                        </div>
+                        <div className="w-2/3 lg:w-1/2">
+                            <div className="input-group">
+                                <input
+                                    type="password"
+                                    className={`w-full input ${password !== '' ? 'inputFocus' : ''}`}
+                                    onChange={(e) => handleChangePassword(e)}
+                                />
+                                <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
+                            </div>
+                            {password !== '' && <ul className='w-full lg:w-[200%]'>
+                                <li className={`${validPassword[0] ? 'text-green-600' : 'text-red-600'}`} > 7 characteres</li>
+                                <li className={`${validPassword[1] ? 'text-green-600' : 'text-red-600'}`} > 1 numero</li>
+                                <li className={`${validPassword[2] ? 'text-green-600' : 'text-red-600'}`} > 1 charactere especial</li>
+                            </ul>}
+
+                            <Link href="/login" className='underline'>Ja possui uma conta? </Link>
+                        </div>
+                    </div>
+
+                    {loading ? (
+                        <Loading />
+                    ) : (
+                        <button
+                            onClick={() => handleClick()}
+                            className={` w-2/3 lg:w-1/2 h-10 rounded-xl  ${email.trim() === '' ||
                                 name.trim() === '' ||
                                 !isValidEmail ||
                                 validPassword.includes(false) ?
                                 'bg-gray-500 cursor-not-allowed' :
                                 'bg-Secundary hover:scale-110 transition-all ease-out duration-200'
-                            }`}
-                        disabled={
-                            email.trim() === '' ||
-                            name.trim() === '' ||
-                            !isValidEmail ||
-                            validPassword.includes(false)}
-                    >
-                        Mandar
-                    </button>
-                )}
+                                }`}
+                            disabled={
+                                email.trim() === '' ||
+                                name.trim() === '' ||
+                                !isValidEmail ||
+                                validPassword.includes(false)}
+                        >
+                            Mandar
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
     )

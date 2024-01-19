@@ -27,17 +27,19 @@ export default function Login() {
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
-            <div className="w-2/5 h-4/5 bg-Primary rounded-xl flex flex-col items-center">
+            <div className="w-[88%] h-[65%] lg:w-2/5 lg:h-4/5 bg-Primary rounded-xl flex flex-col items-center">
                 {error ? <Error message={'Error Senha ou email Invalidos'} /> : <div className='h-8'></div>}
+
                 <div className='w-full h-2/6 flex flex-col items-center justify-evenly  '>
                     <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
-                    <div className="w-32 h-32 rounded-full flex items-center justify-center border border-tx">
-                        <Image src={graphImage} width={85} height={85} alt="graph image" />
+                    <div className="w-[23vw] h-[23vw] lg:w-[7.8vw] lg:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
+                        <Image src={graphImage} className="w-[100%] h-[100%] rounded-full" alt="graph image" />
                     </div>
+
                 </div>
 
                 <div className="flex flex-col items-center justify-evenly h-[43%] w-full">
-                    <div className="w-1/2">
+                    <div className="lg:w-1/2 w-2/3">
                         <div className="input-group">
                             <input
                                 onChange={(e) => handleChange(e)}
@@ -48,7 +50,7 @@ export default function Login() {
                         </div>
                     </div>
 
-                    <div className="w-1/2 h-3/5 flex flex-col items-center justify-evenly ">
+                    <div className="lg:w-1/2 w-2/3 h-3/5 flex flex-col items-center justify-evenly ">
                         <div className="input-group w-full">
                             <input
                                 type="password"
@@ -62,16 +64,17 @@ export default function Login() {
                             <Link href="/signup" className='underline mt-1'>Nao possui uma Conta? </Link>
                             <Link href='/password-reset' className='underline '>Esqueceu sua Senha?</Link>
                         </div>
-                        
+
                     </div>
                 </div>
+
                 <div className='w-full flex items-center justify-center'>
                     {loading ? (
                         <Loading />
                     ) : (
                         <button
                             onClick={() => handleClick()}
-                            className={`${isValidEmail && password !== '' ? ' bg-Secundary hover:scale-110 transition-all ease-out duration-200 cursor-pointer' : 'bg-gray-500 cursor-not-allowed'} w-1/2 h-10 rounded-xl mt-3`}
+                            className={`${isValidEmail && password !== '' ? ' bg-Secundary hover:scale-110 transition-all ease-out duration-200 cursor-pointer' : 'bg-gray-500 cursor-not-allowed'} lg:w-1/2 w-2/3 h-10 rounded-xl mt-3`}
                             disabled={!isValidEmail || password === ''}
                         >
                             Mandar
@@ -79,6 +82,7 @@ export default function Login() {
 
                     )}
                 </div>
+
             </div>
         </div>
     );
