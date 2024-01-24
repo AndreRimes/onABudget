@@ -78,16 +78,16 @@ export default function Signup() {
             <div className="w-[85%] h-[75%] lg:w-2/5 lg:h-4/5 bg-Primary rounded-xl flex flex-col items-center justify-between">
                 {error ? <Error message={'Email ou username ja esta sendo utilizado'} /> : <div className='h-8'></div>}
                 <div className="lg:h-[30%] w-full flex flex-col items-center ">
-                    <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
+                    <h1 className="text-2xl font-semibold mb-4">On a Budget Signup</h1>
 
-                    <div className="w-[23vw] h-[23vw] lg:w-[7.8vw] lg:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
+                    <div className="w-[30vw] h-[30vw] xl:w-[7.8vw] xl:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
                         <Image src={graphImage} className="w-[100%] h-[100%] rounded-full" alt="graph image" />
                     </div>
                 </div>
 
-                <div className='w-full lg:h-[70%] h-[60%] flex flex-col items-center justify-evenly'>
-                    <div className={`flex flex-col items-center justify-evenly ${password === '' ? 'h-[75%] lg:h-[70%]' : 'h-[80%]'} w-full`}>
-                        <div className="w-2/3 lg:w-1/2">
+                <div className={` ${password === '' ? 'xl:h-[70%] h-[60%]' : 'h-[90%]'}  w-full  flex flex-col items-center justify-evenly`}>
+                    <div className={`flex flex-col items-center justify-evenly ${password === '' ? 'h-[75%] lg:h-[70%]' : 'h-[85%]'} w-full`}>
+                        <div className="w-2/3 xl:w-1/2">
                             <div className="input-group">
                                 <input
                                     onChange={(e) => handleChangeEmail(e)}
@@ -97,7 +97,7 @@ export default function Signup() {
                                 <label className={`user-label ${email !== '' ? 'labelFocus' : ''} `}>Email</label>
                             </div>
                         </div>
-                        <div className="w-2/3 lg:w-1/2">
+                        <div className="w-2/3 xl:w-1/2">
                             <div className="input-group">
                                 <input
                                     type="Nome"
@@ -107,7 +107,7 @@ export default function Signup() {
                                 <label className={`user-label ${name !== '' ? 'labelFocus' : ''} `}>Nome</label>
                             </div>
                         </div>
-                        <div className="w-2/3 lg:w-1/2">
+                        <div className="w-2/3 xl:w-1/2">
                             <div className="input-group">
                                 <input
                                     type="password"
@@ -116,7 +116,7 @@ export default function Signup() {
                                 />
                                 <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
                             </div>
-                            {password !== '' && <ul className='w-full lg:w-[200%]'>
+                            {password !== '' && <ul className='w-full xl:w-[200%]'>
                                 <li className={`${validPassword[0] ? 'text-green-600' : 'text-red-600'}`} > 7 characteres</li>
                                 <li className={`${validPassword[1] ? 'text-green-600' : 'text-red-600'}`} > 1 numero</li>
                                 <li className={`${validPassword[2] ? 'text-green-600' : 'text-red-600'}`} > 1 charactere especial</li>
@@ -131,7 +131,7 @@ export default function Signup() {
                     ) : (
                         <button
                             onClick={() => handleClick()}
-                            className={` w-2/3 lg:w-1/2 h-10 rounded-xl  ${email.trim() === '' ||
+                            className={` w-2/3 xl:w-1/2 h-10 rounded-xl  ${email.trim() === '' ||
                                 name.trim() === '' ||
                                 !isValidEmail ||
                                 validPassword.includes(false) ?

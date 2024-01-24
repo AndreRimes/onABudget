@@ -10,6 +10,8 @@ export default function ModalProfile({ user, setIsModalProfile }) {
     const [message, setMessage] = useState('')
     const { updateUsername, updateEmail, updatePassword } = useUser();
     const { logout } = useAuth();
+    const [numChar, setNumChar] = useState(window.innerWidth <= 1000 ? 15 : 26);
+
 
     const usernameRef = useRef(null);
     const emailRef = useRef(null);
@@ -64,11 +66,6 @@ export default function ModalProfile({ user, setIsModalProfile }) {
             setMessage('');
         }
     }
-
-    useEffect(() => {
-        setMessage('');
-    }, [edit]);
-
     async function handleClick() {
         if (edit === 'username') {
             const newMessage = await updateUsername(usernameRef.current.value);
@@ -83,15 +80,36 @@ export default function ModalProfile({ user, setIsModalProfile }) {
     }
 
 
+    useEffect(() => {
+        function handelResize(){
+           if(window.innerWidth <= 700){
+                setNumChar(10);
+            }else if(window.innerWidth <= 1000){
+                setNumChar(20);
+            } else {
+                setNumChar(26);
+            }
+        }
+
+
+        window.addEventListener('resize', handelResize)
+        
+
+        return ()=>{
+            window.removeEventListener('resize', handelResize);
+        }
+    },[])
+
+
 
     return (
         <Overlay setIsModalOpen={setIsModalProfile}>
             <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop  text-white w-2/3 h-5/6 rounded-2xl flex flex-col items-center justify-evenly">
                 <h1 className="text-3xl font-semibold">Seu Perfil</h1>
-                <div className="h-[2px] w-[80%] bg-white"></div>
-                <div className="w-2/3 h-[70%]  bg-Primary rounded-xl p-10">
+                <div className="h-[2px] w-11/12  lg:w-[80%] bg-white"></div>
+                <div className="w-11/12 lg:w-2/3 h-[70%]  bg-Primary rounded-xl p-10">
                     <div className="w-full h-[24px] flex justify-end">
-                        <Image onClick={() => logout()} className="cursor-pointer hover:scale-125 transition-all duration-200 ease-out" src={logoutImg} width={24} height={24} />
+                        <Image onClick={() => logout()} className="cursor-pointer hover:scale-125 transition-all duration-200 ease-out" src={logoutImg} width={24} height={24} alt='logout button' />
                     </div>
 
                     <div className="animate-notification w-full flex justify-center  ">
@@ -102,8 +120,8 @@ export default function ModalProfile({ user, setIsModalProfile }) {
                         <h2 className="mb-2 ">Username:</h2>
                         {edit === 'username' ?
                             <>
-                                <input placeholder="Username: " onChange={handleChange} ref={usernameRef} className="border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
-                                <div className="w-[48%] flex justify-end mt-3">
+                                <input placeholder="Username: " onChange={handleChange} ref={usernameRef} className="border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black overflow-hidden" />
+                                <div className="w-2/3 lg:w-[48%] flex justify-end mt-3">
                                     {message === 'Username Muito Curto' || message === 'Username igual ao atual' ?
                                         <button className="bg-gray-600 cursor-not-allowed h-6 w-14 px-10 rounded-md flex items-center justify-center">Salvar</button>
                                         : <>
@@ -112,15 +130,15 @@ export default function ModalProfile({ user, setIsModalProfile }) {
                                 </div>
                             </>
                             :
-                            <div onClick={() => setEdit('username')} className="hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold trasition-all duration-300 ease-out cursor-pointer border border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4">{user.username}</div>}
+                            <div onClick={() => setEdit('username')} className=" overflow-hidden hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold trasition-all duration-300 ease-out cursor-pointer border border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4">{user.username}</div>}
                     </div>
 
                     <div className="mb-3">
                         <h2 className="mb-2">Email:</h2>
                         {edit === 'email' ?
                             <>
-                                <input placeholder="Email: " onChange={handleChange} ref={emailRef} className="border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
-                                <div className="w-[48%] flex justify-end mt-3">
+                                <input placeholder="Email: " onChange={handleChange} ref={emailRef} className=" overflow-hidden border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
+                                <div className="w-2/3 lg:w-[48%] flex justify-end mt-3">
                                     {message === 'Email Invalido' || message === 'Email igual ao atual' ?
                                         <button className="bg-gray-600 cursor-not-allowed h-6 w-14 px-10 rounded-md flex items-center justify-center">Salvar</button>
                                         : <>
@@ -129,8 +147,8 @@ export default function ModalProfile({ user, setIsModalProfile }) {
                                 </div>
                             </>
                             :
-                            <div onClick={() => setEdit('email')} className="hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold  trasition-all duration-300 ease-out cursor-pointer border border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4">
-                                {user.email.length > 26 ? `${user.email.slice(0, 26)}...` : user.email}
+                            <div onClick={() => setEdit('email')} className="hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold  trasition-all duration-300 ease-out cursor-pointer border border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4 overflow-hidden">
+                                {user.email.length > numChar ? `${user.email.slice(0, numChar)}...` : user.email}
                             </div>
                         }
                     </div>
@@ -139,9 +157,9 @@ export default function ModalProfile({ user, setIsModalProfile }) {
                         <h2 className="mb-2">Senha:</h2>
                         {edit === 'senha' ?
                             <>
-                                <input placeholder="Senha: " type='password' onChange={handleChange} ref={senhaRef} className="mb-4 border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
-                                <input placeholder="Confirmacao de senha: " type='password' onChange={handleChange} ref={senha2Ref} className="border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
-                                <div className="w-[48%] flex justify-end mt-3">
+                                <input placeholder="Senha: " type='password' onChange={handleChange} ref={senhaRef} className="  overflow-hidden mb-4 border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
+                                <input placeholder="Confirmacao de senha: " type='password' onChange={handleChange} ref={senha2Ref} className=" overflow-hidden border-tx w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4 text-black" />
+                                <div className="w-2/3 lg:w-[48%] flex justify-end mt-3">
                                     {message === 'Senha deve ter pelo menos 8 caracteres' || message === 'Senha deve conter pelo menos 1 número' || message === 'Senha deve conter pelo menos 1 caractere especial, como *' || message === 'As senhas não coincidem' ?
                                         <button className=" bg-gray-600 cursor-not-allowed h-6 w-14 px-10 rounded-md flex items-center justify-center">Salvar</button>
                                         : <>
@@ -151,13 +169,11 @@ export default function ModalProfile({ user, setIsModalProfile }) {
 
                             </>
                             :
-                            <div onClick={() => setEdit('senha')} className="hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold  trasition-all duration-300 ease-out cursor-pointer  border border-tx w-1/2 h-10 rounded-xl text-xl flex items-center px-4">
+                            <div onClick={() => setEdit('senha')} className="  overflow-hidden hover:scale-110 hover:bg-tx hover:text-black hover:font-semibold  trasition-all duration-300 ease-out cursor-pointer  border border-tx  w-2/3 lg:w-1/2 h-10 rounded-xl text-xl flex items-center px-4">
                                 *******
                             </div>
                         }
                     </div>
-
-
                 </div>
             </div>
         </Overlay >

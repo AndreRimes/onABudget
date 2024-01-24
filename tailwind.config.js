@@ -24,8 +24,18 @@ module.exports = {
         dropTop: 'dropTop 0.2s ease-in',
         notification: 'notification 0.3s ease-out',
         loading: 'loading 2s infinite ease-in-out',
+        sideBarOpen: 'sideBarOpen 0.3s ease-out',
+        sideBarClose: 'sideBarClose 0.3s ease-in',
       },
       keyframes: {
+        sideBarOpen: {
+          '0%': { transform: 'translateX(-50%)' },
+          '100%': { transform: 'translateX(0%)' }
+        },
+        sideBarClose: {
+          '0%': { transform: 'translateX(0%)' },
+          '100%': { transform: 'translateX(-50%)' }
+        },
         notification: {
           '0%': { transform: 'translateY(-120vh)', opacity: '0' },
           '100%': { transform: 'translateY(-30vh)', opacity: '1' }

@@ -31,7 +31,7 @@ export default function Login() {
                 {error ? <Error message={'Error Senha ou email Invalidos'} /> : <div className='h-8'></div>}
 
                 <div className='w-full h-2/6 flex flex-col items-center justify-evenly  '>
-                    <h1 className="text-2xl font-semibold mb-4">Bem Vindo ao On A Budget</h1>
+                    <h1 className="text-2xl font-semibold mb-4">On a Budget Login</h1>
                     <div className="w-[23vw] h-[23vw] lg:w-[7.8vw] lg:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
                         <Image src={graphImage} className="w-[100%] h-[100%] rounded-full" alt="graph image" />
                     </div>

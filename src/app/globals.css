@@ -88,4 +88,25 @@ input[type="number"] {
     padding: 0 .2em;
     color: #BB86FC;
    }
+
+
+  @media screen and (max-height: 700px) {
+    .tableHeight{
+      max-height: 10vh;
+    }
+    
+  }
+
+ @media screen  and (min-height: 701px) and (max-height: 800px) {
+    .tableHeight{
+      max-height: 14vh;
+    }
+ }
+
+ @media screen  and (min-height: 801px){
+  .tableHeight{
+    max-height: 20vh;
+  }
+  
+}
    

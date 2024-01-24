@@ -1,11 +1,9 @@
 import styled from 'styled-components';
 
 const StyledContainer = styled.div`
-  max-height: 50%; 
-  overflow: auto;
   width: 100%;
 
-
+ 
   /* Track */
   ::-webkit-scrollbar {
     width: 12px;

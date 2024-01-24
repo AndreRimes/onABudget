@@ -107,40 +107,40 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
   }
 
   return (
-    <div className="w-3/5 h-4/5">
-      {isUpdate ? <>
+    <div className=" w-full lg:w-3/5 h-4/5">
+      {isUpdate &&
         <div className="w-full flex justify-end">
           <h1 onClick={() => handleBack()} className="cursor-pointer text-xl font-bold hover:scale-125 transition-all duration-300 ease-out">X</h1>
         </div>
-      </> : <></>}
+      }
       <div className="flex flex-col items-center justify-evenly h-[100%] w-full">
-        <Image src={calendario} width={100} height={100} alt='calendario' />
+        <div className="w-[23vw] h-[23vw] lg:w-[7.8vw] lg:h-[7.8vw] rounded-full flex items-center justify-center border border-tx">
+          <Image src={calendario} className="w-[90%] h-[90%] rounded-full" alt="graph image" />
+        </div>
         <h1 className="text-4xl font-semibold">{isUpdate ? 'Update Mes' : 'Novo Mes'}</h1>
-        {dateMessage !== '' &&  <Error message={dateMessage} />}
-        <div className="w-2/3 flex flex-col  ">
-          <div className="flex flex-row justify-center w-full">
+        {dateMessage !== '' && <Error message={dateMessage} />}
+          <div className="w-2/3 lg:w-2/3 flex flex-row justify-center">
             {values.map((value, index) => (
-              <div key={index} className={`flex flex-row justify-center w-[100%] `}>
-                <div className="input-group text-tx">
-                  <input
-                    type="text"
-                    id={`input-${index}`}
-                    pattern="[0-9]"
-                    className={`text-tx border-2  ${index === 1 ? 'w-[69.9%]' : 'w-[80%]'}  h-[100%] p-2 rounded-lg mr-2 font-bold input ${isUpdate ? 'cursor-not-allowed' : ''}  ${value.length !== 0 ? 'inputFocus' : ''}`}
-                    onChange={(e) => handleChange(index, e.target.value)}
-                    style={{ color: 'white' }}
-                    onKeyDown={(e) => handleKeyDown(index, e)}
-                    value={value}
-                    disabled={isUpdate}
-                    maxLength="1"
-                  />
-                  <label className={`user-label ${value.length !== 0 ? 'labelFocus' : ''} `}> {index <= 1 ? 'M' : 'Y'} </label>
-                </div>
+              <>
+                  <div key={index} className=" flex flex-row justify-center w-full  input-group text-tx w-full">
+                    <input
+                      type="text"
+                      id={`input-${index}`}
+                      pattern="[0-9]"
+                      className={`text-tx border-2 w-full lg:w-[80%] h-[100%] p-2 rounded-lg mr-2 font-bold input ${isUpdate ? 'cursor-not-allowed' : ''}  ${value.length !== 0 ? 'inputFocus' : ''}`}
+                      onChange={(e) => handleChange(index, e.target.value)}
+                      style={{ color: 'white' }}
+                      onKeyDown={(e) => handleKeyDown(index, e)}
+                      value={value}
+                      disabled={isUpdate}
+                      maxLength="1"
+                    />
+                    <label className={`user-label ${value.length !== 0 ? 'labelFocus' : ''} `}> {index <= 1 ? 'M' : 'Y'} </label>
+                  </div>
                 {index === 1 && <div className="h-full w-14 mr-4 flex items-center justify-center text-center text-5xl">/</div>}
-              </div>
+              </>
             ))}
           </div>
-        </div>
         <div className="w-2/3">
           <div className="input-group">
             <input
@@ -152,7 +152,7 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
             <label className={`user-label ${budget.length !== 0 ? 'labelFocus' : ''} `}>Budget</label>
           </div>
         </div>
-        
+
         <button
           onClick={() => handleClick()}
           className={`w-2/3 h-10 rounded-xl mt-4 ${values.some(value => value === "") || budget === "" ? 'bg-gray-500 cursor-not-allowed' : 'bg-Secundary hover:scale-110 transition-all ease-out duration-200'}`}

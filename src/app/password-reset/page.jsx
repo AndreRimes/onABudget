@@ -44,7 +44,7 @@ export default function PasswordReset() {
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
-            <div className="w-2/5 h-3/5 bg-Primary rounded-xl flex flex-col justify-center items-center">
+            <div className="w-11/12 h-3/5 xl:w-2/5 xl:h-3/5 bg-Primary rounded-xl flex flex-col justify-center items-center">
                 {success && <Success message={"Email enviado. Feche esta janela e continue com o link enviado no email."} />}
                 {error && <Error message={'Email Não Encontrado'} />}
                 {!success && !error && <div className="w-1/2 h-8"></div>}
@@ -64,7 +64,7 @@ export default function PasswordReset() {
 
                 <div className="w-full h-2/3 flex flex-col items-center justify-start">
                     <div className="flex flex-col items-center justify-evenly h-2/5 w-full mb-2">
-                        <div className="w-1/2">
+                        <div className="w-3/4 xl:w-1/2">
                             <div className="input-group">
                                 <input
                                     onChange={handleChange}
@@ -84,7 +84,7 @@ export default function PasswordReset() {
                     <button
                         onClick={() => handleClick()}
                         className={`${success || message !== '' ? "bg-gray-500 cursor-not-allowed" : "bg-Secundary hover:scale-110"
-                            } w-1/2 h-10 rounded-xl  transition-all ease-out duration-200`}
+                            } w-3/4 xl:w-1/2 h-10 rounded-xl  transition-all ease-out duration-200`}
                         disabled={success || message !== ''}
                     >
                         Mandar

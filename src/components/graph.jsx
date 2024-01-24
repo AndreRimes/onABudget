@@ -63,7 +63,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
     }
 
     return (
-        <div className="w-11/12 h-[87%] p-5 py-10 rounded-xl bg-Primary flex flex-col items-center justify-center">
+        <div className="w-11/12 h-[86%] p-5 py-10 rounded-xl bg-Primary flex flex-col items-center justify-center">
             {!months || months.length === 0 || !chartData?.labels || chartData.labels.length === 0 || !chartData.datasets[0].data.length ? (
                 <Loading />
             ) : (
