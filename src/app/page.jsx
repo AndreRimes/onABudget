@@ -34,12 +34,12 @@ export default function Home() {
         {isModalProfile && <ModalProfile user={user} setIsModalProfile={setIsModalProfile} />}
         {user && user.tutorialComplete === false && <ModalTutorial setMonth={setMonth} />}
 
-        <div className='w-full  h-3/5 flex flex-row justify-evenly mt-4'>
+        <div className='w-full h-[65%] flex flex-row justify-evenly mt-4'>
           <Profile setIsHamOpen={setIsHamOpen} isHamOpen={isHamOpen} user={user} currentMonth={currentMonth} setIsModalProfile={setIsModalProfile} />
           <Table spent={spent} currentMonth={currentMonth} user={user} />
         </div>
 
-        <div className='w-full h-3/5 flex felx-col items-center justify-center '>
+        <div className='w-full h-[55%] flex felx-col items-center justify-center '>
           <Graph setMonth={setMonth} setIsModalOpen={setIsModalOpen} />
         </div>
 

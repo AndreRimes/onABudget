@@ -104,7 +104,7 @@ export default function ModalProfile({ user, setIsModalProfile }) {
 
     return (
         <Overlay setIsModalOpen={setIsModalProfile}>
-            <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop  text-white w-2/3 h-5/6 rounded-2xl flex flex-col items-center justify-evenly">
+            <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop  text-white w-11/12 lg:w-2/3 h-5/6 rounded-2xl flex flex-col items-center justify-evenly">
                 <h1 className="text-3xl font-semibold">Seu Perfil</h1>
                 <div className="h-[2px] w-11/12  lg:w-[80%] bg-white"></div>
                 <div className="w-11/12 lg:w-2/3 h-[70%]  bg-Primary rounded-xl p-10">

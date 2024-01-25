@@ -15,8 +15,8 @@ export default function Table({ spent, currentMonth }) {
     }
 
     return (
-        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-10' >
-            <div className='w-full h-1/5 lg:h-1/3 flex flex-row items-center justify-center'>
+        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-3 md:py-3 lg:px-10' >
+            <div className='w-full h-1/5 lg:h-[20%] flex flex-row items-center justify-center'>
                 {!currentMonth ? (
                     <div className="w-full bg-Dark rounded-md animate-pulse h-1/3 "></div>
                 ) : (
@@ -25,7 +25,7 @@ export default function Table({ spent, currentMonth }) {
                             key={index}
                             onMouseEnter={() => handleEnter(key)}
                             onMouseLeave={() => handleLeave()}
-                            className='h-7 px-3 text-Dark'
+                            className='h-7 lg:6 px-3 text-Dark'
                             style={{
                                 width: `${(spent[key] * 100 / currentMonth?.budget) * 100}%`,
                                 backgroundColor: colors[index % colors.length],
@@ -42,12 +42,12 @@ export default function Table({ spent, currentMonth }) {
                     <div className='w-full flex flex-row justify-evenly'>
                         {!currentMonth ? <div className="w-24 h-6 bg-Dark rounded-md animate-pulse"></div> : <h1 className='w-24 flex items-center justify-center'>{currentMonth?.date}</h1>}
                         {!currentMonth ? <div className="w-24 h-6 bg-Dark rounded-md animate-pulse"></div> : <h1 className='w-24 flex items-center justify-center'>Gastro</h1>}
-                        {!currentMonth ? <div className="w-24 h-6 bg-Dark rounded-md animate-pulse"></div> : <h1 className='w-24 flex items-center justify-center'>Porcentagem</h1>}
+                        {!currentMonth ? <div className="w-24 h-6 bg-Dark rounded-md animate-pulse"></div> : <h1 className='w-24 flex items-center justify-center ml-3'>Porcentagem</h1>}
                     </div>
                 </div>
                 {/* BODY */}
                 <StyledContainer>
-                    <div className={`tableHeight w-full lg:max-h-[11vh] overflow-y-auto mb-1  ${!currentMonth ? 'mt-2' : ''}`}>
+                    <div className={`tableHeight w-full lg:max-h-[9vh] overflow-y-auto mb-1  ${!currentMonth ? 'mt-2' : ''}`}>
                         {spent ? Object.keys(spent).map((key, index) => (
                             <div
                                 onMouseEnter={() => handleEnter(key)}
