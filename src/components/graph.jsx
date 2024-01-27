@@ -63,7 +63,7 @@ export default function Graph({ setMonth, setIsModalOpen }) {
     }
 
     return (
-        <div className="w-11/12 h-[86%] p-5 py-10 rounded-xl bg-Primary flex flex-col items-center justify-center">
+        <div className="w-11/12 h-[95%] p-5 py-10 rounded-xl bg-Primary flex flex-col items-center justify-center">
             {!months || months.length === 0 || !chartData?.labels || chartData.labels.length === 0 || !chartData.datasets[0].data.length ? (
                 <Loading />
             ) : (
@@ -98,11 +98,12 @@ export default function Graph({ setMonth, setIsModalOpen }) {
                             maintainAspectRatio: false,
                         }}
                     />
-                    <div className='w-full h-10 flex justify-end mb-4 text-black font-bold'>
-                        <button onClick={handleMonth} className='button px-3  '>Criar Mes</button>
-                    </div>
+
                 </>
             )}
+            <div className='w-full h-0 flex justify-end mb-4 text-black font-bold'>
+                <button onClick={handleMonth} className='button px-3'>Criar Mes</button>
+            </div>
         </div>
     );
 }

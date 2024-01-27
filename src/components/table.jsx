@@ -15,7 +15,7 @@ export default function Table({ spent, currentMonth }) {
     }
 
     return (
-        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-3 md:py-3 lg:px-10' >
+        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-3 md:py-2 lg:px-10' >
             <div className='w-full h-1/5 lg:h-[20%] flex flex-row items-center justify-center'>
                 {!currentMonth ? (
                     <div className="w-full bg-Dark rounded-md animate-pulse h-1/3 "></div>
@@ -47,7 +47,7 @@ export default function Table({ spent, currentMonth }) {
                 </div>
                 {/* BODY */}
                 <StyledContainer>
-                    <div className={`tableHeight w-full lg:max-h-[9vh] overflow-y-auto mb-1  ${!currentMonth ? 'mt-2' : ''}`}>
+                    <div className={`tableHeight w-full lg:max-h-[12vh] overflow-y-auto mb-1  ${!currentMonth ? 'mt-2' : ''}`}>
                         {spent ? Object.keys(spent).map((key, index) => (
                             <div
                                 onMouseEnter={() => handleEnter(key)}

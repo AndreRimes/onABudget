@@ -4,8 +4,6 @@ import { useState, useEffect } from "react"
 import { useUser } from "@/Domain/userContext";
 import Error from "../error";
 
-
-
 export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, setSelected }) {
   const { createMonth, updateMonth } = useUser();
   const [dateMessage, setDateMessage] = useState('')
@@ -127,9 +125,9 @@ export default function CreateMonth({ setMonth, isUpdate, month, setEditCompra, 
                       type="text"
                       id={`input-${index}`}
                       pattern="[0-9]"
-                      className={`text-tx border-2 w-full lg:w-[80%] h-[100%]  rounded-lg mr-2 font-bold input ${isUpdate ? 'cursor-not-allowed' : ''}  ${value.length !== 0 ? 'inputFocus' : ''}`}
+                      className={`input text-tx border-2 w-full lg:w-[80%] h-[100%]  rounded-lg mr-2 font-bold ${isUpdate ? 'cursor-not-allowed' : ''}  ${value.length !== 0 ? 'inputFocus' : ''}`}
                       onChange={(e) => handleChange(index, e.target.value)}
-                      style={{ color: 'white' }}
+                      style={{ color: 'white', padding:'10px' }}
                       onKeyDown={(e) => handleKeyDown(index, e)}
                       value={value}
                       disabled={isUpdate}
