@@ -36,7 +36,10 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
 
     return (
         <Overlay setIsModalOpen={setIsModalOpen}>
-            <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop text-white w-[95%] lg:w-2/3 h-5/6 rounded-2xl flex items-center justify-center ">
+            <div onClick={(e) => e.stopPropagation()} className="bg-Dark animate-dropTop text-white w-[95%] lg:w-2/3 h-5/6 rounded-2xl flex flex-col items-center justify-center ">
+                <div  className="w-10/12 flex justify-end">
+                    <p onClick={() => setIsModalOpen(false)} className="cursor-pointer font-bold text-xl hover:scale-110 transition-all duration-200 ease-out">X</p>
+                </div>
                 {editCompra === -1 ? <>
                     <CreateMonth setMonth={setMonth} isUpdate={true} month={month} setEditCompra={setEditCompra} setSelected={setSelected} />
                 </> : <>

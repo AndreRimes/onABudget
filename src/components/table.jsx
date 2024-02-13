@@ -15,7 +15,7 @@ export default function Table({ spent, currentMonth }) {
     }
 
     return (
-        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-3 md:py-2 lg:px-10' >
+        <div className='w-11/12 lg:w-2/5 h-full bg-Primary rounded-xl text-xl px-3 md:py-2 lg:px-10 border-[3px]'>
             <div className='w-full h-1/5 lg:h-[20%] flex flex-row items-center justify-center'>
                 {!currentMonth ? (
                     <div className="w-full bg-Dark rounded-md animate-pulse h-1/3 "></div>
