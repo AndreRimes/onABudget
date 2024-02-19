@@ -8,7 +8,7 @@ export default function Profile({ user, currentMonth, setIsModalProfile, isHamOp
     const percentageSpent = (currentMonth?.spent / currentMonth?.budget) * 100 || 0;
     return (
         <>
-            <div className={`w-2/5 h-full hidden lg:flex flex-col justify-evenly bg-Primary rounded-xl px-10 py-10 border-[3px]`}>
+            <div className={`w-2/5 h-full hidden lg:flex flex-col justify-evenly bg-Primary rounded-xl px-10 py-10 border-[2px]`}>
                 <div className="absolute translate-x-[32vw] -translate-y-[15vh]">
                     <Image onClick={() => setIsModalProfile(true)} className="cursor-pointer hover:scale-125 transition-all duration-300 ease-in " src={threeDots} width={20} height={20} />
                 </div>
