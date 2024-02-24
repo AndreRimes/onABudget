@@ -32,7 +32,7 @@ export default function CompraInput({
             store,
             date: date + '/' + month.date,
             categoria,
-            price: parseInt(price)
+            price: parseFloat(price)
         };
         const newMonth = await addCompra(compra, month, index);
         setMonth(newMonth);
