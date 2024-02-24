@@ -77,7 +77,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                             </>
                                             :
                                             <div key={index} className="w-[95%] lg:w-2/3 min-h-[48px] h-12 bg-Primary flex flex-row items-center justify-between px-2 lg:px-10 rounded-2xl mb-5" >
-                                                <h3 className="ml-2 w-[15%] lg:w-[5%] h-full flex items-center justify-center">{compra.date.slice(1, 6) + compra.date.slice(8, 10)}</h3>
+                                                <h3 className="ml-2 w-[15%] lg:w-[5%] h-full flex items-center justify-center">{compra.date.slice(0, 6) + compra.date.slice(8, 10)}</h3>
                                                 <h3 className="h-full flex items-center justify-center text-center">
                                                     {compra.store.length > 10 ? `${compra.store.slice(0, 10)}...` : compra.store}
                                                 </h3>
