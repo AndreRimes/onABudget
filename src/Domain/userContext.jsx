@@ -39,7 +39,6 @@ export const UserProvider = ({ children }) => {
             }
           }
 
-          console.log(!cm)
           if (!cm) {
             setUser({...result, tutorialComplete : false})
           } else {
@@ -53,7 +52,7 @@ export const UserProvider = ({ children }) => {
       }
     }
 
-    getUser().then(console.log(currentMonth));
+    getUser()
   }, [pb.authStore.isValid, pb.authStore.model?.id, teste]);
 
 

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import useAuth from '@/Domain/hooks/useAuth'
 import { useUser } from '@/Domain/userContext'
 import Profile from '@/components/profile'
@@ -9,21 +9,23 @@ import Modal from '@/components/modal/modal'
 import ModalProfile from '@/components/modal/modalProfile'
 import ModalTutorial from '@/components/modal/modalTutorial'
 import SideBar from '@/components/sideBar'
-
+import { redirect } from 'next/navigation'
+import { useLayoutEffect } from 'react'
 
 
 export default function Home() {
-  const { isLoged, logout } = useAuth()
+  const { isLoged } = useAuth()
   const { user, currentMonth, spent } = useUser();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [month, setMonth] = useState(currentMonth);
   const [isModalProfile, setIsModalProfile] = useState(false)
   const [isHamOpen, setIsHamOpen] = useState(false)
 
-  useEffect(() => {
-    isLoged();
-    setMonth(currentMonth)
-  }, [currentMonth]);
+  useLayoutEffect(() => {
+    if (!isLoged()) {
+      redirect('/login')
+    }
+  }, [isLoged])
 
 
   return (

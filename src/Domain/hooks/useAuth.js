@@ -15,10 +15,10 @@ export default function useAuth() {
     }
 
     function isLoged() {
-        console.log()
         if (!pb.authStore.isValid || !pb.authStore?.model?.id) {
-            router.push('/login')
+            return false
         }
+        return true
     }
 
     async function login({ email, password }) {

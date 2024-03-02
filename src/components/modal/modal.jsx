@@ -82,7 +82,7 @@ export default function Modal({ setIsModalOpen, month, setMonth }) {
                                                     {compra.store.length > 10 ? `${compra.store.slice(0, 10)}...` : compra.store}
                                                 </h3>
                                                 <h3 className="w-[15%] lg:w-[5%] flex items-center justify-center">{compra.categoria}</h3>
-                                                <h3 className="w-[15%] lg:w-[5%] h-full flex items-center justify-center">${(compra.price).toFixed(2)}</h3>
+                                                <h3 className="w-[15%] lg:w-[5%] h-full flex items-center justify-center">${(compra.price)?.toFixed(2)}</h3>
                                                 <div className="w-[10%] h-full flex items-center justify-center">
                                                     {selected === index ?
                                                         <>

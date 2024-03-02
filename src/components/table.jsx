@@ -30,7 +30,7 @@ export default function Table({ spent, currentMonth }) {
                                 width: `${(spent[key] * 100 / currentMonth?.budget) * 100}%`,
                                 backgroundColor: colors[index % colors.length],
                             }}>
-                            {hovered === key ? `${(spent[key] * 100 / currentMonth?.budget).toFixed(2)}%` : ''}
+                            {hovered === key ? `${(spent[key] * 100 / currentMonth?.budget)?.toFixed(2)}%` : ''}
                         </div>
                     ))
                 )}
@@ -55,9 +55,8 @@ export default function Table({ spent, currentMonth }) {
                                 key={index} className='w-full h-1/6 flex flex-row justify-evenly rounded-lg'
                                 style={{ backgroundColor: `${hovered === key ? '#343536' : ''}` }} >
                                 <h2 className='w-24 flex items-center justify-center'>{!key ? 'Desconhecido' : key}</h2>
-                                <h2 className='w-24 flex items-center justify-center'>{(spent[key]).toFixed(2)}</h2>
-                                {/* <h2 className='w-24 flex items-center justify-center'>-----</h2> */}
-                                <h2 className='w-24 flex items-center justify-center'>{(spent[key] * 100 / currentMonth?.budget).toFixed(2)}%</h2>
+                                <h2 className='w-24 flex items-center justify-center'>{(spent[key])?.toFixed(2)}</h2>
+                                <h2 className='w-24 flex items-center justify-center'>{(spent[key] * 100 / currentMonth?.budget)?.toFixed(2)}%</h2>
                             </div>
                         )) : (
                             <div className="flex flex-row w-full justify-evenly">
@@ -76,22 +75,22 @@ export default function Table({ spent, currentMonth }) {
                 <div>
                     <div className={`w-full flex flex-row justify-evenly  ${!currentMonth ? 'mt-2' : ''} `}>
                         {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>Total</h2>}
-                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent).toFixed(2)}</h2>}
-                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent * 100 / currentMonth?.budget).toFixed(2)}%</h2>}
+                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent)?.toFixed(2)}</h2>}
+                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.spent * 100 / currentMonth?.budget)?.toFixed(2)}%</h2>}
 
                     </div>
                 </div>
                 <div>
                     <div className={`w-full flex flex-row justify-evenly  ${!currentMonth ? 'mt-2' : ''} `}>
                         {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>Budget: </h2>}
-                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.budget).toFixed(2)}</h2>}
+                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{(currentMonth?.budget)?.toFixed(2)}</h2>}
                         {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>-------</h2>}
                     </div>
                 </div>
                 <div>
                     <div className={`w-full flex flex-row justify-evenly  ${!currentMonth ? 'mt-2' : ''} `}>
                         {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>Sobrando: </h2>}
-                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{((currentMonth?.budget) - (currentMonth?.spent)).toFixed(2)}</h2>}
+                        {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>{((currentMonth?.budget) - (currentMonth?.spent))?.toFixed(2)}</h2>}
                         {!currentMonth ? <div className="w-[35%] h-6 bg-Dark rounded-md animate-pulse"></div> : <h2 className='w-24 flex items-center justify-center'>-------</h2>}
                     </div>
                 </div>
