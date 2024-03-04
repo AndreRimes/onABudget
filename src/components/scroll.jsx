@@ -1,9 +1,10 @@
-import pocketbaseIcon from "../../public/pocketbase.jpg"
+import pocketbaseIcon from "../../public/pocketbase.png"
 import reactIcon from "../../public/react.png"
 import tailwindIcon from "../../public/Tailwind.png"
 import Image from "next/image"
 import Marquee from "react-fast-marquee"
-
+import nextjsIcon from "../../public/nextjs.png"
+import nodejsIcon from "../../public/nodejs.png"
 
 export default function Scrool() {
 
@@ -11,7 +12,8 @@ export default function Scrool() {
         pocketbaseIcon,
         reactIcon,
         tailwindIcon,
-        pocketbaseIcon,
+        nextjsIcon,
+        nodejsIcon,
     ]
 
     return (

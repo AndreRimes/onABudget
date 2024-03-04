@@ -22,9 +22,7 @@ export default function main() {
                     <Hero />
                     <Cards />
                 </div>
-                {/* <Revel> */}
                 <Scrool />
-                {/* </Revel> */}
                 <div className="w-full flex flex-row px-4">
                     <Info />
                 </div>

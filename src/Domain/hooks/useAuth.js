@@ -28,7 +28,7 @@ export default function useAuth() {
             setTeste(true)
             setLoading(false)
             setError(false)
-            router.push('/')
+            router.push('/dashboard');
         } catch (e) {
             console.log(e)
             setLoading(false)
