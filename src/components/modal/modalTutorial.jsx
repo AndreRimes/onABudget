@@ -42,7 +42,7 @@ export default function ModalTutorial({setMonth}) {
                     <h1 className="text-2xl">Ola Bem Vindo ao On A Budget</h1>
                     <p className="text-lg text-center">Vamos Configurar o app para que voce tenha uma melhor experiencia. Vamos comecar criando um mes atual</p>
                 </div>
-                <div className="w-full h-1/5 flex flex-col items-center justify-between">
+                <div className="w-full h-[30%] flex flex-col items-center justify-between">
                     <div className="w-1/2 flex flex-row justify-center ">
                         {values.map((value, index) => (
                             <div key={index} className={`flex flex-row justify-center w-[100%] `}>

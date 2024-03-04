@@ -4,12 +4,6 @@ import Cards from "@/components/Cards"
 import Scrool from "@/components/scroll"
 import Info from "@/components/Info"
 
-import Image from "next/image"
-import gitHubIcon from '../../public/github.png'
-import linkedInIcon from '../../public/linkedin.png'
-import cvIcon from "../../public/cv.png"
-import Link from "next/link"
-
 export default function main() {
 
     return (

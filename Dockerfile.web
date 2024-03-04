@@ -62,5 +62,5 @@ ENV PORT 3000
 # set hostname to localhost
 ENV HOSTNAME "0.0.0.0"
 
-ENV NEXT_PUBLIC_PB "https://onabudget.fly.dev/"
+ENV NEXT_PUBLIC_PB  "http://pocketbase:8081"
 CMD ["node", "server.js"]

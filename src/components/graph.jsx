@@ -99,11 +99,13 @@ export default function Graph({ setMonth, setIsModalOpen }) {
                         }}
                     />
 
+
+                    <div className='w-full h-0 flex justify-end mb-4 text-black font-bold'>
+                        <button onClick={handleMonth} className='button px-3'>Criar Mes</button>
+                    </div>
+
                 </>
             )}
-            <div className='w-full h-0 flex justify-end mb-4 text-black font-bold'>
-                <button onClick={handleMonth} className='button px-3'>Criar Mes</button>
-            </div>
         </div>
     );
 }
