@@ -1,51 +1,36 @@
-'use client'
-import { useState, useEffect } from 'react'
-import useAuth from '@/Domain/hooks/useAuth'
-import { useUser } from '@/Domain/userContext'
-import Profile from '@/components/profile'
-import Table from '@/components/table'
-import Graph from '@/components/graph'
-import Modal from '@/components/modal/modal'
-import ModalProfile from '@/components/modal/modalProfile'
-import ModalTutorial from '@/components/modal/modalTutorial'
-import SideBar from '@/components/sideBar'
-import { redirect } from 'next/navigation'
-import { useLayoutEffect } from 'react'
+"use client"
+import Hero from "@/components/Hero"
+import Cards from "@/components/Cards"
+import Scrool from "@/components/scroll"
+import Info from "@/components/Info"
 
+import Image from "next/image"
+import gitHubIcon from '../../public/github.png'
+import linkedInIcon from '../../public/linkedin.png'
+import cvIcon from "../../public/cv.png"
+import Link from "next/link"
 
-export default function Home() {
-  const { isLoged } = useAuth()
-  const { user, currentMonth, spent } = useUser();
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [month, setMonth] = useState(currentMonth);
-  const [isModalProfile, setIsModalProfile] = useState(false)
-  const [isHamOpen, setIsHamOpen] = useState(false)
+export default function main() {
 
-  useLayoutEffect(() => {
-    if (!isLoged()) {
-      redirect('/login')
-    }
-  }, [isLoged])
+    return (
+        <>
+            <div className="w-full h-20 flex items-center justify-center">
+                <h1 className="font-bold text-3xl"> On A Budget</h1>
+            </div>
+            <div className="w-full flex flex-col px-5">
+                <div className="w-full h-[70vh] flex flex-row px-4">
+                    <Hero />
+                    <Cards />
+                </div>
+                {/* <Revel> */}
+                <Scrool />
+                {/* </Revel> */}
+                <div className="w-full flex flex-row px-4">
+                    <Info />
+                </div>
+            </div>
 
-
-  return (
-    <>
-      {isHamOpen && <SideBar isHamOpen={isHamOpen} currentMonth={currentMonth} user={user} setIsModalProfile={setIsModalProfile}/>}
-      <div className='flex flex-col justify-evenly w-screen h-screen'>
-        {isModalOpen && <Modal setIsModalOpen={setIsModalOpen} month={month} setMonth={setMonth} />}
-        {isModalProfile && <ModalProfile user={user} setIsModalProfile={setIsModalProfile} />}
-        {user && user.tutorialComplete === false && <ModalTutorial setMonth={setMonth} />}
-
-        <div className='w-full h-[65%] flex flex-row justify-evenly mt-4'>
-          <Profile setIsHamOpen={setIsHamOpen} isHamOpen={isHamOpen} user={user} currentMonth={currentMonth} setIsModalProfile={setIsModalProfile} />
-          <Table spent={spent} currentMonth={currentMonth} user={user} />
-        </div>
-
-        <div className='w-full h-[55%] flex felx-col items-center justify-center '>
-          <Graph setMonth={setMonth} setIsModalOpen={setIsModalOpen} />
-        </div>
-
-      </div>
-    </>
-  )
+        </>
+    )
 }
+
