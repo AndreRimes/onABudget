@@ -7,13 +7,12 @@ on:
 
   workflow_dispatch:
 
-
 jobs:
   build:
     runs-on: self-hosted
 
     steps:
-      # Setup virtual env, install dependencies
+      - uses: actions/checkout@v2
       - name: Install dependencies 
         run: |
           npm install
@@ -23,10 +22,8 @@ jobs:
     needs: build
     
     steps:
-      # Kill gunicorn server, if running already
       - name: Kill pm2
         run: pm2 del 0
 
-      # Run gunicorn server
       - name: Run pm2
         run: pm2 start "npm run start" --name " onABudget"
