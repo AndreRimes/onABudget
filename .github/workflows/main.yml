@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies 
         run: |
           npm install
-          npm run dev
+          npm run build
   deploy:
     runs-on: self-hosted
     needs: build
