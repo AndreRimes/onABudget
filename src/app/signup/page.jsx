@@ -66,12 +66,6 @@ export default function Signup() {
         setisValidEmail(emailPattern.test(e.target.value));
     }
 
-    const isButtonDisabled =
-        email.trim() === '' ||
-        name.trim() === '' ||
-        !isValidEmail ||
-        validPassword.includes(false);
-
 
     return (
         <div className="w-screen h-screen top-0 left-0 flex items-center justify-center">
@@ -116,7 +110,7 @@ export default function Signup() {
                                 />
                                 <label className={`user-label ${password !== '' ? 'labelFocus' : ''} `}>Senha</label>
                             </div>
-                            {password !== '' && <ul className='w-full xl:w-[200%]'>
+                            {!error && password !== '' && <ul className='w-full xl:w-[200%]'>
                                 <li className={`${validPassword[0] ? 'text-green-600' : 'text-red-600'}`} > 7 characteres</li>
                                 <li className={`${validPassword[1] ? 'text-green-600' : 'text-red-600'}`} > 1 numero</li>
                                 <li className={`${validPassword[2] ? 'text-green-600' : 'text-red-600'}`} > 1 charactere especial</li>

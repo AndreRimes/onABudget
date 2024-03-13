@@ -61,8 +61,8 @@ export default function Login() {
                         </div>
 
                         <div className='h-[45%] flex flex-col justify-evenly w-full '>
-                            <Link href="/signup" className='underline mt-1'>Nao possui uma Conta? </Link>
-                            <Link href='/password-reset' className='underline '>Esqueceu sua Senha?</Link>
+                            <Link href="/signup" className='link mt-1'>Nao possui uma Conta? </Link>
+                            <Link href='/password-reset' className='link'>Esqueceu sua Senha?</Link>
                         </div>
 
                     </div>

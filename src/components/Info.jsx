@@ -30,14 +30,14 @@ export default function Info() {
                     <Revel>
                         <div className="flex flex-row items-center">
                             <Image src={gitHubIcon} alt="github" width={30} height={30} />
-                            <Link className="px-3" href="https://github.com/AndreRimes">AndreRimes</Link>
+                            <Link  className="link hover:underline ml-1 px-2" href="https://github.com/AndreRimes">AndreRimes</Link>
                         </div>
                     </Revel>
 
                     <Revel>
                         <div className="flex flex-row items-center">
                             <Image src={linkedInIcon} alt="linkedin" width={30} height={30} />
-                            <Link className="px-3" href="https://www.linkedin.com/in/andrerimes/">AndreRimes</Link>
+                            <Link className="link hover:underline ml-1 px-2" href="https://www.linkedin.com/in/andrerimes/">AndreRimes</Link>
                         </div>
                     </Revel>
 
@@ -45,7 +45,7 @@ export default function Info() {
                     <Revel>
                         <div className="flex flex-row items-center">
                             <Image src={cvIcon} alt="Curriculo" width={30} height={30} />
-                            <Link className="px-3" href="https://docs.google.com/document/d/1RfEsR9GgkJu6153xDl-gQVYrKXW1z27xBxEquQmDdoY/edit?usp=sharing">AndreRimes</Link>
+                            <Link className="link hover:underline ml-1 px-2" href="https://docs.google.com/document/d/1RfEsR9GgkJu6153xDl-gQVYrKXW1z27xBxEquQmDdoY/edit?usp=sharing">AndreRimes</Link>
                         </div>
                     </Revel>
 
