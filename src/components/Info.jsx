@@ -19,7 +19,7 @@ export default function Info() {
                 <Revel>
                     <p className="text-xl font-semibold">
                         Meu nome e Andre Rimes e eu sou um estudante de ciencia da computacao da UIC
-                        (University of illinois Chicago) e um entusiasta de engenharia de sowftware
+                        (University of illinois Chicago) e um entusiasta de engenharia de software.
                         <br />
                         <br />
                         Para mais informacoes:
