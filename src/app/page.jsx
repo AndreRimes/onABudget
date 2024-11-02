@@ -3,8 +3,13 @@ import Hero from "@/components/Hero"
 import Cards from "@/components/Cards"
 import Scrool from "@/components/scroll"
 import Info from "@/components/Info"
+import { useEffect } from "react"
 
 export default function main() {
+
+    useEffect(() => {
+        console.log("PB", process.env.NEXT_PUBLIC_PB)
+    }, [])
 
     return (
         <>
