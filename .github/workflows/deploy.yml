@@ -27,5 +27,6 @@ jobs:
             git pull origin main &&
             echo 'NEXT_PUBLIC_PB=${{ secrets.NEXT_PUBLIC_PB }}' > .env &&
             make build &&
+            make stop &&
             make run
           "
