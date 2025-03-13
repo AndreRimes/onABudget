@@ -26,7 +26,9 @@ jobs:
             cd /home/andre/onABudget &&
             git pull origin main &&
             echo 'NEXT_PUBLIC_PB=${{ secrets.NEXT_PUBLIC_PB }}' > .env &&
-            make build &&
-            make stop &&
-            make run
+            echo '${{ secrets.DOCKER_PASSWORD }}' | sudo nerdctl login -u ${{ secrets.DOCKER_USER }} --password-stdin &&
+            sudo nerdctl build -t andrerimes/onabudget:latest . &&
+            sudo nerdctl push andrerimes/portfolio:latest &&
+            kubectl rollout restart deployment onabudget-deployment -n onabudget-namespace &&
+            kubectl rollout status deployment onabudget-deployment -n onabudget-namespace
           "
