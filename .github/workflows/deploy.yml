@@ -25,6 +25,7 @@ jobs:
           ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "
             cd /home/andre/onABudget &&
             git pull origin main &&
+            echo 'NEXT_PUBLIC_PB=${{ secrets.NEXT_PUBLIC_PB }}' > .env &&
             echo '${{ secrets.DOCKER_PASSWORD }}' | sudo nerdctl login -u ${{ secrets.DOCKER_USER }} --password-stdin &&
             sudo nerdctl build -t andrerimes/onabudget:latest . &&
             sudo nerdctl push andrerimes/onabudget:latest &&
