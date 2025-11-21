@@ -6,6 +6,9 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
+  "vars": {
+    "NEXT_PUBLIC_PB": "{{ NEXT_PUBLIC_PB }}"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
