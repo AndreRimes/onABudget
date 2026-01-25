@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1768057435380,
+      "tag": "0000_wakeful_swordsman",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1768143473372,
+      "tag": "0001_complete_silvermane",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1768312597680,
+      "tag": "0002_nebulous_blizzard",
+      "breakpoints": true
+    }
+  ]
+}

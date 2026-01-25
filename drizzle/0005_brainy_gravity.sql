@@ -1,0 +1,1 @@
+ALTER TABLE `user` ADD `updated_at` text DEFAULT 'CURRENT_TIMESTAMP';
