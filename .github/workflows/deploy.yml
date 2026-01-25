@@ -80,6 +80,8 @@ jobs:
 
       - name: Restart deployment to pull new image
         run: |
+          kubectl set env deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }} \
+            NEXT_PUBLIC_PB="${{ secrets.NEXT_PUBLIC_PB }}"
           kubectl rollout restart deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
           kubectl rollout status deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
 
