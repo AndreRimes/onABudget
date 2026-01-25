@@ -47,6 +47,17 @@ jobs:
           cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
 
+      - name: Debug - Check if secret exists
+        run: |
+          if [ -z "${{ secrets.NEXT_PUBLIC_PB }}" ]; then
+            echo "ERROR: NEXT_PUBLIC_PB secret is not set!"
+            exit 1
+          else
+            echo "NEXT_PUBLIC_PB is set (length: ${#NEXT_PUBLIC_PB})"
+          fi
+        env:
+          NEXT_PUBLIC_PB: ${{ secrets.NEXT_PUBLIC_PB }}
+
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -80,8 +91,6 @@ jobs:
 
       - name: Restart deployment to pull new image
         run: |
-          kubectl set env deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }} \
-            NEXT_PUBLIC_PB="${{ secrets.NEXT_PUBLIC_PB }}"
           kubectl rollout restart deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
           kubectl rollout status deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
 
