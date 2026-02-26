@@ -47,6 +47,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public         ./public
 
+# Copy migration files
+COPY scripts/migrate.mjs ./scripts/migrate.mjs
+COPY drizzle ./drizzle
+
 USER nextjs
 
 EXPOSE 3000
