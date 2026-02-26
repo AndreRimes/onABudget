@@ -7,5 +7,4 @@ node_modules
 Dockerfile
 .dockerignore
 README.md
-drizzle/
 *.md
