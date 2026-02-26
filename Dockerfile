@@ -40,14 +40,19 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Create a non-root user
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
-# Copy the standalone output and static assets
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public         ./public
+
+# Garantir que a pasta existe antes de copiar
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+
+# também precisa do node_modules para better-sqlite3 e drizzle-orm
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules  # 👈 isso é crítico
 
 USER nextjs
 
