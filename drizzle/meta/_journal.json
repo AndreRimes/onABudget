@@ -22,6 +22,27 @@
       "when": 1768312597680,
       "tag": "0002_nebulous_blizzard",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1770513488034,
+      "tag": "0003_strange_mister_sinister",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1770917560569,
+      "tag": "0004_special_scrambler",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1772110817817,
+      "tag": "0005_overjoyed_tag",
+      "breakpoints": true
     }
   ]
 }

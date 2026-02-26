@@ -59,7 +59,7 @@ export const expenses = sqliteTable("expenses", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const investments = sqliteTable("investments", {
+export const investmentTransactions = sqliteTable("investment_transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   investmentAccountId: integer("investment_account_id")
     .notNull()
@@ -70,10 +70,21 @@ export const investments = sqliteTable("investments", {
     .notNull()
     .references(() => assetTypes.id),
   assetName: text("asset_name").notNull(),
-  amountInvested: real("amount_invested").notNull(),
-  currentValue: real("current_value"),
-  investedAt: text("invested_at").notNull(),
+  transactionType: text("transaction_type", {
+    enum: ["BUY", "SELL"],
+  }).notNull(),
+  quantity: real("quantity").notNull(),
+  pricePerUnit: real("price_per_unit").notNull(),
+  totalAmount: real("total_amount").notNull(),
+  transactionDate: text("transaction_date").default(sql`CURRENT_TIMESTAMP`),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  // Fixed income fields
+  isFixedIncome: integer("is_fixed_income", { mode: "boolean" }).default(false),
+  fixedIncomeYieldType: text("fixed_income_yield_type", {
+    enum: ["CDI_PERCENTAGE", "PREFIXED"],
+  }),
+  fixedIncomeRate: real("fixed_income_rate"), // e.g. 100 for 100% CDI, or 15 for 15% aa
+  fixedIncomeMaturityDate: text("fixed_income_maturity_date"),
 });
 
 export const user = sqliteTable("user", {
@@ -179,4 +190,45 @@ export const accountRelations = relations(account, ({ one }) => ({
     fields: [account.userId],
     references: [user.id],
   }),
+}));
+
+export const investmentTransactionsRelations = relations(
+  investmentTransactions,
+  ({ one }) => ({
+    account: one(accounts, {
+      fields: [investmentTransactions.investmentAccountId],
+      references: [accounts.id],
+    }),
+    assetType: one(assetTypes, {
+      fields: [investmentTransactions.assetTypeId],
+      references: [assetTypes.id],
+    }),
+  }),
+);
+
+export const accountsRelations = relations(accounts, ({ many }) => ({
+  expenses: many(expenses),
+  investmentTransactions: many(investmentTransactions),
+}));
+
+export const expensesRelations = relations(expenses, ({ one }) => ({
+  account: one(accounts, {
+    fields: [expenses.checkingAccountId],
+    references: [accounts.id],
+  }),
+  category: one(expenseCategories, {
+    fields: [expenses.categoryId],
+    references: [expenseCategories.id],
+  }),
+}));
+
+export const expenseCategoriesRelations = relations(
+  expenseCategories,
+  ({ many }) => ({
+    expenses: many(expenses),
+  }),
+);
+
+export const assetTypesRelations = relations(assetTypes, ({ many }) => ({
+  investmentTransactions: many(investmentTransactions),
 }));

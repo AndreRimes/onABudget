@@ -1,3 +1,5 @@
+"use client";
+
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -7,13 +9,24 @@ import {
 } from "@/components/ui/sheet";
 import { ChartLineIcon, DollarSign, Home, Menu, Wallet } from "lucide-react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { authClient } from "~/server/better-auth/client";
 
 interface DashboardLayoutProps {
   children: ReactNode;
 }
 
 const SidebarContent = () => {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const handleLogout = async () => {
+    await authClient.signOut();
+    router.push("/auth");
+    router.refresh();
+  };
+
   const navItems = [
     { href: "/dashboard", label: "Dashboard", icon: Home },
     { href: "/dashboard/accounts", label: "Accounts", icon: Wallet },
@@ -34,7 +47,11 @@ const SidebarContent = () => {
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground ${
+                pathname === item.href
+                  ? "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
+                  : ""
+              }`}
             >
               <Icon className="h-5 w-5" />
               {item.label}
@@ -44,7 +61,7 @@ const SidebarContent = () => {
       </nav>
       <Separator />
       <div className="p-4">
-        <Button variant="outline" className="w-full">
+        <Button onClick={handleLogout} variant="outline" className="w-full">
           Logout
         </Button>
       </div>

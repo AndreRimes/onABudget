@@ -12,30 +12,28 @@ import { Label } from "~/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs"
 import { authClient } from "~/server/better-auth/client"
 
-// Login Schema
 const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
+  email: z.string().email("Endereço de e-mail inválido"),
+  password: z.string().min(1, "Senha é obrigatória"),
 })
 
 type LoginFormData = z.infer<typeof loginSchema>
 
-// Register Schema
 const registerSchema = z
   .object({
-    name: z.string().min(1, "Name is required"),
-    email: z.string().email("Invalid email address"),
+    name: z.string().min(1, "Nome é obrigatório"),
+    email: z.string().email("Endereço de e-mail inválido"),
     password: z
       .string()
-      .min(8, "Password must be at least 8 characters long")
+      .min(8, "A senha deve ter pelo menos 8 caracteres")
       .regex(
         /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
-        "Password must contain at least one uppercase letter, one lowercase letter, and one number",
+        "A senha deve conter pelo menos uma letra maiúscula, uma minúscula e um número",
       ),
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords do not match",
+    message: "As senhas não coincidem",
     path: ["confirmPassword"],
   })
 
@@ -44,23 +42,23 @@ type RegisterFormData = z.infer<typeof registerSchema>
 const features = [
   {
     icon: PiggyBank,
-    title: "Smart Savings",
-    description: "Automated savings goals that grow with you",
+    title: "Economias Inteligentes",
+    description: "Metas de economia automatizadas que crescem com você",
   },
   {
     icon: TrendingUp,
-    title: "Track Spending",
-    description: "Visualize where your money goes",
+    title: "Controle de Gastos",
+    description: "Visualize para onde seu dinheiro vai",
   },
   {
     icon: Shield,
-    title: "Bank-Level Security",
-    description: "Your data is encrypted and protected",
+    title: "Segurança Bancária",
+    description: "Seus dados são criptografados e protegidos",
   },
   {
     icon: Wallet,
-    title: "Budget Planning",
-    description: "Create budgets that actually work",
+    title: "Planejamento de Orçamento",
+    description: "Crie orçamentos que realmente funcionam",
   },
 ]
 
@@ -69,7 +67,6 @@ export default function AuthPage() {
   const [loginError, setLoginError] = useState("")
   const [registerError, setRegisterError] = useState("")
 
-  // Login form
   const {
     register: loginRegister,
     handleSubmit: handleLoginSubmit,
@@ -78,7 +75,6 @@ export default function AuthPage() {
     resolver: zodResolver(loginSchema),
   })
 
-  // Register form
   const {
     register: registerRegister,
     handleSubmit: handleRegisterSubmit,
@@ -97,14 +93,14 @@ export default function AuthPage() {
       })
 
       if (result.error) {
-        setLoginError(result.error.message ?? "Failed to sign in")
+        setLoginError(result.error.message ?? "Falha ao entrar")
         return
       }
 
-      router.push("/")
+      router.push("/dashboard")
       router.refresh()
     } catch (err) {
-      setLoginError("An unexpected error occurred")
+      setLoginError("Ocorreu um erro inesperado")
     }
   }
 
@@ -119,22 +115,20 @@ export default function AuthPage() {
       })
 
       if (result.error) {
-        setRegisterError(result.error.message ?? "Failed to create account")
+        setRegisterError(result.error.message ?? "Falha ao criar conta")
         return
       }
 
-      router.push("/")
+      router.push("/dashboard")
       router.refresh()
     } catch (err) {
-      setRegisterError("An unexpected error occurred")
+      setRegisterError("Ocorreu um erro inesperado")
     }
   }
 
   return (
     <div className="flex min-h-screen">
-      {/* Left Side - Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-primary text-primary-foreground flex-col justify-between p-12 relative overflow-hidden">
-        {/* Background Pattern */}
         <div className="absolute inset-0 opacity-5">
           <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
             <defs>
@@ -146,7 +140,6 @@ export default function AuthPage() {
           </svg>
         </div>
 
-        {/* Logo */}
         <div className="relative z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary-foreground/10 flex items-center justify-center">
@@ -156,19 +149,17 @@ export default function AuthPage() {
           </div>
         </div>
 
-        {/* Main Content */}
         <div className="relative z-10 space-y-8">
           <div className="space-y-4">
             <h1 className="text-5xl font-bold leading-tight tracking-tight text-balance">
-              Take control of your financial future
+              Assuma o controle do seu futuro financeiro
             </h1>
             <p className="text-lg text-primary-foreground/70 max-w-md leading-relaxed">
-              Join thousands of users who have transformed their relationship with money using our intuitive budgeting
-              tools.
+              Junte-se a milhares de usuários que transformaram sua relação com o dinheiro usando nossas ferramentas
+              intuitivas de orçamento.
             </p>
           </div>
 
-          {/* Features Grid */}
           <div className="grid grid-cols-2 gap-4 pt-4">
             {features.map((feature) => (
               <div
@@ -183,14 +174,11 @@ export default function AuthPage() {
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="relative z-10 text-sm text-primary-foreground/50">© 2026 onABudget. All rights reserved.</div>
+        <div className="relative z-10 text-sm text-primary-foreground/50">© 2026 onABudget. Todos os direitos reservados.</div>
       </div>
 
-      {/* Right Side - Auth Forms */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-md space-y-8">
-          {/* Mobile Logo */}
           <div className="lg:hidden text-center space-y-2">
             <div className="flex items-center justify-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
@@ -198,32 +186,30 @@ export default function AuthPage() {
               </div>
               <span className="text-2xl font-bold tracking-tight">onABudget</span>
             </div>
-            <p className="text-muted-foreground">Your Financial Planning Companion</p>
+            <p className="text-muted-foreground">Seu Companheiro de Planejamento Financeiro</p>
           </div>
 
-          {/* Tabs */}
           <Tabs defaultValue="login" className="w-full">
             <TabsList className="grid w-full grid-cols-2 h-12 p-1 bg-secondary">
               <TabsTrigger
                 value="login"
                 className="text-sm font-medium data-[state=active]:bg-card data-[state=active]:shadow-sm"
               >
-                Sign in
+                Entrar
               </TabsTrigger>
               <TabsTrigger
                 value="register"
                 className="text-sm font-medium data-[state=active]:bg-card data-[state=active]:shadow-sm"
               >
-                Create account
+                Criar conta
               </TabsTrigger>
             </TabsList>
 
-            {/* Login Form */}
             <TabsContent value="login" className="mt-8">
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <h2 className="text-2xl font-semibold tracking-tight">Welcome back</h2>
-                  <p className="text-muted-foreground">Enter your credentials to access your account</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">Bem-vindo de volta</h2>
+                  <p className="text-muted-foreground">Digite suas credenciais para acessar sua conta</p>
                 </div>
 
                 <form onSubmit={handleLoginSubmit(onLoginSubmit)} className="space-y-5">
@@ -234,11 +220,11 @@ export default function AuthPage() {
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="login-email">Email</Label>
+                    <Label htmlFor="login-email">E-mail</Label>
                     <Input
                       id="login-email"
                       type="email"
-                      placeholder="john@example.com"
+                      placeholder="joao@exemplo.com"
                       {...loginRegister("email")}
                       disabled={isLoginSubmitting}
                       className="h-12 bg-card"
@@ -247,7 +233,7 @@ export default function AuthPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="login-password">Password</Label>
+                    <Label htmlFor="login-password">Senha</Label>
                     <Input
                       id="login-password"
                       type="password"
@@ -260,18 +246,17 @@ export default function AuthPage() {
                   </div>
 
                   <Button type="submit" className="w-full h-12 text-base font-medium" disabled={isLoginSubmitting}>
-                    {isLoginSubmitting ? "Signing in..." : "Sign in"}
+                    {isLoginSubmitting ? "Entrando..." : "Entrar"}
                   </Button>
                 </form>
               </div>
             </TabsContent>
 
-            {/* Register Form */}
             <TabsContent value="register" className="mt-8">
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <h2 className="text-2xl font-semibold tracking-tight">Create an account</h2>
-                  <p className="text-muted-foreground">Start managing your finances smarter</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">Criar uma conta</h2>
+                  <p className="text-muted-foreground">Comece a gerenciar suas finanças de forma mais inteligente</p>
                 </div>
 
                 <form onSubmit={handleRegisterSubmit(onRegisterSubmit)} className="space-y-5">
@@ -282,11 +267,11 @@ export default function AuthPage() {
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="register-name">Full name</Label>
+                    <Label htmlFor="register-name">Nome completo</Label>
                     <Input
                       id="register-name"
                       type="text"
-                      placeholder="John Doe"
+                      placeholder="João da Silva"
                       {...registerRegister("name")}
                       disabled={isRegisterSubmitting}
                       className="h-12 bg-card"
@@ -295,11 +280,11 @@ export default function AuthPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="register-email">Email</Label>
+                    <Label htmlFor="register-email">E-mail</Label>
                     <Input
                       id="register-email"
                       type="email"
-                      placeholder="john@example.com"
+                      placeholder="joao@exemplo.com"
                       {...registerRegister("email")}
                       disabled={isRegisterSubmitting}
                       className="h-12 bg-card"
@@ -308,7 +293,7 @@ export default function AuthPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="register-password">Password</Label>
+                    <Label htmlFor="register-password">Senha</Label>
                     <Input
                       id="register-password"
                       type="password"
@@ -323,7 +308,7 @@ export default function AuthPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="register-confirmPassword">Confirm password</Label>
+                    <Label htmlFor="register-confirmPassword">Confirmar senha</Label>
                     <Input
                       id="register-confirmPassword"
                       type="password"
@@ -338,24 +323,12 @@ export default function AuthPage() {
                   </div>
 
                   <Button type="submit" className="w-full h-12 text-base font-medium" disabled={isRegisterSubmitting}>
-                    {isRegisterSubmitting ? "Creating account..." : "Create account"}
+                    {isRegisterSubmitting ? "Criando conta..." : "Criar conta"}
                   </Button>
                 </form>
               </div>
             </TabsContent>
           </Tabs>
-
-          {/* Footer text */}
-          <p className="text-center text-sm text-muted-foreground">
-            By continuing, you agree to our{" "}
-            <a href="#" className="underline underline-offset-4 hover:text-foreground transition-colors">
-              Terms of Service
-            </a>{" "}
-            and{" "}
-            <a href="#" className="underline underline-offset-4 hover:text-foreground transition-colors">
-              Privacy Policy
-            </a>
-          </p>
         </div>
       </div>
     </div>
