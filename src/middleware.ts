@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -28,7 +28,7 @@ async function verifySession(request: NextRequest): Promise<boolean> {
 
     if (!response.ok) return false;
 
-    const session = await response.json();
+    const session = (await response.json()) as { user?: unknown } | null;
     return !!session?.user;
   } catch {
     return false;

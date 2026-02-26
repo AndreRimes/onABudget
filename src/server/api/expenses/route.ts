@@ -19,7 +19,7 @@ export const expensesRouter = createTRPCRouter({
         description: z.string().optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       return await createExpense({
         checkingAccountId: input.accountId,
         amount: input.amount,
@@ -56,13 +56,13 @@ export const expensesRouter = createTRPCRouter({
           .optional(),
       }),
     )
-    .query(async ({ ctx, input }) => {
+    .query(async ({  input }) => {
       return await getAllExpensesByAccount(input.accountId, input.dateRange);
     }),
 
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await getExpenseById(input.id);
     }),
 
@@ -77,7 +77,7 @@ export const expensesRouter = createTRPCRouter({
         date: z.string().optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       return await updateExpense(input.id, {
         checkingAccountId: input.accountId,
         categoryId: input.categoryId,

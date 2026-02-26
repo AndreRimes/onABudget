@@ -8,7 +8,7 @@ import { useState } from "react"
 import { CreateAccountDialog } from "~/components/sections/account/CreateAccountDialog"
 import { DeleteAccountDialog } from "~/components/sections/account/DeleteAccount"
 import { EditAccountDialog } from "~/components/sections/account/EditAccountDialog"
-import { accounts } from "~/server/db/schema"
+import { type accounts } from "~/server/db/schema"
 import { api } from "~/trpc/react"
 
 export type Account = typeof accounts.$inferSelect
@@ -27,7 +27,7 @@ export default function AccountsPage() {
 }
 
 
-export function AccountsTable() {
+function AccountsTable() {
   const { data: accounts, isLoading, error } = api.account.getAll.useQuery();
   const [editAccount, setEditAccount] = useState<Account | null>(null)
   const [deleteAccount, setDeleteAccount] = useState<Account | null>(null)

@@ -26,6 +26,8 @@ COPY . .
 # Skip env validation at build time; real vars are injected at runtime
 ENV SKIP_ENV_VALIDATION=1
 ENV NODE_ENV=production
+# Provide a syntactically valid placeholder so libsql doesn't throw during page-data collection
+ENV DATABASE_URL=file:/tmp/dummy.db
 
 RUN pnpm build
 

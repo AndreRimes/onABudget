@@ -12,7 +12,7 @@ export const assetTypesRouter = createTRPCRouter({
         description: z.string().optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       const exists = await assetTypeRepository.exists(input.name);
 
       if (exists) {
@@ -28,17 +28,17 @@ export const assetTypesRouter = createTRPCRouter({
       });
     }),
 
-  getAll: protectedProcedure.query(async ({ ctx }) => {
+  getAll: protectedProcedure.query(async ({  }) => {
     return await assetTypeRepository.findAll();
   }),
 
-  getAllWithStats: protectedProcedure.query(async ({ ctx }) => {
+  getAllWithStats: protectedProcedure.query(async ({  }) => {
     return await assetTypeRepository.findAllWithStats();
   }),
 
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       const assetType = await assetTypeRepository.findById(input.id);
 
       if (!assetType) {
@@ -53,7 +53,7 @@ export const assetTypesRouter = createTRPCRouter({
 
   getByName: protectedProcedure
     .input(z.object({ name: z.string() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       const assetType = await assetTypeRepository.findByName(input.name);
 
       if (!assetType) {
@@ -68,7 +68,7 @@ export const assetTypesRouter = createTRPCRouter({
 
   search: protectedProcedure
     .input(z.object({ query: z.string().min(1) }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await assetTypeRepository.search(input.query);
     }),
 
@@ -80,7 +80,7 @@ export const assetTypesRouter = createTRPCRouter({
         description: z.string().optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updateData } = input;
 
       // If updating name, check if new name already exists
@@ -111,7 +111,7 @@ export const assetTypesRouter = createTRPCRouter({
 
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       const deleted = await assetTypeRepository.delete(input.id);
 
       if (!deleted) {
@@ -126,7 +126,7 @@ export const assetTypesRouter = createTRPCRouter({
 
   exists: protectedProcedure
     .input(z.object({ name: z.string() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await assetTypeRepository.exists(input.name);
     }),
 });

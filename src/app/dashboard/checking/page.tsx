@@ -563,7 +563,7 @@ export default function CheckingPage() {
                       <ChartTooltipContent
                         indicator="line"
                         labelFormatter={(value, payload) => {
-                          if (payload && payload[0]) {
+                          if (payload?.[0]) {
                             const date = payload[0].payload.date;
                             return format(new Date(date), "dd/MM/yyyy", {
                               locale: ptBR,

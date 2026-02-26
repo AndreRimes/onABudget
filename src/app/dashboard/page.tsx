@@ -192,7 +192,7 @@ export default function DashboardPage() {
     expenses6Months.forEach((e) => {
       const month = e.expenses.expenseDate.slice(0, 7); // "yyyy-MM"
       if (grouped[month] !== undefined) {
-        grouped[month]! += e.expenses.amount;
+        grouped[month] += e.expenses.amount;
       }
     });
 

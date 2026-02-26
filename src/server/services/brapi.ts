@@ -1,6 +1,5 @@
 // src/server/services/market-data.service.ts
 import { TRPCError } from "@trpc/server";
-import { ur } from "zod/v4/locales";
 
 interface BrapiStockQuote {
   symbol: string;
@@ -99,7 +98,7 @@ export class MarketDataService {
 
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching quote: ${error}`,
+        message: `Error fetching quote: ${String(error)}`,
       });
     }
   }
@@ -139,7 +138,7 @@ export class MarketDataService {
 
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching quotes: ${error}`,
+        message: `Error fetching quotes: ${String(error)}`,
       });
     }
   }
@@ -152,8 +151,8 @@ export class MarketDataService {
    */
   async getHistoricalData(
     symbol: string,
-    range: string = "1y",
-    interval: string = "1d",
+    range = "1y",
+    interval = "1d",
   ): Promise<HistoricalDataPoint[]> {
     try {
       const url = new URL(`${this.BRAPI_BASE_URL}/quote/${symbol}`);
@@ -193,7 +192,7 @@ export class MarketDataService {
 
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching historical data: ${error}`,
+        message: `Error fetching historical data: ${String(error)}`,
       });
     }
   }
@@ -224,7 +223,7 @@ export class MarketDataService {
 
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `Error searching stocks: ${error}`,
+        message: `Error searching stocks: ${String(error)}`,
       });
     }
   }
@@ -257,7 +256,7 @@ export class MarketDataService {
 
       throw new TRPCError({
         code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching available stocks: ${error}`,
+        message: `Error fetching available stocks: ${String(error)}`,
       });
     }
   }
@@ -311,7 +310,7 @@ export class MarketDataService {
     const end = new Date(endDate);
     const data: CDIDataPoint[] = [];
 
-    let currentDate = new Date(start);
+    const currentDate = new Date(start);
     let accumulatedValue = 100;
 
     while (currentDate <= end) {

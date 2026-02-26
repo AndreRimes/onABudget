@@ -21,7 +21,7 @@ export const investmentsRouter = createTRPCRouter({
         fixedIncomeMaturityDate: z.string().nullish(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       return await investmentRepository.create({
         investmentAccountId: input.investmentAccountId,
         assetTypeId: input.assetTypeId,
@@ -90,7 +90,7 @@ export const investmentsRouter = createTRPCRouter({
 
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await investmentRepository.findById(input.id);
     }),
 
@@ -135,14 +135,14 @@ export const investmentsRouter = createTRPCRouter({
         fixedIncomeMaturityDate: z.string().nullish(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       const { id, ...updateData } = input;
       return await investmentRepository.update(id, updateData);
     }),
 
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
+    .mutation(async ({ input }) => {
       return await investmentRepository.delete(input.id);
     }),
   getPortfolioWithMarketData: protectedProcedure
@@ -191,17 +191,17 @@ export const investmentsRouter = createTRPCRouter({
 
   getStockQuote: protectedProcedure
     .input(z.object({ symbol: z.string() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await marketDataService.getQuote(input.symbol);
     }),
 
   searchStocks: protectedProcedure
     .input(z.object({ query: z.string() }))
-    .query(async ({ ctx, input }) => {
+    .query(async ({ input }) => {
       return await marketDataService.searchStocks(input.query);
     }),
 
-  getAvailableStocks: protectedProcedure.query(async ({ ctx }) => {
+  getAvailableStocks: protectedProcedure.query(async ({ }) => {
     return await marketDataService.getAvailableStocks();
   }),
 });

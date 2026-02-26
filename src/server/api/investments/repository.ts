@@ -406,7 +406,7 @@ export class InvestmentRepository {
       let currentValue: number;
 
       if (isFixed && holding.fixedIncomeYieldType && holding.fixedIncomeRate != null) {
-        const purchaseDate = assetEarliestDate.get(holding.assetName) || new Date().toISOString().split("T")[0]!;
+        const purchaseDate = assetEarliestDate.get(holding.assetName) ?? new Date().toISOString().split("T")[0]!;
         currentValue = this.calculateFixedIncomeCurrentValue(
           totalCost,
           holding.fixedIncomeYieldType,
@@ -665,7 +665,7 @@ export class InvestmentRepository {
 
   async getPortfolioPerformance(
     userId: string,
-    range: string = "1y",
+    range = "1y",
   ): Promise<{
     dates: string[];
     portfolioValue: number[];
@@ -673,7 +673,6 @@ export class InvestmentRepository {
     gainLoss: number[];
     cdiValue: number[];
   }> {
-    // Get current holdings (no dependency on transaction dates)
     const holdings = await this.getPortfolioHoldings(userId);
 
     if (holdings.length === 0) {
@@ -686,7 +685,6 @@ export class InvestmentRepository {
       };
     }
 
-    // Separate fixed income from market assets
     const marketHoldings = holdings.filter((h) => h.totalQuantity > 0 && !h.isFixedIncome);
     const fixedIncomeHoldings = holdings.filter((h) => h.totalQuantity > 0 && h.isFixedIncome);
 
@@ -703,7 +701,6 @@ export class InvestmentRepository {
       };
     }
 
-    // Build a map of current holdings: quantity, total cost, and fixed income info
     const holdingsMap = new Map(
       holdings.map((h) => [
         h.assetName,
@@ -717,7 +714,6 @@ export class InvestmentRepository {
       ]),
     );
 
-    // Get earliest purchase dates for fixed income calculations
     const allTransactions = await this.findByUserId(userId);
     const assetEarliestDate = new Map<string, string>();
     for (const tx of allTransactions) {
@@ -730,7 +726,6 @@ export class InvestmentRepository {
       }
     }
 
-    // Fetch historical data only for market assets
     const historicalDataPromises = uniqueMarketAssets.map((assetName) =>
       marketDataService
         .getHistoricalData(assetName, range, "1d")
@@ -739,28 +734,24 @@ export class InvestmentRepository {
 
     const historicalDataResults = await Promise.all(historicalDataPromises);
 
-    // Build price lookup by date for each asset
     const pricesByDate: Record<string, Record<string, number>> = {};
 
     historicalDataResults.forEach((data, index) => {
       const assetName = uniqueMarketAssets[index]!;
       data.forEach((point) => {
         const date = new Date(point.date * 1000).toISOString().split("T")[0]!;
-        if (!pricesByDate[date]) {
-          pricesByDate[date] = {};
-        }
-        pricesByDate[date]![assetName] = point.close;
+        pricesByDate[date] ??= {};
+        pricesByDate[date][assetName] = point.close;
       });
     });
 
     let dates = Object.keys(pricesByDate).sort();
 
-    // If there are only fixed income assets, generate dates from purchase to now
     if (dates.length === 0 && fixedIncomeHoldings.length > 0) {
       const allPurchaseDates = fixedIncomeHoldings
         .map((h) => assetEarliestDate.get(h.assetName))
         .filter(Boolean) as string[];
-      const earliest = allPurchaseDates.sort()[0] || new Date().toISOString().split("T")[0]!;
+      const earliest = allPurchaseDates.sort()[0] ?? new Date().toISOString().split("T")[0]!;
       const start = new Date(earliest);
       const end = new Date();
       const generatedDates: string[] = [];
@@ -782,8 +773,6 @@ export class InvestmentRepository {
       };
     }
 
-    // For "max" range, estimate the purchase date using price matching
-    // to avoid showing chart data from years before the user bought
     if (range === "max") {
       const estimatedStart = await this.estimateEarliestPurchaseDate(
         uniqueAssets,
@@ -805,36 +794,31 @@ export class InvestmentRepository {
       }
     }
 
-    // Total cost is constant (current holdings cost)
     const fixedTotalCost = uniqueAssets.reduce((sum, asset) => {
-      return sum + (holdingsMap.get(asset)?.totalCost || 0);
+      return sum + (holdingsMap.get(asset)?.totalCost ?? 0);
     }, 0);
 
     const portfolioValue: number[] = [];
     const totalCostArr: number[] = [];
     const gainLoss: number[] = [];
 
-    // Keep track of last known prices to fill gaps
     const lastKnownPrices: Record<string, number> = {};
 
     dates.forEach((date) => {
       let dayValue = 0;
 
-      // Market assets
       uniqueMarketAssets.forEach((assetName) => {
         const holding = holdingsMap.get(assetName);
         if (!holding || holding.quantity <= 0) return;
 
-        // Use current date's price, or fall back to last known price
         const price = pricesByDate[date]?.[assetName];
         if (price !== undefined) {
           lastKnownPrices[assetName] = price;
         }
-        const effectivePrice = lastKnownPrices[assetName] || 0;
+        const effectivePrice = lastKnownPrices[assetName] ?? 0;
         dayValue += holding.quantity * effectivePrice;
       });
 
-      // Fixed income assets — calculate accrued value up to this date
       fixedIncomeHoldings.forEach((h) => {
         const holding = holdingsMap.get(h.assetName);
         if (!holding || holding.quantity <= 0) return;
@@ -843,7 +827,7 @@ export class InvestmentRepository {
           return;
         }
 
-        const purchaseDate = assetEarliestDate.get(h.assetName) || date;
+        const purchaseDate = assetEarliestDate.get(h.assetName) ?? date;
         const CDI_ANNUAL_RATE = 0.1365;
         const purchaseTime = new Date(purchaseDate).getTime();
         const currentTime = new Date(date).getTime();
@@ -865,18 +849,16 @@ export class InvestmentRepository {
       gainLoss.push(dayValue - fixedTotalCost);
     });
 
-    // Calculate CDI comparison - scale total cost by CDI growth over the period
     const cdiData = await marketDataService.getCDIData(
       dates[0]!,
       dates[dates.length - 1]!,
     );
 
     const cdiByDate = new Map(cdiData.map((d) => [d.date, d.value]));
-    const baseCDI = cdiByDate.get(dates[0]!) || 100;
+    const baseCDI = cdiByDate.get(dates[0]!) ?? 100;
 
-    // CDI value represents what the total cost would be worth if invested in CDI
     const cdiValue = dates.map((date) => {
-      const cdiVal = cdiByDate.get(date) || baseCDI;
+      const cdiVal = cdiByDate.get(date) ?? baseCDI;
       return (cdiVal / baseCDI) * fixedTotalCost;
     });
 

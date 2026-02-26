@@ -100,6 +100,7 @@ export default function AuthPage() {
       router.push("/dashboard")
       router.refresh()
     } catch (err) {
+      console.error("Login error:", err)
       setLoginError("Ocorreu um erro inesperado")
     }
   }
@@ -122,6 +123,7 @@ export default function AuthPage() {
       router.push("/dashboard")
       router.refresh()
     } catch (err) {
+      console.error("Register error:", err)
       setRegisterError("Ocorreu um erro inesperado")
     }
   }
