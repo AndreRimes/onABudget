@@ -33,6 +33,7 @@ RUN pnpm build
 
 
 ##### RUNNER #####
+##### RUNNER #####
 FROM node:22-alpine AS runner
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
@@ -43,13 +44,15 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
-
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public         ./public
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules /deps/node_modules
+
+ENV NODE_PATH=/deps/node_modules
 
 USER nextjs
 
