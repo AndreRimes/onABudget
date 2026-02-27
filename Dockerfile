@@ -47,12 +47,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public         ./public
 
-# Garantir que a pasta existe antes de copiar
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
 
-# também precisa do node_modules para better-sqlite3 e drizzle-orm
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules  # 👈 isso é crítico
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules  
 
 USER nextjs
 
