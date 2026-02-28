@@ -1,8 +1,14 @@
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
+import { migrate } from "drizzle-orm/libsql/migrator";
+import { drizzle } from "drizzle-orm/libsql";
+import { createClient } from "@libsql/client";
 
-const url = (process.env.DATABASE_URL ?? 'file:/data/db.sqlite').replace('file:', '');
-const db = drizzle(new Database(url));
-await migrate(db, { migrationsFolder: '/app/drizzle' });
-console.log('Migration complete');
+const client = createClient({
+  url: process.env.DATABASE_URL ?? "file:/data/db.sqlite",
+});
+
+const db = drizzle(client);
+
+await migrate(db, { migrationsFolder: "/app/drizzle" });
+console.log("Migration complete");
+client.close();
+
