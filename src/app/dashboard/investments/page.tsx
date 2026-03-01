@@ -1,6 +1,6 @@
 "use client";
 
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -175,7 +175,7 @@ export default function InvestmentsPage() {
       
       return {
         date,
-        formattedDate: format(new Date(date), "dd/MM/yy", { locale: ptBR }),
+        formattedDate: format(parseISO(date), "dd/MM/yy", { locale: ptBR }),
         portfolioValue: performanceData.portfolioValue[index] || 0,
         totalCost,
         gainLoss,
@@ -571,7 +571,7 @@ export default function InvestmentsPage() {
                                     </Badge>
                                     {holding.fixedIncomeMaturityDate && (
                                       <span className="text-xs text-muted-foreground">
-                                        Venc: {format(new Date(holding.fixedIncomeMaturityDate), "dd/MM/yyyy")}
+                                        Venc: {format(parseISO(holding.fixedIncomeMaturityDate), "dd/MM/yyyy")}
                                       </span>
                                     )}
                                   </div>

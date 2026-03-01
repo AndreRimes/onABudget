@@ -4,6 +4,7 @@ import {
   endOfMonth,
   endOfYear,
   format,
+  parseISO,
   startOfMonth,
   startOfYear,
   subMonths,
@@ -179,11 +180,11 @@ export default function CheckingPage() {
       switch (dateFilter) {
         case "current-month":
         case "last-month":
-          return format(new Date(groupKey), "dd/MM", { locale: ptBR });
+          return format(parseISO(groupKey), "dd/MM", { locale: ptBR });
         case "last-3-months":
         case "last-6-months":
         case "current-year":
-          return format(new Date(groupKey + "-01"), "MMM/yy", { locale: ptBR });
+          return format(parseISO(groupKey + "-01"), "MMM/yy", { locale: ptBR });
         case "all":
           return groupKey;
         default:
@@ -193,7 +194,7 @@ export default function CheckingPage() {
 
     const expensesByPeriod = allExpenses.reduce(
       (acc, expense) => {
-        const date = new Date(expense.expenses.expenseDate);
+        const date = parseISO(expense.expenses.expenseDate);
         const groupKey = getGroupKey(date);
         if (!acc[groupKey]) {
           acc[groupKey] = 0;
@@ -578,7 +579,7 @@ export default function CheckingPage() {
                         labelFormatter={(value, payload) => {
                           if (payload?.[0]) {
                             const date = payload[0].payload.date;
-                            return format(new Date(date), "dd/MM/yyyy", {
+                            return format(parseISO(date), "dd/MM/yyyy", {
                               locale: ptBR,
                             });
                           }
@@ -758,14 +759,14 @@ export default function CheckingPage() {
                   {allExpenses
                     .sort(
                       (a, b) =>
-                        new Date(b.expenses.expenseDate).getTime() -
-                        new Date(a.expenses.expenseDate).getTime(),
+                        parseISO(b.expenses.expenseDate).getTime() -
+                        parseISO(a.expenses.expenseDate).getTime(),
                     )
                     .map((expense) => (
                       <TableRow key={expense.expenses.id}>
                         <TableCell>
                           {format(
-                            new Date(expense.expenses.expenseDate),
+                            parseISO(expense.expenses.expenseDate),
                             "dd/MM/yyyy",
                             { locale: ptBR },
                           )}
