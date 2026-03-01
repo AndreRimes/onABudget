@@ -25,6 +25,21 @@ import {
 } from "~/components/ui/select";
 import { api } from "~/trpc/react";
 
+function formatDateInput(input: string): string {
+  const digits = input.replace(/\D/g, "");
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+}
+
+function parseDisplayDate(displayDate: string): string {
+  if (!displayDate || displayDate.length !== 10) return "";
+  const parts = displayDate.split("/");
+  if (parts.length !== 3) return "";
+  const [day, month, year] = parts;
+  return `${year}-${month}-${day}`;
+}
+
 export function CreateInvestmentDialog() {
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
@@ -109,13 +124,13 @@ export function CreateInvestmentDialog() {
       quantity: qty,
       pricePerUnit: price,
       totalAmount: totalAmount,
-      ...(transactionDate ? { transactionDate } : {}),
+      ...(transactionDate ? { transactionDate: parseDisplayDate(transactionDate) } : {}),
       isFixedIncome,
       ...(isFixedIncome
         ? {
             fixedIncomeYieldType,
             fixedIncomeRate: fixedIncomeRate ? parseFloat(fixedIncomeRate) : null,
-            fixedIncomeMaturityDate: fixedIncomeMaturityDate || null,
+            fixedIncomeMaturityDate: fixedIncomeMaturityDate ? parseDisplayDate(fixedIncomeMaturityDate) : null,
           }
         : {
             fixedIncomeYieldType: null,
@@ -288,9 +303,11 @@ export function CreateInvestmentDialog() {
                     <Label htmlFor="transactionDate">Data do Investimento *</Label>
                     <Input
                       id="transactionDate"
-                      type="date"
+                      type="text"
+                      placeholder="DD/MM/YYYY"
                       value={transactionDate}
-                      onChange={(e) => setTransactionDate(e.target.value)}
+                      onChange={(e) => setTransactionDate(formatDateInput(e.target.value))}
+                      maxLength={10}
                       required
                     />
                   </div>
@@ -302,9 +319,11 @@ export function CreateInvestmentDialog() {
                     <Label htmlFor="fixedIncomeMaturityDate">Data de Vencimento</Label>
                     <Input
                       id="fixedIncomeMaturityDate"
-                      type="date"
+                      type="text"
+                      placeholder="DD/MM/YYYY"
                       value={fixedIncomeMaturityDate}
-                      onChange={(e) => setFixedIncomeMaturityDate(e.target.value)}
+                      onChange={(e) => setFixedIncomeMaturityDate(formatDateInput(e.target.value))}
+                      maxLength={10}
                     />
                     <p className="text-xs text-muted-foreground">Opcional</p>
                   </div>
@@ -349,9 +368,11 @@ export function CreateInvestmentDialog() {
                     <Label htmlFor="transactionDate">Data da Transação</Label>
                     <Input
                       id="transactionDate"
-                      type="date"
+                      type="text"
+                      placeholder="DD/MM/YYYY"
                       value={transactionDate}
-                      onChange={(e) => setTransactionDate(e.target.value)}
+                      onChange={(e) => setTransactionDate(formatDateInput(e.target.value))}
+                      maxLength={10}
                     />
                     <p className="text-xs text-muted-foreground">
                       Opcional. Será estimada se não informada.

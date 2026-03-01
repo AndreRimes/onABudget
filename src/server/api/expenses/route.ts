@@ -2,6 +2,7 @@ import z from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import {
   createExpense,
+  deleteExpense,
   getAllExpensesByAccount,
   getAllExpensesByUser,
   getExpenseById,
@@ -85,5 +86,11 @@ export const expensesRouter = createTRPCRouter({
         amount: input.amount,
         expenseDate: input.date,
       });
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      return await deleteExpense(input.id);
     }),
 });

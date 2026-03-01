@@ -21,7 +21,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Target } from "lucide-react";
+import { Target, Trash2 } from "lucide-react";
 import { CreateCategoryDialog } from "~/components/sections/category/CreateCategoryDialog";
 import { CreateExpenseDialog } from "~/components/sections/expense/CreateExpenseDialog";
 import { Badge } from "~/components/ui/badge";
@@ -273,6 +273,19 @@ export default function CheckingPage() {
   const budgetRemaining = budgetAmount - stats.total;
 
   const { data: categories } = api.category.getAll.useQuery();
+  const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(null);
+
+  const { mutate: deleteExpense, isPending: isDeleting } =
+    api.expenses.delete.useMutation({
+      onSuccess: () => {
+        utils.expenses.getAllFromUser.invalidate();
+        utils.expenses.getAllFromAccount.invalidate();
+        toast.success("Despesa removida com sucesso!");
+        setDeletingExpenseId(null);
+      },
+      onError: (err) => toast.error("Erro ao remover despesa: " + err.message),
+    });
+
   const categoryMap = useMemo(() => {
     const map = new Map<number, { name: string; color: string }>();
     categories?.forEach((cat) =>
@@ -738,6 +751,7 @@ export default function CheckingPage() {
                     <TableHead>Descrição</TableHead>
                     <TableHead>Categoria</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
+                    <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -781,6 +795,16 @@ export default function CheckingPage() {
                             currency: "BRL",
                           }).format(expense.expenses.amount)}
                         </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            onClick={() => setDeletingExpenseId(expense.expenses.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                 </TableBody>
@@ -789,6 +813,36 @@ export default function CheckingPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={deletingExpenseId !== null}
+        onOpenChange={(open) => { if (!open) setDeletingExpenseId(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remover despesa</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Tem certeza que deseja remover esta despesa? Esta ação não pode ser desfeita.
+          </p>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={() => {
+                if (deletingExpenseId !== null) {
+                  deleteExpense({ id: deletingExpenseId });
+                }
+              }}
+            >
+              {isDeleting ? "Removendo..." : "Remover"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

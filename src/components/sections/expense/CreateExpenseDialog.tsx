@@ -27,12 +27,27 @@ import {
 import { Textarea } from "~/components/ui/textarea";
 import { api } from "~/trpc/react";
 
+function formatDateInput(input: string): string {
+  const digits = input.replace(/\D/g, "");
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
+}
+
+function parseDisplayDate(displayDate: string): string {
+  if (!displayDate || displayDate.length !== 10) return "";
+  const parts = displayDate.split("/");
+  if (parts.length !== 3) return "";
+  const [day, month, year] = parts;
+  return `${year}-${month}-${day}`;
+}
+
 export function CreateExpenseDialog() {
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [date, setDate] = useState(format(new Date(), "dd/MM/yyyy"));
   const [description, setDescription] = useState("");
 
   const utils = api.useUtils();
@@ -49,11 +64,10 @@ export function CreateExpenseDialog() {
       utils.expenses.getAllFromAccount.invalidate();
       toast.success("Despesa criada com sucesso!");
       setOpen(false);
-      // Reset form
       setAccountId("");
       setCategoryId("");
       setAmount("");
-      setDate(format(new Date(), "yyyy-MM-dd"));
+      setDate(format(new Date(), "dd/MM/yyyy"));
       setDescription("");
     },
     onError: (error) => {
@@ -73,7 +87,7 @@ export function CreateExpenseDialog() {
       accountId: parseInt(accountId),
       categoryId: parseInt(categoryId),
       amount: parseFloat(amount),
-      date,
+      date: parseDisplayDate(date),
       description: description || undefined,
     });
   };
@@ -143,9 +157,11 @@ export function CreateExpenseDialog() {
               <Label htmlFor="date">Data *</Label>
               <Input
                 id="date"
-                type="date"
+                type="text"
+                placeholder="DD/MM/YYYY"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => setDate(formatDateInput(e.target.value))}
+                maxLength={10}
                 required
               />
             </div>
