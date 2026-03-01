@@ -193,16 +193,20 @@ export default function InvestmentsPage() {
     });
   }, [performanceData]);
 
-  // Derive period-specific gain/return from chart data endpoints
   const periodSummary = useMemo(() => {
-    if (!chartData.length) return null;
-    const first = chartData[0]!;
-    const last = chartData[chartData.length - 1]!;
-    const periodGain = last.portfolioValue - first.portfolioValue;
+    if (!portfolio?.holdings?.length) return null;
+    const periodGain = portfolio.holdings.reduce(
+      (sum: number, h: Holding) => sum + h.periodGain,
+      0,
+    );
+    const startValue = portfolio.holdings.reduce(
+      (sum: number, h: Holding) => sum + (h.currentValue - h.periodGain),
+      0,
+    );
     const periodGainPercent =
-      first.portfolioValue > 0 ? (periodGain / first.portfolioValue) * 100 : 0;
+      startValue > 0 ? (periodGain / startValue) * 100 : 0;
     return { periodGain, periodGainPercent };
-  }, [chartData]);
+  }, [portfolio?.holdings]);
 
   const chartConfig = {
     gainLoss: {
@@ -230,7 +234,6 @@ export default function InvestmentsPage() {
     }).format(value / 100);
   };
 
-  const isLoading = isLoadingPortfolio || isLoadingPerformance;
 
   return (
     <div className="space-y-6 p-6">
@@ -305,7 +308,7 @@ export default function InvestmentsPage() {
                   : "text-red-600"
               }`}
             >
-              {isLoading ? (
+              {isLoadingPortfolio ? (
                 <span className="text-muted-foreground">Carregando...</span>
               ) : (
                 <>
@@ -333,7 +336,7 @@ export default function InvestmentsPage() {
                   : "text-red-600"
               }`}
             >
-              {isLoading ? (
+              {isLoadingPortfolio ? (
                 <span className="text-muted-foreground">Carregando...</span>
               ) : (
                 formatPercent(periodSummary?.periodGainPercent ?? 0)
