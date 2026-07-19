@@ -1,4 +1,4 @@
-name: Build and Deploy to Homelab
+name: Build and Push Onabudget Image
 
 on:
   push:
@@ -8,7 +8,6 @@ on:
 
 env:
   DOCKER_IMAGE: andrerimes/onabudget
-  KUBE_NAMESPACE: onabudget-namespace
 
 jobs:
   build-and-push:
@@ -33,7 +32,6 @@ jobs:
           images: ${{ env.DOCKER_IMAGE }}
           tags: |
             type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -43,45 +41,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
-
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Connect to Tailscale
-        run: |
-          echo "Auth key length: ${#TS_AUTHKEY}"
-          if [ -z "$TS_AUTHKEY" ]; then
-            echo "ERROR: TAILSCALE_AUTHKEY secret is not set!"
-            exit 1
-          fi
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey="${TS_AUTHKEY}" --accept-routes --hostname="github-runner-${{ github.run_id }}"
-          tailscale status
-        env:
-          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: "latest"
-
-      - name: Configure kubectl
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
-
-      - name: Restart deployment to pull new image
-        run: |
-          kubectl rollout restart deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
-          kubectl rollout status deployment/onabudget-deployment -n ${{ env.KUBE_NAMESPACE }}
-
-      - name: Verify deployment
-        run: |
-          kubectl get pods -n ${{ env.KUBE_NAMESPACE }}
-          kubectl get services -n ${{ env.KUBE_NAMESPACE }}
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=
