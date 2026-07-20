@@ -101,7 +101,7 @@ export default function Page() {
           <h1 className="text-5xl leading-tight font-bold tracking-tight md:text-7xl">
             Suas finanças,{" "}
             <span className="from-primary bg-linear-to-r to-purple-400 bg-clip-text text-transparent">
-              sob controleeeeeeeeeee
+              sob controle
             </span>
           </h1>
 
@@ -282,4 +282,3 @@ export default function Page() {
     </div>
   );
 }
-
