@@ -40,6 +40,13 @@ function parseDisplayDate(displayDate: string): string {
   return `${year}-${month}-${day}`;
 }
 
+function todayDisplayDate(): string {
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${now.getFullYear()}`;
+}
+
 export function CreateInvestmentDialog() {
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
@@ -48,7 +55,7 @@ export function CreateInvestmentDialog() {
   const [transactionType, setTransactionType] = useState<"BUY" | "SELL">("BUY");
   const [quantity, setQuantity] = useState("");
   const [pricePerUnit, setPricePerUnit] = useState("");
-  const [transactionDate, setTransactionDate] = useState("");
+  const [transactionDate, setTransactionDate] = useState(todayDisplayDate());
   const [isFixedIncome, setIsFixedIncome] = useState(false);
   const [fixedIncomeYieldType, setFixedIncomeYieldType] = useState<"CDI_PERCENTAGE" | "PREFIXED">("CDI_PERCENTAGE");
   const [fixedIncomeRate, setFixedIncomeRate] = useState("");
@@ -59,6 +66,15 @@ export function CreateInvestmentDialog() {
   // Fetch accounts and asset types
   const { data: accounts } = api.account.getAll.useQuery();
   const { data: assetTypes } = api.assetTypes.getAll.useQuery();
+
+  // Ticker suggestions (skipped for fixed income, which has free-form names)
+  const { data: tickerSuggestions } = api.investments.searchStocks.useQuery(
+    { query: assetName },
+    {
+      enabled: !isFixedIncome && assetName.length >= 3,
+      staleTime: 60 * 60 * 1000,
+    },
+  );
 
   const investmentAccounts =
     accounts?.filter((acc) => acc.accountType === "INVESTMENT") || [];
@@ -73,10 +89,8 @@ export function CreateInvestmentDialog() {
 
   const { mutate, isPending } = api.investments.create.useMutation({
     onSuccess: () => {
-      utils.investments.getAllFromUser.invalidate();
-      utils.investments.getPortfolioWithMarketData.invalidate();
-      utils.investments.getPortfolioHoldings.invalidate();
-      utils.investments.getPortfolioPerformance.invalidate();
+      void utils.investments.getAllFromUser.invalidate();
+      void utils.investments.getPortfolioSnapshot.invalidate();
       toast.success("Investimento registrado com sucesso!");
       setOpen(false);
       // Reset form
@@ -86,7 +100,7 @@ export function CreateInvestmentDialog() {
       setTransactionType("BUY");
       setQuantity("");
       setPricePerUnit("");
-      setTransactionDate("");
+      setTransactionDate(todayDisplayDate());
       setIsFixedIncome(false);
       setFixedIncomeYieldType("CDI_PERCENTAGE");
       setFixedIncomeRate("");
@@ -107,10 +121,16 @@ export function CreateInvestmentDialog() {
         return;
       }
     } else {
-      if (!accountId || !assetTypeId || !assetName || !quantity || !pricePerUnit) {
+      if (!accountId || !assetTypeId || !assetName || !quantity || !pricePerUnit || !transactionDate) {
         toast.error("Preencha todos os campos obrigatórios");
         return;
       }
+    }
+
+    const parsedDate = parseDisplayDate(transactionDate);
+    if (!parsedDate) {
+      toast.error("Data da transação inválida. Use o formato DD/MM/AAAA");
+      return;
     }
 
     const qty = isFixedIncome ? 1 : parseFloat(quantity);
@@ -124,7 +144,7 @@ export function CreateInvestmentDialog() {
       quantity: qty,
       pricePerUnit: price,
       totalAmount: totalAmount,
-      ...(transactionDate ? { transactionDate: parseDisplayDate(transactionDate) } : {}),
+      transactionDate: parsedDate,
       isFixedIncome,
       ...(isFixedIncome
         ? {
@@ -220,8 +240,18 @@ export function CreateInvestmentDialog() {
                   placeholder="Ex: PETR4, CDB-BANCO..."
                   value={assetName}
                   onChange={(e) => setAssetName(e.target.value.toUpperCase())}
+                  list={isFixedIncome ? undefined : "assetNameSuggestions"}
                   required
                 />
+                {!isFixedIncome && (
+                  <datalist id="assetNameSuggestions">
+                    {tickerSuggestions?.map((suggestion) => (
+                      <option key={suggestion.stock} value={suggestion.stock}>
+                        {suggestion.name}
+                      </option>
+                    ))}
+                  </datalist>
+                )}
               </div>
             </div>
 
@@ -365,7 +395,7 @@ export function CreateInvestmentDialog() {
                 {/* Row: Data da Transação (half width) */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="transactionDate">Data da Transação</Label>
+                    <Label htmlFor="transactionDate">Data da Transação *</Label>
                     <Input
                       id="transactionDate"
                       type="text"
@@ -373,10 +403,8 @@ export function CreateInvestmentDialog() {
                       value={transactionDate}
                       onChange={(e) => setTransactionDate(formatDateInput(e.target.value))}
                       maxLength={10}
+                      required
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Opcional. Será estimada se não informada.
-                    </p>
                   </div>
                 </div>
               </>

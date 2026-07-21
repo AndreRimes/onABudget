@@ -84,7 +84,10 @@ export default function DashboardPage() {
   // --- Data fetching ---
   const { data: accounts } = api.account.getAll.useQuery();
   const { data: portfolio, isLoading: isLoadingPortfolio } =
-    api.investments.getPortfolioWithMarketData.useQuery();
+    api.investments.getPortfolioSnapshot.useQuery({
+      range: "max",
+      includeSeries: false,
+    });
   const { data: currentBudget } = api.budget.getLatest.useQuery();
 
   const { data: expensesThisMonth } = api.expenses.getAllFromUser.useQuery({
@@ -144,12 +147,12 @@ export default function DashboardPage() {
   );
 
   // Total patrimony = checking + current investment value
-  const investmentValue = portfolio?.totalValue ?? 0;
+  const investmentValue = portfolio?.summary.totalValue ?? 0;
   const totalPatrimony = checkingBalance + investmentValue;
 
   // Investment returns
-  const investmentGain = portfolio?.totalGain ?? 0;
-  const investmentGainPercent = portfolio?.totalGainPercent ?? 0;
+  const investmentGain = portfolio?.summary.periodGain ?? 0;
+  const investmentGainPercent = portfolio?.summary.periodGainPercent ?? 0;
 
   // Monthly spend
   const monthlySpend = useMemo(

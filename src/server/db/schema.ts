@@ -2,6 +2,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   index,
   integer,
+  primaryKey,
   real,
   sqliteTable,
   text,
@@ -76,7 +77,7 @@ export const investmentTransactions = sqliteTable("investment_transactions", {
   quantity: real("quantity").notNull(),
   pricePerUnit: real("price_per_unit").notNull(),
   totalAmount: real("total_amount").notNull(),
-  transactionDate: text("transaction_date").default(sql`CURRENT_TIMESTAMP`),
+  transactionDate: text("transaction_date").notNull(), // YYYY-MM-DD
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   // Fixed income fields
   isFixedIncome: integer("is_fixed_income", { mode: "boolean" }).default(false),
@@ -85,6 +86,69 @@ export const investmentTransactions = sqliteTable("investment_transactions", {
   }),
   fixedIncomeRate: real("fixed_income_rate"), // e.g. 100 for 100% CDI, or 15 for 15% aa
   fixedIncomeMaturityDate: text("fixed_income_maturity_date"),
+  sourceHash: text("source_hash").unique(), // B3 import dedup key
+});
+
+export const dividends = sqliteTable(
+  "dividends",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    investmentAccountId: integer("investment_account_id")
+      .notNull()
+      .references(() => accounts.id, {
+        onDelete: "cascade",
+      }),
+    assetName: text("asset_name").notNull(),
+    type: text("type", {
+      enum: ["DIVIDEND", "JCP", "RENDIMENTO"],
+    })
+      .notNull()
+      .default("RENDIMENTO"),
+    amount: real("amount").notNull(), // total net BRL received
+    paymentDate: text("payment_date").notNull(), // YYYY-MM-DD
+    source: text("source", { enum: ["MANUAL", "B3_IMPORT"] })
+      .notNull()
+      .default("MANUAL"),
+    sourceHash: text("source_hash").unique(), // B3 import dedup key
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    index("dividends_account_asset_idx").on(
+      table.investmentAccountId,
+      table.assetName,
+    ),
+  ],
+);
+
+// Quote cache + negative cache + candle-coverage metadata, one row per ticker
+export const marketSymbols = sqliteTable("market_symbols", {
+  symbol: text("symbol").primaryKey(),
+  status: text("status", { enum: ["OK", "NOT_FOUND"] })
+    .notNull()
+    .default("OK"),
+  lastPrice: real("last_price"),
+  previousClose: real("previous_close"),
+  lastPriceAt: integer("last_price_at", { mode: "timestamp_ms" }),
+  candlesFrom: text("candles_from"), // YYYY-MM-DD, candle coverage start
+  candlesTo: text("candles_to"), // YYYY-MM-DD, candle coverage end
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+});
+
+// Immutable daily closes — cached forever
+export const marketCandles = sqliteTable(
+  "market_candles",
+  {
+    symbol: text("symbol").notNull(),
+    date: text("date").notNull(), // YYYY-MM-DD
+    close: real("close").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.symbol, table.date] })],
+);
+
+// BCB SGS series 12 daily CDI rates (business days only) — cached forever
+export const cdiRates = sqliteTable("cdi_rates", {
+  date: text("date").primaryKey(), // YYYY-MM-DD
+  dailyRate: real("daily_rate").notNull(), // decimal, e.g. 0.00051
 });
 
 export const user = sqliteTable("user", {
@@ -206,9 +270,17 @@ export const investmentTransactionsRelations = relations(
   }),
 );
 
+export const dividendsRelations = relations(dividends, ({ one }) => ({
+  account: one(accounts, {
+    fields: [dividends.investmentAccountId],
+    references: [accounts.id],
+  }),
+}));
+
 export const accountsRelations = relations(accounts, ({ many }) => ({
   expenses: many(expenses),
   investmentTransactions: many(investmentTransactions),
+  dividends: many(dividends),
 }));
 
 export const expensesRelations = relations(expenses, ({ one }) => ({

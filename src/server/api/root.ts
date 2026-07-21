@@ -3,6 +3,7 @@ import { categoryRouter } from "~/server/api/category/route";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 import { expensesRouter } from "./expenses/route";
 import { investmentsRouter } from "./investments/route";
+import { dividendsRouter } from "./dividends/route";
 import { assetTypesRouter } from "./asset-type/route";
 import { budgetRouter } from "./budget/route";
 
@@ -16,6 +17,7 @@ export const appRouter = createTRPCRouter({
   category: categoryRouter,
   expenses: expensesRouter,
   investments: investmentsRouter,
+  dividends: dividendsRouter,
   assetTypes: assetTypesRouter,
   budget: budgetRouter,
 });

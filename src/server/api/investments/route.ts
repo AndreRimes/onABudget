@@ -1,7 +1,8 @@
 import z from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { investmentRepository } from "./repository";
-import { marketDataService } from "~/server/services/brapi";
+import { b3RowSchema, importB3Rows, previewB3Rows } from "./b3-import";
+import { searchStocks } from "~/server/services/brapi";
 
 export const investmentsRouter = createTRPCRouter({
   create: protectedProcedure
@@ -14,7 +15,7 @@ export const investmentsRouter = createTRPCRouter({
         quantity: z.number().min(0.00001),
         pricePerUnit: z.number().min(0.01),
         totalAmount: z.number().min(0.01),
-        transactionDate: z.string().optional(),
+        transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         isFixedIncome: z.boolean().optional(),
         fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]).nullish(),
         fixedIncomeRate: z.number().nullish(),
@@ -30,7 +31,7 @@ export const investmentsRouter = createTRPCRouter({
         quantity: input.quantity,
         pricePerUnit: input.pricePerUnit,
         totalAmount: input.totalAmount,
-        ...(input.transactionDate ? { transactionDate: input.transactionDate } : {}),
+        transactionDate: input.transactionDate,
         isFixedIncome: input.isFixedIncome,
         fixedIncomeYieldType: input.fixedIncomeYieldType,
         fixedIncomeRate: input.fixedIncomeRate,
@@ -75,48 +76,6 @@ export const investmentsRouter = createTRPCRouter({
       );
     }),
 
-  getByTransactionType: protectedProcedure
-    .input(
-      z.object({
-        transactionType: z.enum(["BUY", "SELL"]),
-      }),
-    )
-    .query(async ({ ctx, input }) => {
-      return await investmentRepository.findByTransactionType(
-        ctx.session.user.id,
-        input.transactionType,
-      );
-    }),
-
-  getById: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      return await investmentRepository.findById(input.id);
-    }),
-
-  getPortfolioHoldings: protectedProcedure.query(async ({ ctx }) => {
-    return await investmentRepository.getPortfolioHoldings(ctx.session.user.id);
-  }),
-
-  getTransactionSummary: protectedProcedure.query(async ({ ctx }) => {
-    return await investmentRepository.getTransactionSummary(
-      ctx.session.user.id,
-    );
-  }),
-
-  calculatePortfolioValue: protectedProcedure
-    .input(
-      z.object({
-        currentPrices: z.record(z.string(), z.number()),
-      }),
-    )
-    .query(async ({ ctx, input }) => {
-      return await investmentRepository.calculatePortfolioValue(
-        ctx.session.user.id,
-        input.currentPrices,
-      );
-    }),
-
   update: protectedProcedure
     .input(
       z.object({
@@ -128,7 +87,10 @@ export const investmentsRouter = createTRPCRouter({
         quantity: z.number().min(0.00001).optional(),
         pricePerUnit: z.number().min(0.01).optional(),
         totalAmount: z.number().min(0.01).optional(),
-        transactionDate: z.string().optional(),
+        transactionDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
         isFixedIncome: z.boolean().optional(),
         fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]).nullish(),
         fixedIncomeRate: z.number().nullish(),
@@ -145,63 +107,60 @@ export const investmentsRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       return await investmentRepository.delete(input.id);
     }),
-  getPortfolioWithMarketData: protectedProcedure
+
+  deleteAsset: protectedProcedure
+    .input(z.object({ assetName: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      return await investmentRepository.deleteByAssetName(
+        ctx.session.user.id,
+        input.assetName,
+      );
+    }),
+
+  getPortfolioSnapshot: protectedProcedure
     .input(
       z
         .object({
           range: z
-            .enum(["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"])
-            .optional(),
+            .enum(["1d", "5d", "1mo", "6mo", "1y", "max"])
+            .default("max"),
+          includeSeries: z.boolean().default(true),
         })
         .optional(),
     )
     .query(async ({ ctx, input }) => {
-      return await investmentRepository.getPortfolioWithMarketData(
+      return await investmentRepository.getPortfolioSnapshot(
         ctx.session.user.id,
-        input?.range,
+        input?.range ?? "max",
+        input?.includeSeries ?? true,
       );
     }),
-
-  getPortfolioPerformance: protectedProcedure
-    .input(
-      z.object({
-        range: z
-          .enum([
-            "1d",
-            "5d",
-            "1mo",
-            "3mo",
-            "6mo",
-            "1y",
-            "2y",
-            "5y",
-            "10y",
-            "ytd",
-            "max",
-          ])
-          .default("1y"),
-      }),
-    )
-    .query(async ({ ctx, input }) => {
-      return await investmentRepository.getPortfolioPerformance(
-        ctx.session.user.id,
-        input.range,
-      );
-    }),
-
-  getStockQuote: protectedProcedure
-    .input(z.object({ symbol: z.string() }))
-    .query(async ({ input }) => {
-      return await marketDataService.getQuote(input.symbol);
-    }),
-
   searchStocks: protectedProcedure
     .input(z.object({ query: z.string() }))
     .query(async ({ input }) => {
-      return await marketDataService.searchStocks(input.query);
+      return await searchStocks(input.query);
     }),
 
-  getAvailableStocks: protectedProcedure.query(async ({ }) => {
-    return await marketDataService.getAvailableStocks();
-  }),
+  importB3Preview: protectedProcedure
+    .input(z.object({ rows: z.array(b3RowSchema).max(5000) }))
+    .mutation(async ({ ctx, input }) => {
+      return await previewB3Rows(ctx.session.user.id, input.rows);
+    }),
+
+  importB3: protectedProcedure
+    .input(
+      z.object({
+        accountByInstitution: z.record(z.string(), z.number()),
+        assetTypeByTicker: z.record(z.string(), z.number()),
+        rows: z.array(b3RowSchema).max(5000),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return await importB3Rows({
+        userId: ctx.session.user.id,
+        accountByInstitution: input.accountByInstitution,
+        assetTypeByTicker: input.assetTypeByTicker,
+        rows: input.rows,
+      });
+    }),
 });

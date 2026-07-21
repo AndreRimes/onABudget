@@ -1,334 +1,266 @@
-// src/server/services/market-data.service.ts
-import { TRPCError } from "@trpc/server";
+// Thin HTTP client for external market data providers (brapi.dev + BCB).
+// No caching and no TRPCError here — callers go through MarketCacheService,
+// which owns persistence and error presentation.
 
-interface BrapiStockQuote {
+/** The requested symbol does not exist at the provider (permanent). */
+export class SymbolNotFoundError extends Error {
+  constructor(symbol: string) {
+    super(`Symbol ${symbol} not found`);
+    this.name = "SymbolNotFoundError";
+  }
+}
+
+/** The provider is unreachable or returned a server error (transient). */
+export class MarketUpstreamError extends Error {
+  readonly status: number | null;
+
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.name = "MarketUpstreamError";
+    this.status = status;
+  }
+}
+
+export interface BrapiQuote {
   symbol: string;
   shortName: string;
   longName: string;
   currency: string;
   regularMarketPrice: number;
-  regularMarketDayHigh: number;
-  regularMarketDayLow: number;
-  regularMarketDayRange: string;
+  regularMarketPreviousClose: number;
   regularMarketChange: number;
   regularMarketChangePercent: number;
   regularMarketTime: string;
-  marketCap: number;
-  regularMarketVolume: number;
-  regularMarketPreviousClose: number;
-  regularMarketOpen: number;
-  averageDailyVolume10Day: number;
-  averageDailyVolume3Month: number;
-  fiftyTwoWeekLowChange: number;
-  fiftyTwoWeekLowChangePercent: number;
-  fiftyTwoWeekRange: string;
-  fiftyTwoWeekHighChange: number;
-  fiftyTwoWeekHighChangePercent: number;
-  fiftyTwoWeekLow: number;
-  fiftyTwoWeekHigh: number;
-  twoHundredDayAverage: number;
-  twoHundredDayAverageChange: number;
-  twoHundredDayAverageChangePercent: number;
 }
 
-interface BrapiResponse {
-  results: BrapiStockQuote[];
-  requestedAt: string;
-  took: string;
+interface BrapiHistoricalPoint {
+  date: number; // unix seconds
+  close: number | null;
 }
 
-interface HistoricalDataPoint {
-  date: number;
-  open: number;
-  high: number;
-  low: number;
+interface BrapiQuoteResponse {
+  results?: Array<BrapiQuote & { historicalDataPrice?: BrapiHistoricalPoint[] }>;
+}
+
+export interface CandlePoint {
+  date: string; // YYYY-MM-DD
   close: number;
-  volume: number;
-  adjustedClose: number;
 }
 
-interface BrapiHistoricalResponse {
-  results: Array<{
-    symbol: string;
-    historicalDataPrice: HistoricalDataPoint[];
-  }>;
+export interface CdiDailyRate {
+  date: string; // YYYY-MM-DD
+  dailyRate: number; // decimal, e.g. 0.00051
 }
 
-interface CDIDataPoint {
-  date: string;
-  value: number;
+export type BrapiRange =
+  | "1d"
+  | "5d"
+  | "1mo"
+  | "3mo"
+  | "6mo"
+  | "1y"
+  | "2y"
+  | "5y"
+  | "10y"
+  | "ytd"
+  | "max";
+
+const BRAPI_BASE_URL = "https://brapi.dev/api";
+const FETCH_TIMEOUT_MS = 12_000;
+
+function brapiUrl(path: string, params: Record<string, string> = {}): URL {
+  const url = new URL(`${BRAPI_BASE_URL}${path}`);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  const token = process.env.BRAPI_API_TOKEN;
+  if (token) url.searchParams.set("token", token);
+  return url;
 }
 
-export class MarketDataService {
-  private readonly BRAPI_BASE_URL = "https://brapi.dev/api";
-  private readonly BRAPI_TOKEN = process.env.BRAPI_API_TOKEN; // Optional, for higher rate limits
+/**
+ * fetch with a hard timeout so a stalled upstream can never hang a request
+ * (and, in turn, leave the investments page loading forever).
+ */
+async function fetchWithTimeout(url: string): Promise<Response> {
+  return await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
 
-  /**
-   * Get current quote for a single stock
-   */
-  async getQuote(symbol: string): Promise<BrapiStockQuote> {
-    try {
-      const url = new URL(`${this.BRAPI_BASE_URL}/quote/${symbol}`);
-
-      if (this.BRAPI_TOKEN) {
-        url.searchParams.set("token", this.BRAPI_TOKEN);
-      }
-
-      const response = await fetch(url.toString());
-
-      if (!response.ok) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `Failed to fetch quote for ${symbol}`,
-        });
-      }
-
-      const data = (await response.json()) as BrapiResponse;
-
-      if (!data.results || data.results.length === 0) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: `Stock ${symbol} not found`,
-        });
-      }
-
-      return data.results[0]!;
-    } catch (error) {
-      if (error instanceof TRPCError) throw error;
-
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching quote: ${String(error)}`,
-      });
+/**
+ * Map with bounded concurrency. brapi's free plan serves one ticker per
+ * request, so a large portfolio means many small requests — firing them all at
+ * once trips rate limiting, so we cap how many are in flight.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index]!);
     }
   }
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
+  return results;
+}
 
-  /**
-   * Get current quotes for multiple stocks
-   */
-  async getQuotes(symbols: string[]): Promise<Record<string, number>> {
-    try {
-      const symbolsParam = symbols.join(",");
-      const url = new URL(`${this.BRAPI_BASE_URL}/quote/${symbolsParam}`);
+const REQUEST_CONCURRENCY = 6;
 
-      if (this.BRAPI_TOKEN) {
-        url.searchParams.set("token", this.BRAPI_TOKEN);
+/**
+ * Fetch current quotes for a set of symbols.
+ * brapi's free plan allows only ONE ticker per request, so this fans out one
+ * request per symbol in parallel. Symbols brapi does not know are simply
+ * absent from `quotes` (the caller negative-caches them); symbols that failed
+ * for transient reasons are listed in `failed` so they are NOT mistaken for
+ * not-found.
+ */
+export async function fetchQuotes(
+  symbols: string[],
+): Promise<{ quotes: BrapiQuote[]; failed: string[] }> {
+  if (symbols.length === 0) return { quotes: [], failed: [] };
+
+  const results = await mapWithConcurrency(
+    symbols,
+    REQUEST_CONCURRENCY,
+    async (symbol) => {
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(brapiUrl(`/quote/${symbol}`).toString());
+      } catch {
+        return { symbol, quote: null, transient: true };
       }
-
-      const response = await fetch(url.toString());
-
+      if (response.status === 404) {
+        return { symbol, quote: null, transient: false };
+      }
       if (!response.ok) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to fetch quotes",
-        });
+        return { symbol, quote: null, transient: true };
       }
+      const data = (await response.json()) as BrapiQuoteResponse;
+      return { symbol, quote: data.results?.[0] ?? null, transient: false };
+    },
+  );
 
-      const data = (await response.json()) as BrapiResponse;
-
-      const prices: Record<string, number> = {};
-
-      for (const quote of data.results) {
-        prices[quote.symbol] = quote.regularMarketPrice;
-      }
-
-      return prices;
-    } catch (error) {
-      if (error instanceof TRPCError) throw error;
-
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching quotes: ${String(error)}`,
-      });
-    }
+  const quotes: BrapiQuote[] = [];
+  const failed: string[] = [];
+  for (const result of results) {
+    if (result.quote) quotes.push(result.quote);
+    else if (result.transient) failed.push(result.symbol);
   }
 
-  /**
-   * Get historical data for a stock
-   * @param symbol - Stock symbol (e.g., "PETR4")
-   * @param range - Time range: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
-   * @param interval - Data interval: 1d, 1wk, 1mo
-   */
-  async getHistoricalData(
-    symbol: string,
-    range = "1y",
-    interval = "1d",
-  ): Promise<HistoricalDataPoint[]> {
-    try {
-      const url = new URL(`${this.BRAPI_BASE_URL}/quote/${symbol}`);
-      url.searchParams.set("range", range);
-      url.searchParams.set("interval", interval);
-
-      if (this.BRAPI_TOKEN) {
-        url.searchParams.set("token", this.BRAPI_TOKEN);
-      }
-
-      const response = await fetch(url.toString());
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        console.warn(`Brapi error for ${symbol} (${response.status}): ${errorBody}`);
-        if (response.status === 404) {
-          return [];
-        }
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `Failed to fetch historical data for ${symbol}: ${response.status} - ${errorBody}`,
-        });
-      }
-
-      const data = (await response.json()) as BrapiHistoricalResponse;
-
-      if (!data.results || data.results.length === 0) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: `Historical data for ${symbol} not found`,
-        });
-      }
-
-      return data.results[0]!.historicalDataPrice;
-    } catch (error) {
-      if (error instanceof TRPCError) throw error;
-
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching historical data: ${String(error)}`,
-      });
-    }
+  // Everything failing transiently means the provider itself is down.
+  if (quotes.length === 0 && failed.length === symbols.length) {
+    throw new MarketUpstreamError("brapi unreachable for all symbols");
   }
 
-  async searchStocks(query: string): Promise<BrapiStockQuote[]> {
-    try {
-      const url = new URL(`${this.BRAPI_BASE_URL}/quote/list`);
-      url.searchParams.set("search", query);
+  return { quotes, failed };
+}
 
-      if (this.BRAPI_TOKEN) {
-        url.searchParams.set("token", this.BRAPI_TOKEN);
-      }
-
-      const response = await fetch(url.toString());
-
-      if (!response.ok) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to search stocks",
-        });
-      }
-
-      const data = (await response.json()) as BrapiResponse;
-
-      return data.results || [];
-    } catch (error) {
-      if (error instanceof TRPCError) throw error;
-
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Error searching stocks: ${String(error)}`,
-      });
-    }
-  }
-
-  /**
-   * Get available stocks list
-   */
-  async getAvailableStocks(): Promise<string[]> {
-    try {
-      const url = new URL(`${this.BRAPI_BASE_URL}/available`);
-
-      if (this.BRAPI_TOKEN) {
-        url.searchParams.set("token", this.BRAPI_TOKEN);
-      }
-
-      const response = await fetch(url.toString());
-
-      if (!response.ok) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to fetch available stocks",
-        });
-      }
-
-      const data = (await response.json()) as { stocks: string[] };
-
-      return data.stocks || [];
-    } catch (error) {
-      if (error instanceof TRPCError) throw error;
-
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Error fetching available stocks: ${String(error)}`,
-      });
-    }
-  }
-
-
-  async getCDIData(
-    startDate: string,
-    endDate: string,
-  ): Promise<CDIDataPoint[]> {
-    const formatToBCB = (dateStr: string): string => {
-      const d = new Date(dateStr);
-      const day = String(d.getUTCDate()).padStart(2, "0");
-      const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const year = d.getUTCFullYear();
-      return `${day}/${month}/${year}`;
-    };
-
-    const url = new URL(
-      "https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados",
+/**
+ * Fetch daily close candles for one symbol over a brapi range.
+ * Throws SymbolNotFoundError when the ticker does not exist.
+ */
+export async function fetchCandles(
+  symbol: string,
+  range: BrapiRange,
+): Promise<CandlePoint[]> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      brapiUrl(`/quote/${symbol}`, { range, interval: "1d" }).toString(),
     );
-    url.searchParams.set("formato", "json");
-    url.searchParams.set("dataInicial", formatToBCB(startDate));
-    url.searchParams.set("dataFinal", formatToBCB(endDate));
-
-    const response = await fetch(url.toString());
-
-    if (!response.ok) {
-      throw new TRPCError({
-        code: "INTERNAL_SERVER_ERROR",
-        message: `Failed to fetch CDI data from BCB: ${response.status}`,
-      });
-    }
-
-    interface BCBDataPoint {
-      data: string;  // "DD/MM/YYYY"
-      valor: string; // taxa diária em %, ex: "0.05164"
-    }
-
-    const bcbData = (await response.json()) as BCBDataPoint[];
-
-    // Constrói mapa data → taxa diária decimal
-    const dailyRateMap = new Map<string, number>(
-      bcbData.map((point) => [
-        // Normaliza para YYYY-MM-DD para comparação
-        point.data.split("/").reverse().join("-"),
-        parseFloat(point.valor) / 100,
-      ]),
-    );
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const data: CDIDataPoint[] = [];
-
-    const currentDate = new Date(start);
-    let accumulatedValue = 100;
-
-    while (currentDate <= end) {
-      const dateKey = currentDate.toISOString().split("T")[0]!;
-      const dailyRate = dailyRateMap.get(dateKey) ?? 0; // fins de semana/feriados = 0
-
-      accumulatedValue *= 1 + dailyRate;
-
-      data.push({
-        date: dateKey,
-        value: accumulatedValue,
-      });
-
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-
-    return data;
+  } catch (error) {
+    throw new MarketUpstreamError(`brapi request failed: ${String(error)}`);
   }
+
+  if (response.status === 404) throw new SymbolNotFoundError(symbol);
+
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `brapi candle request for ${symbol} failed with status ${response.status}`,
+      response.status,
+    );
+  }
+
+  const data = (await response.json()) as BrapiQuoteResponse;
+  const result = data.results?.[0];
+  if (!result) throw new SymbolNotFoundError(symbol);
+
+  return (result.historicalDataPrice ?? [])
+    .filter((point) => point.close != null)
+    .map((point) => ({
+      date: new Date(point.date * 1000).toISOString().slice(0, 10),
+      close: point.close!,
+    }));
 }
 
-export const marketDataService = new MarketDataService();
+/** Search brapi's ticker list. Used by the ticker autocomplete. */
+export async function searchStocks(query: string): Promise<
+  Array<{ stock: string; name: string; close: number | null; type: string }>
+> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      brapiUrl(`/quote/list`, { search: query, limit: "10" }).toString(),
+    );
+  } catch (error) {
+    throw new MarketUpstreamError(`brapi request failed: ${String(error)}`);
+  }
+
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `brapi search request failed with status ${response.status}`,
+    );
+  }
+
+  const data = (await response.json()) as {
+    stocks?: Array<{ stock: string; name: string; close: number | null; type: string }>;
+  };
+  return data.stocks ?? [];
+}
+
+/**
+ * Fetch daily CDI rates (BCB SGS series 12) for a date range.
+ * Returns business days only; the values are decimal daily rates.
+ */
+export async function fetchCdiDailyRates(
+  startDate: string,
+  endDate: string,
+): Promise<CdiDailyRate[]> {
+  const toBcbDate = (iso: string): string => {
+    const [year, month, day] = iso.split("-");
+    return `${day}/${month}/${year}`;
+  };
+
+  const url = new URL("https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados");
+  url.searchParams.set("formato", "json");
+  url.searchParams.set("dataInicial", toBcbDate(startDate));
+  url.searchParams.set("dataFinal", toBcbDate(endDate));
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url.toString());
+  } catch (error) {
+    throw new MarketUpstreamError(`BCB request failed: ${String(error)}`);
+  }
+
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `BCB CDI request failed with status ${response.status}`,
+    );
+  }
+
+  const data = (await response.json()) as Array<{ data: string; valor: string }>;
+
+  return data.map((point) => ({
+    date: point.data.split("/").reverse().join("-"),
+    dailyRate: parseFloat(point.valor) / 100,
+  }));
+}
