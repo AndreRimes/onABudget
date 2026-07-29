@@ -117,6 +117,45 @@ export const investmentsRouter = createTRPCRouter({
       );
     }),
 
+  renameAsset: protectedProcedure
+    .input(
+      z.object({
+        assetName: z.string().min(1),
+        newAssetName: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return await investmentRepository.renameByAssetName(
+        ctx.session.user.id,
+        input.assetName,
+        input.newAssetName.trim(),
+      );
+    }),
+
+  setFixedIncomeYield: protectedProcedure
+    .input(
+      z.object({
+        assetName: z.string().min(1),
+        fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]),
+        fixedIncomeRate: z.number().positive(),
+        fixedIncomeMaturityDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .nullish(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return await investmentRepository.setFixedIncomeYieldByAssetName(
+        ctx.session.user.id,
+        input.assetName,
+        {
+          fixedIncomeYieldType: input.fixedIncomeYieldType,
+          fixedIncomeRate: input.fixedIncomeRate,
+          fixedIncomeMaturityDate: input.fixedIncomeMaturityDate ?? null,
+        },
+      );
+    }),
+
   getPortfolioSnapshot: protectedProcedure
     .input(
       z

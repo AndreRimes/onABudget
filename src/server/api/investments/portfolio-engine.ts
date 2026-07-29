@@ -20,6 +20,9 @@ export interface EngineTransaction {
   fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
+  // When set, the holding is marked to market from official Tesouro Direto PU
+  // (fed in via `tesouroCandles`) instead of accruing a fixed-income yield.
+  tesouroTitle: string | null;
 }
 
 export interface EngineDividend {
@@ -49,6 +52,7 @@ export interface SnapshotHolding {
   fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
+  tesouroTitle: string | null;
 }
 
 export interface SnapshotPoint {
@@ -64,7 +68,7 @@ export interface PortfolioSnapshot {
   holdings: SnapshotHolding[];
   summary: {
     totalValue: number;
-    totalInvested: number; // remaining cost basis (average-cost method)
+    totalInvested: number; // net deposits / aportes (matches chart's invested)
     periodGain: number;
     periodGainPercent: number;
     periodDividends: number;
@@ -92,6 +96,7 @@ interface AssetState {
   fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
+  tesouroTitle: string | null;
   // per-asset snapshot taken when the replay crosses the range start
   startGain: number;
   startValue: number;
@@ -134,6 +139,7 @@ export function computePortfolioSnapshot(input: {
   assetTypeNames: Map<number, string>;
   quotes: Map<string, QuoteResult>;
   candles: Map<string, CandlePoint[]>;
+  tesouroCandles: Map<string, CandlePoint[]>; // assetName -> daily PU series
   cdiRates: Map<string, number>; // ISO date -> decimal daily rate
   range: TimeRange;
   today: string; // YYYY-MM-DD
@@ -144,6 +150,7 @@ export function computePortfolioSnapshot(input: {
     assetTypeNames,
     quotes,
     candles,
+    tesouroCandles,
     cdiRates,
     range,
     today,
@@ -201,6 +208,7 @@ export function computePortfolioSnapshot(input: {
         fixedIncomeYieldType: tx.fixedIncomeYieldType,
         fixedIncomeRate: tx.fixedIncomeRate,
         fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
+        tesouroTitle: tx.tesouroTitle,
         startGain: 0,
         startValue: 0,
       };
@@ -219,7 +227,11 @@ export function computePortfolioSnapshot(input: {
   const series: SnapshotPoint[] = [];
   let startGainTotal: number | null = null;
   let startCdiGain = 0;
-  let startValueTotal = 0;
+  // Total-return gain at the end of the day before `today`, so "today's change"
+  // is derived from the exact same replay as the period gain — this makes the
+  // "hoje" figure identical to the period gain when the selected range is 1d.
+  const yesterdayIso = addDaysIso(today, -1);
+  let yesterdayGain: number | null = null;
   let startDividendsAccumulated = 0;
 
   // Total return of one asset: what it is worth plus everything it paid out,
@@ -233,7 +245,9 @@ export function computePortfolioSnapshot(input: {
     // 1) Accrue daily yield before the day's cash flows.
     cdiValue *= 1 + cdiRate;
     for (const state of assets.values()) {
-      if (!state.isFixedIncome || state.quantity <= 0) continue;
+      // Tesouro is marked to market (step 4), not accrued.
+      if (!state.isFixedIncome || state.tesouroTitle || state.quantity <= 0)
+        continue;
       if (state.fixedIncomeYieldType === "CDI_PERCENTAGE") {
         const pct = (state.fixedIncomeRate ?? 100) / 100;
         state.marketValue *= 1 + cdiRate * pct;
@@ -256,7 +270,10 @@ export function computePortfolioSnapshot(input: {
         state.netDeposits += tx.totalAmount;
         netDeposits += tx.totalAmount;
         cdiValue += tx.totalAmount;
-        if (state.isFixedIncome) state.marketValue += tx.totalAmount;
+        // Accrual fixed income tracks principal directly; Tesouro derives its
+        // value from PU × quantity in the price-marking step instead.
+        if (state.isFixedIncome && !state.tesouroTitle)
+          state.marketValue += tx.totalAmount;
       } else {
         const avgCost =
           state.quantity > 0 ? state.costBasis / state.quantity : 0;
@@ -267,13 +284,13 @@ export function computePortfolioSnapshot(input: {
         state.netDeposits -= tx.totalAmount;
         netDeposits -= tx.totalAmount;
         cdiValue -= tx.totalAmount;
-        if (state.isFixedIncome) {
+        if (state.isFixedIncome && !state.tesouroTitle) {
           state.marketValue = Math.max(0, state.marketValue - tx.totalAmount);
         }
         if (state.quantity <= 1e-9) {
           state.quantity = 0;
           state.costBasis = 0;
-          if (state.isFixedIncome) state.marketValue = 0;
+          if (state.isFixedIncome && !state.tesouroTitle) state.marketValue = 0;
         }
       }
       txIndex++;
@@ -294,8 +311,13 @@ export function computePortfolioSnapshot(input: {
     // 4) Mark market assets to the day's price (forward-filled candles;
     //    today's point prefers the live quote).
     for (const [assetName, state] of assets) {
-      if (state.isFixedIncome) continue;
-      const assetCandles = candles.get(assetName);
+      // Accrual fixed income keeps its compounded marketValue (step 1). Tesouro
+      // and market assets are priced here — Tesouro from its official PU series,
+      // everything else from brapi candles + today's live quote.
+      if (state.isFixedIncome && !state.tesouroTitle) continue;
+      const assetCandles = state.tesouroTitle
+        ? tesouroCandles.get(assetName)
+        : candles.get(assetName);
       if (assetCandles) {
         while (
           state.candleIndex < assetCandles.length &&
@@ -305,7 +327,7 @@ export function computePortfolioSnapshot(input: {
           state.candleIndex++;
         }
       }
-      if (day === today) {
+      if (day === today && !state.tesouroTitle) {
         const quote = quotes.get(assetName);
         if (quote?.price != null) state.lastPrice = quote.price;
       }
@@ -320,11 +342,12 @@ export function computePortfolioSnapshot(input: {
     const totalGain = totalValue + dividendsAccumulated - netDeposits;
     const totalCdiGain = cdiValue - netDeposits;
 
+    if (day === yesterdayIso) yesterdayGain = totalGain;
+
     // 5) Snapshot state the first time the replay enters the range window.
     if (day >= rangeStart && startGainTotal === null) {
       startGainTotal = totalGain;
       startCdiGain = totalCdiGain;
-      startValueTotal = totalValue;
       startDividendsAccumulated = dividendsAccumulated;
       for (const state of assets.values()) {
         state.startGain = assetTotalGain(state);
@@ -366,9 +389,7 @@ export function computePortfolioSnapshot(input: {
   const holdings: SnapshotHolding[] = [];
   const issues: PortfolioSnapshot["issues"] = [];
   let totalValue = 0;
-  let totalInvested = 0;
   let realizedGainTotal = 0;
-  let dailyChange = 0;
   let quotesAsOf: Date | null = null;
 
   for (const [assetName, state] of assets) {
@@ -376,12 +397,15 @@ export function computePortfolioSnapshot(input: {
     if (state.quantity <= 0) continue;
 
     totalValue += state.marketValue;
-    totalInvested += state.costBasis;
 
     const quote = state.isFixedIncome ? undefined : quotes.get(assetName);
-    const priceStatus: SnapshotHolding["priceStatus"] = state.isFixedIncome
-      ? "fixed_income"
-      : (quote?.status ?? "unavailable");
+    const priceStatus: SnapshotHolding["priceStatus"] = state.tesouroTitle
+      ? state.lastPrice != null
+        ? "ok"
+        : "unavailable"
+      : state.isFixedIncome
+        ? "fixed_income"
+        : (quote?.status ?? "unavailable");
 
     if (!state.isFixedIncome && quote && quote.status !== "ok") {
       issues.push({
@@ -397,9 +421,6 @@ export function computePortfolioSnapshot(input: {
     }
     if (quote?.asOf && (!quotesAsOf || quote.asOf > quotesAsOf)) {
       quotesAsOf = quote.asOf;
-    }
-    if (quote?.price != null && quote.previousClose != null) {
-      dailyChange += state.quantity * (quote.price - quote.previousClose);
     }
 
     const averageCost = state.costBasis / state.quantity;
@@ -431,6 +452,7 @@ export function computePortfolioSnapshot(input: {
       fixedIncomeYieldType: state.fixedIncomeYieldType,
       fixedIncomeRate: state.fixedIncomeRate,
       fixedIncomeMaturityDate: state.fixedIncomeMaturityDate,
+      tesouroTitle: state.tesouroTitle,
     });
   }
 
@@ -438,15 +460,24 @@ export function computePortfolioSnapshot(input: {
 
   const finalGain = totalValue + dividendsAccumulated - netDeposits;
   const periodGain = finalGain - (startGainTotal ?? 0);
-  const periodBase = startValueTotal > 0 ? startValueTotal : totalInvested;
+  // Invested capital = net deposits (aportes) — the exact quantity the chart
+  // plots as "Total Investido" (SnapshotPoint.invested). Reporting it here, and
+  // basing the return on it, keeps the "Total Investido" and "Rentabilidade"
+  // cards identical to the chart's last point for every range.
+  const periodGainPercent =
+    netDeposits > 0 ? (periodGain / netDeposits) * 100 : 0;
+  // "Today's change" = the 1-day slice of the same replay, so it matches the
+  // period gain exactly when the range is 1d (Hoje). Zero if there is no prior
+  // day (a portfolio that only starts today).
+  const dailyChange = yesterdayGain != null ? finalGain - yesterdayGain : 0;
 
   return {
     holdings,
     summary: {
       totalValue,
-      totalInvested,
+      totalInvested: netDeposits,
       periodGain,
-      periodGainPercent: periodBase > 0 ? (periodGain / periodBase) * 100 : 0,
+      periodGainPercent,
       periodDividends: dividendsAccumulated - startDividendsAccumulated,
       dividends12m,
       monthlyIncome: dividendsLast3m / 3,

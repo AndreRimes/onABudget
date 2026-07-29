@@ -1,6 +1,7 @@
 // Thin HTTP client for external market data providers (brapi.dev + BCB).
 // No caching and no TRPCError here — callers go through MarketCacheService,
 // which owns persistence and error presentation.
+import { tesouroTitleKeyFromParts } from "~/server/api/investments/tesouro-title";
 
 /** The requested symbol does not exist at the provider (permanent). */
 export class SymbolNotFoundError extends Error {
@@ -50,6 +51,12 @@ export interface CandlePoint {
 export interface CdiDailyRate {
   date: string; // YYYY-MM-DD
   dailyRate: number; // decimal, e.g. 0.00051
+}
+
+export interface TesouroDailyPrice {
+  titleKey: string; // e.g. "TESOURO IPCA+ 2050"
+  date: string; // YYYY-MM-DD
+  sellPrice: number; // PU Venda Manhã (resale price)
 }
 
 export type BrapiRange =
@@ -263,4 +270,75 @@ export async function fetchCdiDailyRates(
     date: point.data.split("/").reverse().join("-"),
     dailyRate: parseFloat(point.valor) / 100,
   }));
+}
+
+// Official Tesouro Direto historical price dataset (Tesouro Transparente).
+// One big semicolon-separated, decimal-comma CSV covering every title and its
+// full history. Columns:
+//   Tipo Titulo;Data Vencimento;Data Base;Taxa Compra Manha;Taxa Venda Manha;
+//   PU Compra Manha;PU Venda Manha;PU Base Manha
+const TESOURO_CSV_URL =
+  "https://www.tesourotransparente.gov.br/ckan/dataset/df56aa42-484a-4a59-8184-7676580c81e3/resource/796d2059-14e9-44e3-80c9-2d9e30b405c1/download/PrecoTaxaTesouroDireto.csv";
+const TESOURO_FETCH_TIMEOUT_MS = 60_000;
+
+/**
+ * Fetch official daily resale prices (PU Venda Manhã) for the given Tesouro
+ * title keys, from `fromDate` onward. Parses line-by-line and keeps only the
+ * requested titles / recent dates so the (tens-of-MB) file never fully
+ * materializes. `titleKeys` are canonical keys (see tesouro-title.ts).
+ */
+export async function fetchTesouroPrices(
+  titleKeys: Set<string>,
+  fromDate: string,
+): Promise<TesouroDailyPrice[]> {
+  if (titleKeys.size === 0) return [];
+
+  let response: Response;
+  try {
+    response = await fetch(TESOURO_CSV_URL, {
+      signal: AbortSignal.timeout(TESOURO_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new MarketUpstreamError(`Tesouro request failed: ${String(error)}`);
+  }
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `Tesouro price request failed with status ${response.status}`,
+      response.status,
+    );
+  }
+
+  const text = await response.text();
+  const lines = text.split(/\r?\n/);
+  const out: TesouroDailyPrice[] = [];
+
+  // Skip the header row (index 0).
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const cols = line.split(";");
+    if (cols.length < 7) continue;
+
+    const tipo = cols[0]!.trim();
+    const vencimento = cols[1]!.trim(); // DD/MM/YYYY
+    const dataBase = cols[2]!.trim(); // DD/MM/YYYY
+    const puVenda = cols[6]!; // PU Venda Manhã
+
+    const year = vencimento.slice(6, 10);
+    const titleKey = tesouroTitleKeyFromParts(tipo, year);
+    if (!titleKeys.has(titleKey)) continue;
+
+    const isoDate = `${dataBase.slice(6, 10)}-${dataBase.slice(3, 5)}-${dataBase.slice(0, 2)}`;
+    if (isoDate < fromDate) continue;
+
+    // Brazilian number format: "1.002,94" → 1002.94
+    const sellPrice = parseFloat(
+      puVenda.replace(/\./g, "").replace(",", "."),
+    );
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) continue;
+
+    out.push({ titleKey, date: isoDate, sellPrice });
+  }
+
+  return out;
 }

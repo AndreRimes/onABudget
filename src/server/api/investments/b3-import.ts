@@ -17,6 +17,12 @@ export const b3TradeRowSchema = z.object({
   price: z.number().nonnegative(),
   amount: z.number().positive(),
   institution: z.string().default(""),
+  // Renda fixa / tesouro direto rows from the Movimentação report. Negociação
+  // trades (renda variável) send false.
+  isFixedIncome: z.boolean().default(false),
+  // Canonical Tesouro Direto title (e.g. "TESOURO IPCA+ 2050") for Tesouro
+  // rows; drives mark-to-market pricing. Null for everything else.
+  tesouroTitle: z.string().nullish(),
 });
 
 export const b3IncomeRowSchema = z.object({
@@ -222,7 +228,11 @@ export async function importB3Rows(input: {
           pricePerUnit: row.price,
           totalAmount: row.amount,
           transactionDate: row.date,
-          isFixedIncome: false,
+          // Fixed-income (renda fixa / tesouro) rows carry no yield metadata in
+          // the B3 file; the yield type / rate / maturity stay null and can be
+          // filled in later via the edit flow.
+          isFixedIncome: row.isFixedIncome,
+          tesouroTitle: row.tesouroTitle ?? null,
           sourceHash,
         })
         .onConflictDoNothing({ target: investmentTransactions.sourceHash })

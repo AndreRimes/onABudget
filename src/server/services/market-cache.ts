@@ -4,7 +4,12 @@
 // requests on every page load.
 import { and, asc, gte, inArray, sql } from "drizzle-orm";
 import { db } from "~/server/db";
-import { cdiRates, marketCandles, marketSymbols } from "~/server/db/schema";
+import {
+  cdiRates,
+  marketCandles,
+  marketSymbols,
+  tesouroPrices,
+} from "~/server/db/schema";
 import {
   type BrapiQuote,
   type BrapiRange,
@@ -14,6 +19,7 @@ import {
   fetchCandles,
   fetchCdiDailyRates,
   fetchQuotes,
+  fetchTesouroPrices,
   mapWithConcurrency,
 } from "./brapi";
 
@@ -64,6 +70,8 @@ export class MarketCacheService {
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
   private candlesSyncedOn = new Map<string, string>();
   private cdiSyncedOn: string | null = null;
+  /** tesouro title key -> ISO date of last CSV sync, to fetch at most once a day */
+  private tesouroSyncedOn = new Map<string, string>();
 
   /**
    * Current quotes for a batch of symbols, cache-first.
@@ -369,6 +377,59 @@ export class MarketCacheService {
       .where(gte(cdiRates.date, fromDate));
 
     return new Map(rows.map((row) => [row.date, row.dailyRate]));
+  }
+
+  /**
+   * Official daily Tesouro Direto resale prices (PU Venda) for the given title
+   * keys, from `fromDate` to today, as a candle-like series per title. One CSV
+   * download covers every title, so it is fetched at most once per day per key.
+   */
+  async getTesouroPrices(
+    titleKeys: string[],
+    fromDate: string,
+  ): Promise<Map<string, CandlePoint[]>> {
+    const result = new Map<string, CandlePoint[]>();
+    const keys = [...new Set(titleKeys)];
+    if (keys.length === 0) return result;
+
+    const today = todayIso();
+    const stale = keys.filter((key) => this.tesouroSyncedOn.get(key) !== today);
+    if (stale.length > 0) {
+      try {
+        const prices = await fetchTesouroPrices(new Set(stale), fromDate);
+        if (prices.length > 0) {
+          await db.insert(tesouroPrices).values(prices).onConflictDoNothing();
+        }
+        // Mark all requested-and-stale keys as synced even if some matched no
+        // rows, so an unmatched title doesn't re-download the CSV every load.
+        for (const key of stale) this.tesouroSyncedOn.set(key, today);
+      } catch (error) {
+        if (!(error instanceof MarketUpstreamError)) throw error;
+        // Transient failure: serve whatever is cached and retry next time.
+      }
+    }
+
+    const rows = await db
+      .select()
+      .from(tesouroPrices)
+      .where(
+        and(
+          inArray(tesouroPrices.titleKey, keys),
+          gte(tesouroPrices.date, fromDate),
+        ),
+      )
+      .orderBy(asc(tesouroPrices.date));
+
+    for (const row of rows) {
+      const list = result.get(row.titleKey);
+      if (list) {
+        list.push({ date: row.date, close: row.sellPrice });
+      } else {
+        result.set(row.titleKey, [{ date: row.date, close: row.sellPrice }]);
+      }
+    }
+
+    return result;
   }
 }
 

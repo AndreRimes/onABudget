@@ -86,6 +86,10 @@ export const investmentTransactions = sqliteTable("investment_transactions", {
   }),
   fixedIncomeRate: real("fixed_income_rate"), // e.g. 100 for 100% CDI, or 15 for 15% aa
   fixedIncomeMaturityDate: text("fixed_income_maturity_date"),
+  // Canonical Tesouro Direto title (e.g. "TESOURO IPCA+ 2050"). When set, the
+  // holding is marked to market from official daily PU instead of accruing.
+  // Kept independent of assetName so a rename can't break Tesouro pricing.
+  tesouroTitle: text("tesouro_title"),
   sourceHash: text("source_hash").unique(), // B3 import dedup key
 });
 
@@ -150,6 +154,17 @@ export const cdiRates = sqliteTable("cdi_rates", {
   date: text("date").primaryKey(), // YYYY-MM-DD
   dailyRate: real("daily_rate").notNull(), // decimal, e.g. 0.00051
 });
+
+// Official Tesouro Direto daily resale prices (PU Venda Manhã) — cached forever
+export const tesouroPrices = sqliteTable(
+  "tesouro_prices",
+  {
+    titleKey: text("title_key").notNull(), // e.g. "TESOURO IPCA+ 2050"
+    date: text("date").notNull(), // YYYY-MM-DD
+    sellPrice: real("sell_price").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.titleKey, table.date] })],
+);
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),

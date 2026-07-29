@@ -20,6 +20,8 @@ import {
 import { Badge } from "~/components/ui/badge";
 import type { RouterOutputs } from "~/trpc/react";
 import { DeleteAssetDialog } from "./DeleteAssetDialog";
+import { EditFixedIncomeDialog } from "./EditFixedIncomeDialog";
+import { RenameAssetDialog } from "./RenameAssetDialog";
 import { formatCurrency, formatPercent } from "./format";
 
 type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
@@ -144,12 +146,33 @@ export function HoldingsSection({
                           </div>
                           {holding.isFixedIncome && (
                             <div className="flex items-center gap-1">
-                              <Badge variant="secondary" className="text-xs">
-                                {holding.fixedIncomeYieldType ===
-                                "CDI_PERCENTAGE"
-                                  ? `${holding.fixedIncomeRate}% CDI`
-                                  : `${holding.fixedIncomeRate}% a.a.`}
-                              </Badge>
+                              {holding.tesouroTitle ? (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-xs"
+                                  title="Valor calculado pelo preço oficial diário do Tesouro Direto (marcação a mercado)."
+                                >
+                                  Tesouro · preço de mercado
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-xs"
+                                  title={
+                                    holding.fixedIncomeRate == null
+                                      ? "Defina a taxa para que o rendimento seja calculado."
+                                      : undefined
+                                  }
+                                >
+                                  {holding.fixedIncomeRate == null ||
+                                  holding.fixedIncomeYieldType == null
+                                    ? "Taxa não definida"
+                                    : holding.fixedIncomeYieldType ===
+                                        "CDI_PERCENTAGE"
+                                      ? `${holding.fixedIncomeRate}% CDI`
+                                      : `${holding.fixedIncomeRate}% a.a.`}
+                                </Badge>
+                              )}
                               {holding.fixedIncomeMaturityDate && (
                                 <span className="text-xs text-muted-foreground">
                                   Venc:{" "}
@@ -225,7 +248,20 @@ export function HoldingsSection({
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <DeleteAssetDialog assetName={holding.assetName} />
+                        <div className="flex items-center justify-end gap-2">
+                          {holding.isFixedIncome && (
+                            <RenameAssetDialog assetName={holding.assetName} />
+                          )}
+                          {holding.isFixedIncome && !holding.tesouroTitle && (
+                            <EditFixedIncomeDialog
+                              assetName={holding.assetName}
+                              yieldType={holding.fixedIncomeYieldType}
+                              rate={holding.fixedIncomeRate}
+                              maturityDate={holding.fixedIncomeMaturityDate}
+                            />
+                          )}
+                          <DeleteAssetDialog assetName={holding.assetName} />
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

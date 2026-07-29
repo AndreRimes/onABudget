@@ -1,8 +1,9 @@
 "use client";
 
-import { FileUp } from "lucide-react";
+import { FileSpreadsheet, FileUp, UploadCloud, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { cn } from "~/lib/utils";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -14,7 +15,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "~/components/ui/dialog";
-import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
   Select,
@@ -50,6 +50,8 @@ export function ImportB3Dialog() {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [ignoredRows, setIgnoredRows] = useState(0);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [assetTypeByTicker, setAssetTypeByTicker] = useState<
     Record<string, string>
   >({});
@@ -105,16 +107,19 @@ export function ImportB3Dialog() {
     setIgnoredRows(0);
     setAssetTypeByTicker({});
     setAccountByInstitution({});
+    setFileName(null);
+    setIsDragging(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleFile = async (file: File) => {
+    setFileName(file.name);
     try {
       const parsed = parseB3Workbook(await file.arrayBuffer());
       if (parsed.rows.length === 0) {
         toast.error(
           parsed.reportType === "movimentacao"
-            ? "Nenhum provento (rendimento, dividendo ou JCP) encontrado no arquivo"
+            ? "Nenhum provento ou aplicação de renda fixa/tesouro encontrado no arquivo"
             : "Nenhuma negociação encontrada no arquivo",
         );
         return;
@@ -198,25 +203,80 @@ export function ImportB3Dialog() {
         <DialogHeader>
           <DialogTitle>Importar relatório da B3</DialogTitle>
           <DialogDescription>
-            Baixe o relatório de Negociação (compras e vendas) ou de
-            Movimentação (proventos) na Área do Investidor da B3 e envie o
-            arquivo .xlsx aqui.
+            Baixe o relatório de Negociação (compras e vendas de renda variável)
+            ou de Movimentação (proventos e aplicações em renda fixa e tesouro
+            direto) na Área do Investidor da B3 e envie o arquivo .xlsx aqui.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="b3File">Arquivo (.xlsx) *</Label>
-            <Input
+            <input
               id="b3File"
               ref={fileInputRef}
               type="file"
               accept=".xlsx,.xls"
+              className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) void handleFile(file);
               }}
             />
+            {fileName ? (
+              <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
+                <FileSpreadsheet className="h-5 w-5 shrink-0 text-primary" />
+                <span className="flex-1 truncate text-sm font-medium">
+                  {fileName}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    resetState();
+                  }}
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Trocar
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragging(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) void handleFile(file);
+                }}
+                className={cn(
+                  "flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors",
+                  isDragging
+                    ? "border-primary bg-primary/5"
+                    : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/30",
+                )}
+              >
+                <UploadCloud className="h-8 w-8 text-muted-foreground" />
+                <p className="text-sm">
+                  <span className="font-medium text-foreground">
+                    Clique para selecionar
+                  </span>{" "}
+                  <span className="text-muted-foreground">
+                    ou arraste o arquivo aqui
+                  </span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Relatório .xlsx da Área do Investidor da B3
+                </p>
+              </button>
+            )}
           </div>
 
           {isPreviewing && (
@@ -282,12 +342,23 @@ export function ImportB3Dialog() {
               {unknownTickers.length > 0 && (
                 <div className="grid gap-2 rounded-lg border p-3">
                   <p className="text-sm font-medium">
-                    Tipo de ativo para novos códigos:
+                    Tipo de ativo para novos códigos{" "}
+                    <span className="font-normal text-muted-foreground">
+                      (defina o tipo de cada código novo)
+                    </span>
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     {unknownTickers.map((ticker) => (
-                      <div key={ticker} className="flex items-center gap-2">
-                        <span className="w-20 text-sm font-medium">{ticker}</span>
+                      <div
+                        key={ticker}
+                        className="grid gap-1.5 rounded-md border bg-muted/30 p-2"
+                      >
+                        <span
+                          className="truncate text-sm font-medium"
+                          title={ticker}
+                        >
+                          {ticker}
+                        </span>
                         <Select
                           value={assetTypeByTicker[ticker] ?? ""}
                           onValueChange={(value) =>
@@ -297,8 +368,14 @@ export function ImportB3Dialog() {
                             }))
                           }
                         >
-                          <SelectTrigger className="flex-1">
-                            <SelectValue placeholder="Tipo" />
+                          <SelectTrigger
+                            className={cn(
+                              "w-full",
+                              !assetTypeByTicker[ticker] &&
+                                "border-amber-500/60",
+                            )}
+                          >
+                            <SelectValue placeholder="Selecione o tipo" />
                           </SelectTrigger>
                           <SelectContent>
                             {assetTypes?.map((type) => (
