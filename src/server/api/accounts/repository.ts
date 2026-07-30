@@ -67,4 +67,24 @@ export const accountRepository = {
       .returning();
     return deletedAccount;
   },
+
+  /**
+   * True when the account exists, belongs to the user and can hold
+   * investments. Any write that accepts an `investmentAccountId` from the
+   * client must pass through here — otherwise an authenticated user can file
+   * transactions or dividends into someone else's account by guessing an id.
+   */
+  ownsInvestmentAccount: async (userId: string, accountId: number) => {
+    const [account] = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.id, accountId),
+          eq(accounts.userId, userId),
+          eq(accounts.accountType, "INVESTMENT"),
+        ),
+      );
+    return account !== undefined;
+  },
 };

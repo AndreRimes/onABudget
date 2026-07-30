@@ -15,13 +15,18 @@ import { formatCurrency, formatPercent } from "./format";
 
 type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
 
+// Every slice touches every other one in a donut, so this uses exactly the four
+// slots validated for all-pairs separation — and nothing beyond them. A fifth
+// hue would not clear the floors, so the tail folds into "Outros" instead of
+// cycling the palette.
 const SLICE_COLORS = [
-  "var(--chart-2)",
   "var(--chart-1)",
+  "var(--chart-2)",
   "var(--chart-3)",
   "var(--chart-4)",
-  "var(--chart-5)",
 ];
+const OTHER_COLOR = "var(--muted-foreground)";
+const MAX_SLICES = SLICE_COLORS.length;
 
 export function AllocationDonut({
   holdings,
@@ -38,9 +43,32 @@ export function AllocationDonut({
         (byType.get(holding.assetTypeName) ?? 0) + holding.currentValue,
       );
     }
-    return [...byType.entries()]
-      .map(([name, value]) => ({ name, value }))
+    const sorted = [...byType.entries()]
+      .map(([name, value]) => ({ name, value, color: OTHER_COLOR }))
       .sort((a, b) => b.value - a.value);
+
+    if (sorted.length <= MAX_SLICES) {
+      return sorted.map((slice, index) => ({
+        ...slice,
+        color: SLICE_COLORS[index]!,
+      }));
+    }
+
+    // Keep the largest three named and roll the rest up, so the palette never
+    // has to invent a colour it was not validated for.
+    const head = sorted.slice(0, MAX_SLICES - 1).map((slice, index) => ({
+      ...slice,
+      color: SLICE_COLORS[index]!,
+    }));
+    const tail = sorted.slice(MAX_SLICES - 1);
+    return [
+      ...head,
+      {
+        name: `Outros (${tail.length})`,
+        value: tail.reduce((sum, slice) => sum + slice.value, 0),
+        color: OTHER_COLOR,
+      },
+    ];
   }, [holdings]);
 
   if (data.length === 0) return null;
@@ -82,31 +110,26 @@ export function AllocationDonut({
               strokeWidth={2}
               stroke="var(--background)"
             >
-              {data.map((entry, index) => (
-                <Cell
-                  key={entry.name}
-                  fill={SLICE_COLORS[index % SLICE_COLORS.length]}
-                />
+              {data.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} />
               ))}
             </Pie>
           </PieChart>
         </ChartContainer>
-        <div className="mt-2 space-y-1">
-          {data.map((entry, index) => (
+        <div className="mt-2 space-y-1.5">
+          {data.map((entry) => (
             <div
               key={entry.name}
-              className="flex items-center justify-between text-sm"
+              className="flex items-center justify-between gap-3 text-sm"
             >
-              <span className="flex items-center gap-2">
+              <span className="flex min-w-0 items-center gap-2">
                 <span
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{
-                    backgroundColor: SLICE_COLORS[index % SLICE_COLORS.length],
-                  }}
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: entry.color }}
                 />
-                {entry.name}
+                <span className="truncate">{entry.name}</span>
               </span>
-              <span className="text-muted-foreground">
+              <span className="shrink-0 tabular-nums text-muted-foreground">
                 {totalValue > 0
                   ? formatPercent((entry.value / totalValue) * 100)
                   : "—"}

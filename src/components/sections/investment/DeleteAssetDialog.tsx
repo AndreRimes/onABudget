@@ -16,7 +16,14 @@ import {
 import { Button } from "~/components/ui/button";
 import { api } from "~/trpc/react";
 
-export function DeleteAssetDialog({ assetName }: { assetName: string }) {
+export function DeleteAssetDialog({
+  assetName,
+  onDeleted,
+}: {
+  assetName: string;
+  /** Fired after deletion — the detail page must leave, it no longer exists. */
+  onDeleted?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const utils = api.useUtils();
 
@@ -29,6 +36,7 @@ export function DeleteAssetDialog({ assetName }: { assetName: string }) {
         `${assetName} excluído (${result.transactionsDeleted} transações, ${result.dividendsDeleted} proventos)`,
       );
       setOpen(false);
+      onDeleted?.();
     },
     onError: (error) => {
       toast.error("Erro ao excluir ativo: " + error.message);

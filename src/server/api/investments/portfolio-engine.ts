@@ -60,7 +60,12 @@ export interface SnapshotPoint {
   value: number; // portfolio market value on the day
   invested: number; // net deposits (buys − sell proceeds) up to the day
   gain: number; // total return anchored to 0 at the range start
-  cdiGain: number; // CDI benchmark on the same cash flows, same anchoring
+  /**
+   * Benchmark id -> that benchmark's gain on the same cash flows, anchored the
+   * same way. Every entry is directly comparable with `gain`, which is the
+   * whole point: the lines answer "what would the same aportes have made?".
+   */
+  benchmarkGains: Record<string, number>;
   dividendsAccumulated: number; // dividends received within the range
 }
 
@@ -77,6 +82,8 @@ export interface PortfolioSnapshot {
     realizedGain: number;
     dailyChange: number; // today's move vs previous close, market assets only
     quotesAsOf: string | null; // most recent live quote timestamp
+    /** Benchmark id -> gain over the range on the same cash flows. */
+    benchmarkGains: Record<string, number>;
   };
   series: SnapshotPoint[];
   issues: Array<{ assetName: string; status: QuoteStatus; message: string }>;
@@ -140,7 +147,8 @@ export function computePortfolioSnapshot(input: {
   quotes: Map<string, QuoteResult>;
   candles: Map<string, CandlePoint[]>;
   tesouroCandles: Map<string, CandlePoint[]>; // assetName -> daily PU series
-  cdiRates: Map<string, number>; // ISO date -> decimal daily rate
+  /** benchmark id -> (ISO date -> decimal daily return) */
+  benchmarks: Map<string, Map<string, number>>;
   range: TimeRange;
   today: string; // YYYY-MM-DD
   includeSeries: boolean;
@@ -151,11 +159,13 @@ export function computePortfolioSnapshot(input: {
     quotes,
     candles,
     tesouroCandles,
-    cdiRates,
+    benchmarks,
     range,
     today,
     includeSeries,
   } = input;
+
+  const benchmarkIds = [...benchmarks.keys()];
 
   const transactions = [...input.transactions].sort((a, b) =>
     a.transactionDate.localeCompare(b.transactionDate),
@@ -178,6 +188,7 @@ export function computePortfolioSnapshot(input: {
         realizedGain: 0,
         dailyChange: 0,
         quotesAsOf: null,
+        benchmarkGains: {},
       },
       series: [],
       issues: [],
@@ -217,8 +228,13 @@ export function computePortfolioSnapshot(input: {
     return state;
   };
 
-  // Benchmark: the same cash flows applied to CDI.
-  let cdiValue = 0;
+  // Benchmarks: one shadow portfolio per index, each receiving exactly the
+  // same cash flows on the same days as the real one and compounding at that
+  // index's daily return. Same construction as the original CDI-only version,
+  // just replicated per benchmark.
+  const benchmarkValues = new Map<string, number>(
+    benchmarkIds.map((id) => [id, 0]),
+  );
   let netDeposits = 0;
   let dividendsAccumulated = 0;
 
@@ -226,7 +242,9 @@ export function computePortfolioSnapshot(input: {
   let divIndex = 0;
   const series: SnapshotPoint[] = [];
   let startGainTotal: number | null = null;
-  let startCdiGain = 0;
+  const startBenchmarkGains = new Map<string, number>(
+    benchmarkIds.map((id) => [id, 0]),
+  );
   // Total-return gain at the end of the day before `today`, so "today's change"
   // is derived from the exact same replay as the period gain — this makes the
   // "hoje" figure identical to the period gain when the selected range is 1d.
@@ -240,10 +258,15 @@ export function computePortfolioSnapshot(input: {
     state.marketValue + state.dividendsAccumulated - state.netDeposits;
 
   for (let day = replayStart; day <= today; day = addDaysIso(day, 1)) {
-    const cdiRate = cdiRates.get(day) ?? 0;
+    // CDI still drives fixed-income accrual below, so it is read out by name
+    // even though every benchmark compounds generically.
+    const cdiRate = benchmarks.get("CDI")?.get(day) ?? 0;
 
     // 1) Accrue daily yield before the day's cash flows.
-    cdiValue *= 1 + cdiRate;
+    for (const id of benchmarkIds) {
+      const rate = benchmarks.get(id)?.get(day) ?? 0;
+      benchmarkValues.set(id, benchmarkValues.get(id)! * (1 + rate));
+    }
     for (const state of assets.values()) {
       // Tesouro is marked to market (step 4), not accrued.
       if (!state.isFixedIncome || state.tesouroTitle || state.quantity <= 0)
@@ -269,7 +292,9 @@ export function computePortfolioSnapshot(input: {
         state.costBasis += tx.totalAmount;
         state.netDeposits += tx.totalAmount;
         netDeposits += tx.totalAmount;
-        cdiValue += tx.totalAmount;
+        for (const id of benchmarkIds) {
+          benchmarkValues.set(id, benchmarkValues.get(id)! + tx.totalAmount);
+        }
         // Accrual fixed income tracks principal directly; Tesouro derives its
         // value from PU × quantity in the price-marking step instead.
         if (state.isFixedIncome && !state.tesouroTitle)
@@ -283,7 +308,9 @@ export function computePortfolioSnapshot(input: {
         state.realizedGain += tx.totalAmount - soldCost;
         state.netDeposits -= tx.totalAmount;
         netDeposits -= tx.totalAmount;
-        cdiValue -= tx.totalAmount;
+        for (const id of benchmarkIds) {
+          benchmarkValues.set(id, benchmarkValues.get(id)! - tx.totalAmount);
+        }
         if (state.isFixedIncome && !state.tesouroTitle) {
           state.marketValue = Math.max(0, state.marketValue - tx.totalAmount);
         }
@@ -340,15 +367,16 @@ export function computePortfolioSnapshot(input: {
     let totalValue = 0;
     for (const state of assets.values()) totalValue += state.marketValue;
     const totalGain = totalValue + dividendsAccumulated - netDeposits;
-    const totalCdiGain = cdiValue - netDeposits;
 
     if (day === yesterdayIso) yesterdayGain = totalGain;
 
     // 5) Snapshot state the first time the replay enters the range window.
     if (day >= rangeStart && startGainTotal === null) {
       startGainTotal = totalGain;
-      startCdiGain = totalCdiGain;
       startDividendsAccumulated = dividendsAccumulated;
+      for (const id of benchmarkIds) {
+        startBenchmarkGains.set(id, benchmarkValues.get(id)! - netDeposits);
+      }
       for (const state of assets.values()) {
         state.startGain = assetTotalGain(state);
         state.startValue = state.marketValue;
@@ -356,12 +384,18 @@ export function computePortfolioSnapshot(input: {
     }
 
     if (includeSeries && day >= rangeStart) {
+      const benchmarkGains: Record<string, number> = {};
+      for (const id of benchmarkIds) {
+        benchmarkGains[id] =
+          benchmarkValues.get(id)! - netDeposits - startBenchmarkGains.get(id)!;
+      }
+
       series.push({
         date: day,
         value: totalValue,
         invested: netDeposits,
         gain: totalGain - (startGainTotal ?? 0),
-        cdiGain: totalCdiGain - startCdiGain,
+        benchmarkGains,
         dividendsAccumulated: dividendsAccumulated - startDividendsAccumulated,
       });
     }
@@ -484,6 +518,12 @@ export function computePortfolioSnapshot(input: {
       realizedGain: realizedGainTotal,
       dailyChange,
       quotesAsOf: quotesAsOf ? quotesAsOf.toISOString() : null,
+      benchmarkGains: Object.fromEntries(
+        benchmarkIds.map((id) => [
+          id,
+          benchmarkValues.get(id)! - netDeposits - startBenchmarkGains.get(id)!,
+        ]),
+      ),
     },
     series,
     issues,

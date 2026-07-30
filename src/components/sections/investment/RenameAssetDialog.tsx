@@ -17,7 +17,14 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { api } from "~/trpc/react";
 
-export function RenameAssetDialog({ assetName }: { assetName: string }) {
+export function RenameAssetDialog({
+  assetName,
+  onRenamed,
+}: {
+  assetName: string;
+  /** Fired with the new name — the detail page is keyed by it and must follow. */
+  onRenamed?: (newAssetName: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState(assetName);
 
@@ -40,6 +47,7 @@ export function RenameAssetDialog({ assetName }: { assetName: string }) {
         })`,
       );
       setOpen(false);
+      onRenamed?.(newName.trim());
     },
     onError: (error) => {
       toast.error("Erro ao renomear: " + error.message);

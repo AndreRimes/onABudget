@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import {
@@ -24,28 +24,11 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { api } from "~/trpc/react";
-
-function formatDateInput(input: string): string {
-  const digits = input.replace(/\D/g, "");
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
-}
-
-function parseDisplayDate(displayDate: string): string {
-  if (!displayDate || displayDate.length !== 10) return "";
-  const parts = displayDate.split("/");
-  if (parts.length !== 3) return "";
-  const [day, month, year] = parts;
-  return `${year}-${month}-${day}`;
-}
-
-function todayDisplayDate(): string {
-  const now = new Date();
-  const day = String(now.getDate()).padStart(2, "0");
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  return `${day}/${month}/${now.getFullYear()}`;
-}
+import {
+  formatDateInput,
+  parseDisplayDate,
+  todayDisplayDate,
+} from "./date-input";
 
 export function CreateInvestmentDialog() {
   const [open, setOpen] = useState(false);

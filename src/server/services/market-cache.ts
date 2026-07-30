@@ -2,24 +2,34 @@
 // Daily candles and CDI rates are immutable → cached forever; live quotes
 // have a short TTL; unknown tickers are negative-cached so they don't burn
 // requests on every page load.
-import { and, asc, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import {
+  benchmarkPoints,
+  benchmarkSync,
   cdiRates,
   marketCandles,
   marketSymbols,
   tesouroPrices,
 } from "~/server/db/schema";
+import type { BenchmarkId } from "~/server/api/investments/benchmarks";
 import {
+  monthlyRatesToDailyReturns,
+  pricesToDailyReturns,
+} from "./benchmark-math";
+import {
+  BCB_SERIES,
   type BrapiQuote,
   type BrapiRange,
   type CandlePoint,
   MarketUpstreamError,
   SymbolNotFoundError,
+  fetchBcbMonthlyRates,
   fetchCandles,
   fetchCdiDailyRates,
   fetchQuotes,
   fetchTesouroPrices,
+  fetchYahooDailyCloses,
   mapWithConcurrency,
 } from "./brapi";
 
@@ -70,6 +80,8 @@ export class MarketCacheService {
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
   private candlesSyncedOn = new Map<string, string>();
   private cdiSyncedOn: string | null = null;
+  /** benchmark id -> ISO date of last tail-check, to fetch at most once a day */
+  private benchmarkSyncedOn = new Map<string, string>();
   /** tesouro title key -> ISO date of last CSV sync, to fetch at most once a day */
   private tesouroSyncedOn = new Map<string, string>();
 
@@ -377,6 +389,136 @@ export class MarketCacheService {
       .where(gte(cdiRates.date, fromDate));
 
     return new Map(rows.map((row) => [row.date, row.dailyRate]));
+  }
+
+  /**
+   * Daily returns for every requested benchmark, keyed by id then ISO date.
+   *
+   * Upstream shapes differ wildly — CDI is a daily percentage, Ibovespa is an
+   * index price series, IPCA and poupança are monthly prints — so each is
+   * normalised to "what one day was worth" here. That leaves the engine with a
+   * single uniform input and no per-benchmark special cases.
+   *
+   * Never throws: a benchmark whose provider is down is simply absent from the
+   * result, and the chart drops that line instead of failing the whole page.
+   */
+  async getBenchmarks(
+    ids: BenchmarkId[],
+    fromDate: string,
+  ): Promise<Map<BenchmarkId, Map<string, number>>> {
+    const entries = await Promise.all(
+      ids.map(async (id): Promise<[BenchmarkId, Map<string, number>] | null> => {
+        try {
+          // CDI predates this table and already holds full history in
+          // `cdi_rates`, so it keeps its own (already correct) path.
+          const returns =
+            id === "CDI"
+              ? await this.getCdiRates(fromDate)
+              : await this.getBenchmarkReturns(id, fromDate);
+          return returns.size > 0 ? [id, returns] : null;
+        } catch (error) {
+          if (!(error instanceof MarketUpstreamError)) throw error;
+          return null;
+        }
+      }),
+    );
+
+    return new Map(
+      entries.filter((entry): entry is [BenchmarkId, Map<string, number>] =>
+        Boolean(entry),
+      ),
+    );
+  }
+
+  /** Cache-first daily returns for one non-CDI benchmark. */
+  private async getBenchmarkReturns(
+    id: BenchmarkId,
+    fromDate: string,
+  ): Promise<Map<string, number>> {
+    const today = todayIso();
+
+    const [coverage] = await db
+      .select()
+      .from(benchmarkSync)
+      .where(eq(benchmarkSync.benchmarkId, id));
+
+    const needsBackfill = !coverage || fromDate < coverage.coversFrom;
+    const needsTail =
+      !!coverage &&
+      coverage.coversTo < today &&
+      this.benchmarkSyncedOn.get(id) !== today;
+
+    if (needsBackfill || needsTail) {
+      // Always refetch the whole window rather than stitching edges: these
+      // series are small (one point per day) and a single window keeps the
+      // day-over-day return maths correct across the seam.
+      const start = coverage && coverage.coversFrom < fromDate
+        ? coverage.coversFrom
+        : fromDate;
+      try {
+        const points = await this.fetchBenchmarkReturns(id, start, today);
+        if (points.length > 0) {
+          await db
+            .insert(benchmarkPoints)
+            .values(
+              points.map((point) => ({
+                benchmarkId: id,
+                date: point.date,
+                dailyReturn: point.dailyReturn,
+              })),
+            )
+            .onConflictDoNothing();
+          await db
+            .insert(benchmarkSync)
+            .values({
+              benchmarkId: id,
+              coversFrom: start,
+              coversTo: today,
+              updatedAt: new Date(),
+            })
+            .onConflictDoUpdate({
+              target: benchmarkSync.benchmarkId,
+              set: { coversFrom: start, coversTo: today, updatedAt: new Date() },
+            });
+        }
+        this.benchmarkSyncedOn.set(id, today);
+      } catch (error) {
+        if (!(error instanceof MarketUpstreamError)) throw error;
+        // Transient upstream failure: serve whatever is already cached.
+      }
+    }
+
+    const rows = await db
+      .select()
+      .from(benchmarkPoints)
+      .where(
+        and(
+          eq(benchmarkPoints.benchmarkId, id),
+          gte(benchmarkPoints.date, fromDate),
+        ),
+      );
+
+    return new Map(rows.map((row) => [row.date, row.dailyReturn]));
+  }
+
+  /** Provider call + normalisation to daily returns for one benchmark. */
+  private async fetchBenchmarkReturns(
+    id: BenchmarkId,
+    startDate: string,
+    endDate: string,
+  ): Promise<Array<{ date: string; dailyReturn: number }>> {
+    if (id === "IBOV") {
+      // brapi caps historical range at 3 months even with a token, which would
+      // leave the 6mo/1y/max chart ranges with no benchmark line, so index
+      // history comes from Yahoo instead.
+      const closes = await fetchYahooDailyCloses("^BVSP", startDate);
+      return pricesToDailyReturns(closes);
+    }
+
+    const series =
+      id === "IPCA" ? BCB_SERIES.IPCA_MONTHLY : BCB_SERIES.POUPANCA_MONTHLY;
+    const months = await fetchBcbMonthlyRates(series, startDate, endDate);
+    return monthlyRatesToDailyReturns(months, endDate);
   }
 
   /**

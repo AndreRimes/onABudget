@@ -1,10 +1,22 @@
 "use client";
 
 import { keepPreviousData } from "@tanstack/react-query";
-import { AlertTriangle } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  FileUp,
+  HandCoins,
+  Plus,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -34,8 +46,11 @@ const timeRangeLabels: Record<TimeRange, string> = {
   max: "Todo o período",
 };
 
+type OverflowDialog = "importB3" | "dividend" | "assetType";
+
 export default function InvestmentsPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("max");
+  const [openDialog, setOpenDialog] = useState<OverflowDialog | null>(null);
 
   const {
     data: snapshot,
@@ -51,34 +66,69 @@ export default function InvestmentsPage() {
 
   return (
     <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-3xl font-bold">Investimentos</h1>
 
-        <div className="flex gap-3">
-          <CreateAssetTypeDialog />
-          <ImportB3Dialog />
-          <AddDividendDialog />
+        {/* One primary action; the rest live behind a single overflow trigger
+            so the row no longer wraps into four equal-weight buttons. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={timeRange}
+            onValueChange={(value) => setTimeRange(value as TimeRange)}
+          >
+            <SelectTrigger className="w-45">
+              <SelectValue placeholder="Período" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(timeRangeLabels).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">
+                Mais ações
+                <ChevronDown className="ml-2 h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setOpenDialog("importB3")}>
+                <FileUp className="mr-2 h-4 w-4" />
+                Importar B3
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setOpenDialog("dividend")}>
+                <HandCoins className="mr-2 h-4 w-4" />
+                Registrar provento
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setOpenDialog("assetType")}>
+                <Plus className="mr-2 h-4 w-4" />
+                Novo tipo de ativo
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <CreateInvestmentDialog />
         </div>
       </div>
 
-      <div className="flex justify-end">
-        <Select
-          value={timeRange}
-          onValueChange={(value) => setTimeRange(value as TimeRange)}
-        >
-          <SelectTrigger className="w-45">
-            <SelectValue placeholder="Período" />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(timeRangeLabels).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Controlled from the menu above: a trigger nested in the dropdown would
+          be unmounted with the menu before the dialog could open. */}
+      <ImportB3Dialog
+        open={openDialog === "importB3"}
+        onOpenChange={(next) => setOpenDialog(next ? "importB3" : null)}
+      />
+      <AddDividendDialog
+        open={openDialog === "dividend"}
+        onOpenChange={(next) => setOpenDialog(next ? "dividend" : null)}
+      />
+      <CreateAssetTypeDialog
+        open={openDialog === "assetType"}
+        onOpenChange={(next) => setOpenDialog(next ? "assetType" : null)}
+      />
 
       {isError && !snapshot ? (
         <Card className="border-destructive/50 bg-destructive/5">

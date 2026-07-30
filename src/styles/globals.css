@@ -28,11 +28,27 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.811 0.111 293.571);
-  --chart-2: oklch(0.606 0.25 292.717);
-  --chart-3: oklch(0.541 0.281 293.009);
-  --chart-4: oklch(0.491 0.27 292.581);
-  --chart-5: oklch(0.432 0.232 292.759);
+  /* Categorical chart slots, stepped for the DARK card surface (#171717).
+     Validated as a set: all-pairs CVD and normal-vision separation both clear
+     the floors, so these stay distinguishable wherever two series cross.
+     Slots 1-4 are the benchmark palette; do not reorder or recolor without
+     re-running the validation. */
+  --chart-1: #3987e5; /* blue */
+  --chart-2: #c98500; /* yellow */
+  --chart-3: #d55181; /* magenta */
+  --chart-4: #008300; /* green */
+  --chart-5: #d95926; /* orange — spare, not used by the benchmark set */
+
+  /* The portfolio's own series. Brand violet, and deliberately NOT part of the
+     categorical set above: it is told apart by form (filled area, thicker
+     stroke), which is what keeps it clear of the blue slot under deuteranopia. */
+  --chart-portfolio: #8e51ff;
+
+  /* Gain/loss. Semantic, so profit/loss styling stops being hardcoded
+     green-600/red-600 and follows the theme. */
+  --profit: #0ca30c;
+  --loss: #ff6467;
+
   --radius: 0.625rem;
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
@@ -63,11 +79,18 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.811 0.111 293.571);
-  --chart-2: oklch(0.606 0.25 292.717);
-  --chart-3: oklch(0.541 0.281 293.009);
-  --chart-4: oklch(0.491 0.27 292.581);
-  --chart-5: oklch(0.432 0.232 292.759);
+  /* Same hues re-stepped for the LIGHT card surface (#ffffff) — a selected
+     light palette, not an automatic flip of the dark one. */
+  --chart-1: #2a78d6;
+  --chart-2: #eda100;
+  --chart-3: #e87ba4;
+  --chart-4: #008300;
+  --chart-5: #eb6834;
+  --chart-portfolio: #7f22fe;
+
+  --profit: #006300;
+  --loss: #df2225;
+
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.541 0.281 293.009);
@@ -93,6 +116,9 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-chart-portfolio: var(--chart-portfolio);
+  --color-profit: var(--profit);
+  --color-loss: var(--loss);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);

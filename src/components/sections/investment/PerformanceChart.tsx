@@ -2,8 +2,18 @@
 
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useMemo } from "react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { useMemo, useState } from "react";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Card,
   CardContent,
@@ -11,204 +21,346 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
-import type { ChartConfig } from "~/components/ui/chart";
-import { ChartContainer, ChartTooltip } from "~/components/ui/chart";
+import { cn } from "~/lib/utils";
+import {
+  BENCHMARKS,
+  BENCHMARK_ORDER,
+  DEFAULT_BENCHMARKS,
+  type BenchmarkId,
+} from "~/server/api/investments/benchmarks";
 import type { RouterOutputs } from "~/trpc/react";
 import { formatCurrency, formatPercent } from "./format";
 
 type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
 
-const chartConfig = {
-  gain: {
-    label: "Portfólio",
-    color: "var(--chart-2)",
-  },
-  cdiGain: {
-    label: "CDI",
-    color: "#fb923c",
-  },
-} satisfies ChartConfig;
+const PORTFOLIO_COLOR = "var(--chart-portfolio)";
 
-export function PerformanceChart({ series }: { series: Snapshot["series"] }) {
+/** Compact currency for axis ticks — full BRL strings collide at this size. */
+function formatAxisCurrency(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
+  return value.toFixed(0);
+}
+
+function SeriesSwatch({ color, dash }: { color: string; dash: string }) {
+  return (
+    <svg width="16" height="8" aria-hidden className="shrink-0">
+      <line
+        x1="0"
+        y1="4"
+        x2="16"
+        y2="4"
+        stroke={color}
+        strokeWidth={2.5}
+        strokeDasharray={dash || undefined}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function PerformanceChart({
+  series,
+  title = "Evolução da Carteira",
+  description = "Ganho acumulado no período, incluindo proventos, comparado a índices sobre os mesmos aportes",
+}: {
+  series: Snapshot["series"];
+  title?: string;
+  description?: string;
+}) {
+  const [active, setActive] = useState<BenchmarkId[]>(DEFAULT_BENCHMARKS);
+
+  // Only offer benchmarks the server actually returned data for — a provider
+  // outage drops the line rather than showing a dead toggle.
+  const available = useMemo(() => {
+    const first = series[0];
+    if (!first) return [] as BenchmarkId[];
+    return BENCHMARK_ORDER.filter((id) => id in first.benchmarkGains);
+  }, [series]);
+
+  const visible = active.filter((id) => available.includes(id));
+
   const chartData = useMemo(
     () =>
-      series.map((point) => ({
-        ...point,
-        formattedDate: format(parseISO(point.date), "dd/MM/yy", {
-          locale: ptBR,
-        }),
-        gainPercent:
-          point.invested > 0 ? (point.gain / point.invested) * 100 : 0,
-        cdiGainPercent:
-          point.invested > 0 ? (point.cdiGain / point.invested) * 100 : 0,
-      })),
+      series.map((point) => {
+        const row: Record<string, number | string> = {
+          date: point.date,
+          label: format(parseISO(point.date), "dd/MM/yy", { locale: ptBR }),
+          value: point.value,
+          invested: point.invested,
+          gain: point.gain,
+          dividendsAccumulated: point.dividendsAccumulated,
+        };
+        for (const id of BENCHMARK_ORDER) {
+          const gain = point.benchmarkGains[id];
+          if (gain !== undefined) row[id] = gain;
+        }
+        return row;
+      }),
     [series],
   );
 
+  const toggle = (id: BenchmarkId) =>
+    setActive((current) =>
+      current.includes(id)
+        ? current.filter((other) => other !== id)
+        : [...current, id],
+    );
+
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Evolução do Portfólio vs CDI</CardTitle>
-        <CardDescription>
-          Ganho acumulado no período (incluindo proventos) comparado ao CDI
-          sobre os mesmos aportes
-        </CardDescription>
+      <CardHeader className="gap-3">
+        <div>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+
+        {available.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Índices para comparação"
+          >
+            <span className="mr-1 text-xs text-muted-foreground">
+              Comparar com:
+            </span>
+            {available.map((id) => {
+              const benchmark = BENCHMARKS[id];
+              const isOn = visible.includes(id);
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => toggle(id)}
+                  aria-pressed={isOn}
+                  title={benchmark.description}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                    isOn
+                      ? "border-transparent bg-accent text-accent-foreground"
+                      : "border-border text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  <SeriesSwatch
+                    color={isOn ? benchmark.colorVar : "currentColor"}
+                    dash={benchmark.dash}
+                  />
+                  {benchmark.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </CardHeader>
+
       <CardContent>
         {chartData.length === 0 ? (
-          <div className="flex h-88 items-center justify-center">
+          <div className="flex h-80 items-center justify-center">
             <p className="text-muted-foreground">
               Nenhum dado disponível para o período selecionado
             </p>
           </div>
         ) : (
-          <ChartContainer config={chartConfig} className="h-88 w-full">
-            <AreaChart
-              data={chartData}
-              margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-            >
-              <defs>
-                <linearGradient id="gainGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-gain)"
-                    stopOpacity={0.8}
+          <>
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={chartData}
+                  margin={{ top: 8, right: 12, left: 4, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient
+                      id="portfolioFill"
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop
+                        offset="0%"
+                        stopColor={PORTFOLIO_COLOR}
+                        stopOpacity={0.35}
+                      />
+                      <stop
+                        offset="100%"
+                        stopColor={PORTFOLIO_COLOR}
+                        stopOpacity={0.02}
+                      />
+                    </linearGradient>
+                  </defs>
+
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="var(--border)"
                   />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-gain)"
-                    stopOpacity={0.1}
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    minTickGap={32}
+                    tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
                   />
-                </linearGradient>
-                <linearGradient id="cdiGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-cdiGain)"
-                    stopOpacity={0.8}
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    width={56}
+                    tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
+                    tickFormatter={formatAxisCurrency}
                   />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-cdiGain)"
-                    stopOpacity={0.1}
-                  />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis
-                dataKey="formattedDate"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tickFormatter={(value: number) => formatCurrency(value)}
-              />
-              <ChartTooltip
-                cursor={{
-                  stroke: "var(--muted-foreground)",
-                  strokeDasharray: "5 5",
-                }}
-                content={({ active, payload }) => {
-                  if (!active || !payload?.length) return null;
-                  const data = payload[0]?.payload as
-                    | (typeof chartData)[number]
-                    | undefined;
-                  if (!data) return null;
-                  return (
-                    <div className="flex flex-col gap-2 rounded-lg border bg-background p-3 text-sm shadow-md">
-                      <p className="font-medium text-muted-foreground">
-                        {data.formattedDate}
-                      </p>
-                      <div className="border-b pb-2">
-                        <span className="font-semibold text-[var(--chart-2)]">
-                          Portfólio
-                        </span>
-                        <div className="mt-1 flex items-center justify-between gap-4">
-                          <span className="text-xs text-muted-foreground">
-                            Ganho no período:
-                          </span>
-                          <span
-                            className={`font-bold ${
-                              data.gain >= 0 ? "text-green-600" : "text-red-600"
-                            }`}
-                          >
-                            {formatCurrency(data.gain)} (
-                            {formatPercent(data.gainPercent)})
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-xs text-muted-foreground">
-                            Valor:
-                          </span>
-                          <span className="font-bold">
-                            {formatCurrency(data.value)}
-                          </span>
-                        </div>
-                        {data.dividendsAccumulated > 0 && (
-                          <div className="flex items-center justify-between gap-4">
-                            <span className="text-xs text-muted-foreground">
-                              Proventos no período:
-                            </span>
-                            <span className="font-bold">
-                              {formatCurrency(data.dividendsAccumulated)}
-                            </span>
+                  {/* Gains are anchored to 0 at the range start, so the zero
+                      line is the actual break-even reference. */}
+                  <ReferenceLine y={0} stroke="var(--border)" strokeWidth={1} />
+
+                  <Tooltip
+                    cursor={{
+                      stroke: "var(--muted-foreground)",
+                      strokeDasharray: "4 4",
+                    }}
+                    content={({ active: isActive, payload }) => {
+                      if (!isActive || !payload?.length) return null;
+                      const row = payload[0]?.payload as
+                        | (typeof chartData)[number]
+                        | undefined;
+                      if (!row) return null;
+
+                      const invested = Number(row.invested);
+                      const pct = (amount: number) =>
+                        invested > 0 ? (amount / invested) * 100 : 0;
+                      const gain = Number(row.gain);
+
+                      return (
+                        <div className="min-w-56 rounded-lg border bg-popover p-3 text-sm shadow-md">
+                          <p className="mb-2 font-medium text-muted-foreground">
+                            {String(row.label)}
+                          </p>
+
+                          <div className="space-y-1.5">
+                            {/* Identity is name + swatch, never colour alone. */}
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="flex items-center gap-1.5">
+                                <SeriesSwatch
+                                  color={PORTFOLIO_COLOR}
+                                  dash=""
+                                />
+                                Carteira
+                              </span>
+                              <span className="font-semibold tabular-nums">
+                                {formatCurrency(gain)}
+                                <span className="ml-1 text-xs text-muted-foreground">
+                                  ({formatPercent(pct(gain))})
+                                </span>
+                              </span>
+                            </div>
+
+                            {visible.map((id) => {
+                              const amount = Number(row[id] ?? 0);
+                              return (
+                                <div
+                                  key={id}
+                                  className="flex items-center justify-between gap-4"
+                                >
+                                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                                    <SeriesSwatch
+                                      color={BENCHMARKS[id].colorVar}
+                                      dash={BENCHMARKS[id].dash}
+                                    />
+                                    {BENCHMARKS[id].label}
+                                  </span>
+                                  <span className="tabular-nums">
+                                    {formatCurrency(amount)}
+                                    <span className="ml-1 text-xs text-muted-foreground">
+                                      ({formatPercent(pct(amount))})
+                                    </span>
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
-                        )}
-                      </div>
-                      <div className="pb-1">
-                        <span className="font-semibold text-[#fb923c]">CDI</span>
-                        <div className="mt-1 flex items-center justify-between gap-4">
-                          <span className="text-xs text-muted-foreground">
-                            Ganho no período:
-                          </span>
-                          <span
-                            className={`font-bold ${
-                              data.cdiGain >= 0
-                                ? "text-green-600"
-                                : "text-red-600"
-                            }`}
-                          >
-                            {formatCurrency(data.cdiGain)} (
-                            {formatPercent(data.cdiGainPercent)})
-                          </span>
+
+                          <div className="mt-2 space-y-1 border-t pt-2 text-xs text-muted-foreground">
+                            <div className="flex justify-between gap-4">
+                              <span>Patrimônio</span>
+                              <span className="tabular-nums">
+                                {formatCurrency(Number(row.value))}
+                              </span>
+                            </div>
+                            <div className="flex justify-between gap-4">
+                              <span>Total investido</span>
+                              <span className="tabular-nums">
+                                {formatCurrency(invested)}
+                              </span>
+                            </div>
+                            {Number(row.dividendsAccumulated) > 0 && (
+                              <div className="flex justify-between gap-4">
+                                <span>Proventos no período</span>
+                                <span className="tabular-nums">
+                                  {formatCurrency(
+                                    Number(row.dividendsAccumulated),
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="border-t pt-2">
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-xs text-muted-foreground">
-                            Total Investido:
-                          </span>
-                          <span className="font-bold">
-                            {formatCurrency(data.invested)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }}
-              />
-              <Area
-                type="monotone"
-                dataKey="cdiGain"
-                stroke="var(--color-cdiGain)"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#cdiGradient)"
-              />
-              <Area
-                type="monotone"
-                dataKey="gain"
-                stroke="var(--color-gain)"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#gainGradient)"
-              />
-            </AreaChart>
-          </ChartContainer>
+                      );
+                    }}
+                  />
+
+                  {/* Benchmarks first so the portfolio's filled area draws on
+                      top and stays the dominant mark. */}
+                  {visible.map((id) => (
+                    <Line
+                      key={id}
+                      type="monotone"
+                      dataKey={id}
+                      stroke={BENCHMARKS[id].colorVar}
+                      strokeWidth={2}
+                      strokeDasharray={BENCHMARKS[id].dash || undefined}
+                      dot={false}
+                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      isAnimationActive={false}
+                    />
+                  ))}
+
+                  <Area
+                    type="monotone"
+                    dataKey="gain"
+                    stroke={PORTFOLIO_COLOR}
+                    strokeWidth={2.5}
+                    fill="url(#portfolioFill)"
+                    dot={false}
+                    activeDot={{ r: 5, strokeWidth: 0 }}
+                    isAnimationActive={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Legend is always present for >= 2 series, so identity never
+                rests on colour alone. */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+              <span className="flex items-center gap-1.5 font-medium">
+                <SeriesSwatch color={PORTFOLIO_COLOR} dash="" />
+                Carteira
+              </span>
+              {visible.map((id) => (
+                <span
+                  key={id}
+                  className="flex items-center gap-1.5 text-muted-foreground"
+                >
+                  <SeriesSwatch
+                    color={BENCHMARKS[id].colorVar}
+                    dash={BENCHMARKS[id].dash}
+                  />
+                  {BENCHMARKS[id].label}
+                </span>
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

@@ -1,8 +1,20 @@
+import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { accountRepository } from "../accounts/repository";
 import { investmentRepository } from "./repository";
 import { b3RowSchema, importB3Rows, previewB3Rows } from "./b3-import";
 import { searchStocks } from "~/server/services/brapi";
+
+/** Rejects an `investmentAccountId` the caller doesn't own. */
+async function assertOwnsAccount(userId: string, accountId: number) {
+  if (!(await accountRepository.ownsInvestmentAccount(userId, accountId))) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Conta de investimento não encontrada",
+    });
+  }
+}
 
 export const investmentsRouter = createTRPCRouter({
   create: protectedProcedure
@@ -22,7 +34,9 @@ export const investmentsRouter = createTRPCRouter({
         fixedIncomeMaturityDate: z.string().nullish(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertOwnsAccount(ctx.session.user.id, input.investmentAccountId);
+
       return await investmentRepository.create({
         investmentAccountId: input.investmentAccountId,
         assetTypeId: input.assetTypeId,
@@ -97,15 +111,46 @@ export const investmentsRouter = createTRPCRouter({
         fixedIncomeMaturityDate: z.string().nullish(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { id, ...updateData } = input;
-      return await investmentRepository.update(id, updateData);
+      // Moving a row to another account is an account write too — validate the
+      // destination, or a correctly scoped update could still push a row into
+      // someone else's account.
+      if (updateData.investmentAccountId !== undefined) {
+        await assertOwnsAccount(
+          ctx.session.user.id,
+          updateData.investmentAccountId,
+        );
+      }
+
+      const updated = await investmentRepository.update(
+        ctx.session.user.id,
+        id,
+        updateData,
+      );
+      if (!updated) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Transação não encontrada",
+        });
+      }
+      return updated;
     }),
 
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      return await investmentRepository.delete(input.id);
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await investmentRepository.delete(
+        ctx.session.user.id,
+        input.id,
+      );
+      if (!deleted) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Transação não encontrada",
+        });
+      }
+      return deleted;
     }),
 
   deleteAsset: protectedProcedure
@@ -164,6 +209,8 @@ export const investmentsRouter = createTRPCRouter({
             .enum(["1d", "5d", "1mo", "6mo", "1y", "max"])
             .default("max"),
           includeSeries: z.boolean().default(true),
+          // Narrows the whole snapshot to a single asset (detail page).
+          assetName: z.string().min(1).optional(),
         })
         .optional(),
     )
@@ -172,6 +219,7 @@ export const investmentsRouter = createTRPCRouter({
         ctx.session.user.id,
         input?.range ?? "max",
         input?.includeSeries ?? true,
+        input?.assetName,
       );
     }),
   searchStocks: protectedProcedure

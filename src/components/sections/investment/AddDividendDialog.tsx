@@ -23,6 +23,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import {
+  useControllableOpen,
+  type ControllableOpenProps,
+} from "~/lib/use-controllable-open";
 import { api } from "~/trpc/react";
 
 function formatDateInput(input: string): string {
@@ -55,8 +59,8 @@ const dividendTypeLabels = {
 
 type DividendType = keyof typeof dividendTypeLabels;
 
-export function AddDividendDialog() {
-  const [open, setOpen] = useState(false);
+export function AddDividendDialog(props: ControllableOpenProps = {}) {
+  const { isControlled, open, setOpen } = useControllableOpen(props);
   const [accountId, setAccountId] = useState("");
   const [assetName, setAssetName] = useState("");
   const [type, setType] = useState<DividendType>("RENDIMENTO");
@@ -108,12 +112,14 @@ export function AddDividendDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <HandCoins className="mr-2 h-4 w-4" />
-          Provento
-        </Button>
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button variant="outline">
+            <HandCoins className="mr-2 h-4 w-4" />
+            Provento
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Registrar Provento</DialogTitle>

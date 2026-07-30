@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "~/server/db";
 import { accounts, dividends } from "~/server/db/schema";
 
@@ -49,10 +49,26 @@ export class DividendRepository {
       .orderBy(desc(dividends.paymentDate));
   }
 
-  async delete(id: number): Promise<boolean> {
+  /**
+   * Scoped by the user's accounts: a guessed id belonging to someone else
+   * matches no rows and reports false rather than deleting.
+   */
+  async delete(userId: string, id: number): Promise<boolean> {
+    const userAccounts = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.userId, userId));
+    const accountIds = userAccounts.map((account) => account.id);
+    if (accountIds.length === 0) return false;
+
     const result = await db
       .delete(dividends)
-      .where(eq(dividends.id, id))
+      .where(
+        and(
+          eq(dividends.id, id),
+          inArray(dividends.investmentAccountId, accountIds),
+        ),
+      )
       .returning();
     return result.length > 0;
   }

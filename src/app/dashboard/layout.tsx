@@ -28,10 +28,14 @@ const SidebarContent = () => {
   };
 
   const navItems = [
-    { href: "/dashboard", label: "Dashboard", icon: Home },
-    { href: "/dashboard/accounts", label: "Accounts", icon: Wallet },
-    { href: "/dashboard/investments", label: "Investments", icon: ChartLineIcon },
-    { href: "/dashboard/checking", label: "Checking", icon: DollarSign },
+    { href: "/dashboard", label: "Início", icon: Home },
+    { href: "/dashboard/accounts", label: "Contas", icon: Wallet },
+    {
+      href: "/dashboard/investments",
+      label: "Investimentos",
+      icon: ChartLineIcon,
+    },
+    { href: "/dashboard/checking", label: "Conta Corrente", icon: DollarSign },
   ];
 
   return (

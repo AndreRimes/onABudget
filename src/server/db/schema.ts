@@ -155,6 +155,29 @@ export const cdiRates = sqliteTable("cdi_rates", {
   dailyRate: real("daily_rate").notNull(), // decimal, e.g. 0.00051
 });
 
+// Daily returns for the comparison benchmarks (Ibovespa, IPCA, poupança),
+// normalised to one decimal return per calendar date whatever the upstream
+// shape was — an index price series and a monthly inflation print both land
+// here as "what one day was worth". CDI is NOT stored here: it predates this
+// table and already has full history in `cdi_rates`, so it keeps that path.
+export const benchmarkPoints = sqliteTable(
+  "benchmark_points",
+  {
+    benchmarkId: text("benchmark_id").notNull(), // e.g. "IBOV"
+    date: text("date").notNull(), // YYYY-MM-DD
+    dailyReturn: real("daily_return").notNull(), // decimal, e.g. 0.0031
+  },
+  (table) => [primaryKey({ columns: [table.benchmarkId, table.date] })],
+);
+
+// Per-benchmark cache coverage, so a refetch only asks for the missing edges.
+export const benchmarkSync = sqliteTable("benchmark_sync", {
+  benchmarkId: text("benchmark_id").primaryKey(),
+  coversFrom: text("covers_from").notNull(), // YYYY-MM-DD
+  coversTo: text("covers_to").notNull(), // YYYY-MM-DD
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+});
+
 // Official Tesouro Direto daily resale prices (PU Venda Manhã) — cached forever
 export const tesouroPrices = sqliteTable(
   "tesouro_prices",

@@ -3,6 +3,10 @@
 import { FileSpreadsheet, FileUp, UploadCloud, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  useControllableOpen,
+  type ControllableOpenProps,
+} from "~/lib/use-controllable-open";
 import { cn } from "~/lib/utils";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -46,8 +50,8 @@ const incomeTypeLabels = {
 const institutionLabel = (institution: string) =>
   institution || "(Sem instituição)";
 
-export function ImportB3Dialog() {
-  const [open, setOpen] = useState(false);
+export function ImportB3Dialog(props: ControllableOpenProps = {}) {
+  const { isControlled, open, setOpen } = useControllableOpen(props);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [ignoredRows, setIgnoredRows] = useState(0);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -193,12 +197,14 @@ export function ImportB3Dialog() {
         if (!nextOpen) resetState();
       }}
     >
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <FileUp className="mr-2 h-4 w-4" />
-          Importar B3
-        </Button>
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button variant="outline">
+            <FileUp className="mr-2 h-4 w-4" />
+            Importar B3
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Importar relatório da B3</DialogTitle>

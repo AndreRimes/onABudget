@@ -1,5 +1,7 @@
+import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
+import { accountRepository } from "../accounts/repository";
 import { dividendRepository } from "./repository";
 
 export const dividendsRouter = createTRPCRouter({
@@ -13,7 +15,18 @@ export const dividendsRouter = createTRPCRouter({
         paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      const owns = await accountRepository.ownsInvestmentAccount(
+        ctx.session.user.id,
+        input.investmentAccountId,
+      );
+      if (!owns) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Conta de investimento não encontrada",
+        });
+      }
+
       return await dividendRepository.create({
         investmentAccountId: input.investmentAccountId,
         assetName: input.assetName.toUpperCase().trim(),
@@ -39,7 +52,17 @@ export const dividendsRouter = createTRPCRouter({
 
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      return await dividendRepository.delete(input.id);
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await dividendRepository.delete(
+        ctx.session.user.id,
+        input.id,
+      );
+      if (!deleted) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Provento não encontrado",
+        });
+      }
+      return deleted;
     }),
 });

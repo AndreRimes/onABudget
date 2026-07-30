@@ -9,6 +9,7 @@ import {
 import type { CandlePoint } from "~/server/services/brapi";
 import { marketCacheService, todayIso } from "~/server/services/market-cache";
 import { dividendRepository } from "../dividends/repository";
+import { BENCHMARK_IDS } from "./benchmarks";
 import {
   computePortfolioSnapshot,
   type PortfolioSnapshot,
@@ -54,6 +55,15 @@ const transactionColumns = {
 };
 
 export class InvestmentRepository {
+  /** Ids of every account the user owns — the scoping key for all writes. */
+  private async userAccountIds(userId: string): Promise<number[]> {
+    const userAccounts = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.userId, userId));
+    return userAccounts.map((account) => account.id);
+  }
+
   async create(values: CreateInvestmentInput): Promise<InvestmentTransaction> {
     const [transaction] = await db
       .insert(investmentTransactions)
@@ -119,23 +129,44 @@ export class InvestmentRepository {
       .orderBy(desc(investmentTransactions.transactionDate));
   }
 
+  /**
+   * Scoped by the user's accounts, so a guessed id belonging to someone else
+   * simply matches no rows and returns undefined.
+   */
   async update(
+    userId: string,
     id: number,
     values: Partial<CreateInvestmentInput>,
   ): Promise<InvestmentTransaction | undefined> {
+    const accountIds = await this.userAccountIds(userId);
+    if (accountIds.length === 0) return undefined;
+
     const [updated] = await db
       .update(investmentTransactions)
       .set(values)
-      .where(eq(investmentTransactions.id, id))
+      .where(
+        and(
+          eq(investmentTransactions.id, id),
+          inArray(investmentTransactions.investmentAccountId, accountIds),
+        ),
+      )
       .returning();
 
     return updated;
   }
 
-  async delete(id: number): Promise<boolean> {
+  async delete(userId: string, id: number): Promise<boolean> {
+    const accountIds = await this.userAccountIds(userId);
+    if (accountIds.length === 0) return false;
+
     const result = await db
       .delete(investmentTransactions)
-      .where(eq(investmentTransactions.id, id))
+      .where(
+        and(
+          eq(investmentTransactions.id, id),
+          inArray(investmentTransactions.investmentAccountId, accountIds),
+        ),
+      )
       .returning();
 
     return result.length > 0;
@@ -149,11 +180,7 @@ export class InvestmentRepository {
     userId: string,
     assetName: string,
   ): Promise<{ transactionsDeleted: number; dividendsDeleted: number }> {
-    const userAccounts = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(eq(accounts.userId, userId));
-    const accountIds = userAccounts.map((account) => account.id);
+    const accountIds = await this.userAccountIds(userId);
     if (accountIds.length === 0) {
       return { transactionsDeleted: 0, dividendsDeleted: 0 };
     }
@@ -195,11 +222,7 @@ export class InvestmentRepository {
     oldName: string,
     newName: string,
   ): Promise<{ transactionsUpdated: number; dividendsUpdated: number }> {
-    const userAccounts = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(eq(accounts.userId, userId));
-    const accountIds = userAccounts.map((account) => account.id);
+    const accountIds = await this.userAccountIds(userId);
     if (accountIds.length === 0) {
       return { transactionsUpdated: 0, dividendsUpdated: 0 };
     }
@@ -247,11 +270,7 @@ export class InvestmentRepository {
       fixedIncomeMaturityDate: string | null;
     },
   ): Promise<number> {
-    const userAccounts = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(eq(accounts.userId, userId));
-    const accountIds = userAccounts.map((account) => account.id);
+    const accountIds = await this.userAccountIds(userId);
     if (accountIds.length === 0) return 0;
 
     const updated = await db
@@ -276,17 +295,34 @@ export class InvestmentRepository {
   /**
    * Single source of truth for the investments page: holdings, summary and
    * chart series computed in one pass over the same market data.
+   *
+   * `assetName` narrows the whole computation to one asset. Because the engine
+   * is pure and derives everything — net deposits, the CDI shadow portfolio,
+   * the series anchoring — from the transaction and dividend arrays it is
+   * handed, filtering those two arrays is all it takes to get a correct
+   * single-asset snapshot. The detail page reuses the engine rather than
+   * re-deriving per-asset numbers that could drift from the portfolio view.
    */
   async getPortfolioSnapshot(
     userId: string,
     range: TimeRange = "max",
     includeSeries = true,
+    assetName?: string,
   ): Promise<PortfolioSnapshot> {
-    const [transactions, userDividends, allAssetTypes] = await Promise.all([
+    const [allTransactions, allDividends, allAssetTypes] = await Promise.all([
       this.findByUserId(userId),
       dividendRepository.findByUserId(userId),
       db.select().from(assetTypes),
     ]);
+
+    // Narrowing here (rather than after the market fetches) also keeps the
+    // quote/candle/Tesouro requests down to the single asset being viewed.
+    const transactions = assetName
+      ? allTransactions.filter((tx) => tx.assetName === assetName)
+      : allTransactions;
+    const userDividends = assetName
+      ? allDividends.filter((dividend) => dividend.assetName === assetName)
+      : allDividends;
 
     // Net quantity per asset, to know which market symbols need quotes and
     // which Tesouro titles need official prices.
@@ -328,10 +364,13 @@ export class InvestmentRepository {
       today,
     );
 
-    const [quotes, candles, cdiRates, tesouroByTitle] = await Promise.all([
+    const [quotes, candles, benchmarks, tesouroByTitle] = await Promise.all([
       marketCacheService.getQuotes(activeMarketSymbols),
       marketCacheService.getCandles(activeMarketSymbols, fullStart),
-      marketCacheService.getCdiRates(fullStart),
+      // Always compute every benchmark, not just the ones currently toggled on:
+      // they are cheap once cached, and it lets the chart switch lines on and
+      // off instantly instead of refetching the whole snapshot per toggle.
+      marketCacheService.getBenchmarks([...BENCHMARK_IDS], fullStart),
       marketCacheService.getTesouroPrices(tesouroTitleKeys, fullStart),
     ]);
 
@@ -368,7 +407,7 @@ export class InvestmentRepository {
       quotes,
       candles,
       tesouroCandles,
-      cdiRates,
+      benchmarks,
       range,
       today,
       includeSeries,

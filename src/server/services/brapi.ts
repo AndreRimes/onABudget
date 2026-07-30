@@ -272,6 +272,168 @@ export async function fetchCdiDailyRates(
   }));
 }
 
+const toBcbDate = (iso: string): string => {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+};
+
+/**
+ * Fetch any BCB SGS series as raw {date, value} points. `valor` is a percentage
+ * for rate series (CDI, IPCA, poupança) and a price for FX series.
+ */
+async function fetchBcbSeries(
+  seriesId: number,
+  startDate: string,
+  endDate: string,
+): Promise<Array<{ date: string; value: number }>> {
+  const url = new URL(
+    `https://api.bcb.gov.br/dados/serie/bcdata.sgs.${seriesId}/dados`,
+  );
+  url.searchParams.set("formato", "json");
+  url.searchParams.set("dataInicial", toBcbDate(startDate));
+  url.searchParams.set("dataFinal", toBcbDate(endDate));
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url.toString());
+  } catch (error) {
+    throw new MarketUpstreamError(`BCB request failed: ${String(error)}`);
+  }
+
+  // SGS answers 404 when the window contains no published points (e.g. a
+  // monthly series queried mid-month). That is an empty result, not a failure.
+  if (response.status === 404) return [];
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `BCB series ${seriesId} request failed with status ${response.status}`,
+    );
+  }
+
+  const data = (await response.json()) as Array<{
+    data: string;
+    valor: string;
+  }>;
+  return data
+    .map((point) => ({
+      date: point.data.split("/").reverse().join("-"),
+      value: parseFloat(point.valor),
+    }))
+    .filter((point) => Number.isFinite(point.value));
+}
+
+/**
+ * BCB SGS series ids for the benchmarks we track.
+ *
+ * Poupança is 196 ("rentabilidade no 1º dia do mês"), one point per month —
+ * NOT 195/25, which look similar but publish one point per *day* (the rate for
+ * a monthly period starting on each anniversary date).
+ */
+export const BCB_SERIES = {
+  CDI_DAILY: 12,
+  IPCA_MONTHLY: 433,
+  POUPANCA_MONTHLY: 196,
+} as const;
+
+/** Daily-percentage SGS series (CDI): returns decimal daily rates. */
+export async function fetchBcbDailyRates(
+  seriesId: number,
+  startDate: string,
+  endDate: string,
+): Promise<CdiDailyRate[]> {
+  const points = await fetchBcbSeries(seriesId, startDate, endDate);
+  return points.map((point) => ({
+    date: point.date,
+    dailyRate: point.value / 100,
+  }));
+}
+
+/**
+ * Monthly-percentage SGS series (IPCA, poupança). Each point is stamped on the
+ * first day of its reference month; the caller spreads it across that month's
+ * days.
+ */
+export async function fetchBcbMonthlyRates(
+  seriesId: number,
+  startDate: string,
+  endDate: string,
+): Promise<Array<{ month: string; monthlyRate: number }>> {
+  const points = await fetchBcbSeries(seriesId, startDate, endDate);
+
+  // Collapse to one point per month. SGS has near-identical series that publish
+  // daily (one rate per anniversary date) rather than monthly; without this
+  // guard such a series would silently yield dozens of duplicate months and the
+  // caller would expand each into a full month of returns.
+  const byMonth = new Map<string, number>();
+  for (const point of points) {
+    const month = point.date.slice(0, 7); // YYYY-MM
+    if (!byMonth.has(month)) byMonth.set(month, point.value / 100);
+  }
+
+  return [...byMonth.entries()]
+    .map(([month, monthlyRate]) => ({ month, monthlyRate }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/**
+ * Daily closes from Yahoo Finance. Used for index series (Ibovespa) because
+ * brapi's plan caps historical range at 3 months, which would leave the longer
+ * chart ranges without a benchmark line at all.
+ */
+export async function fetchYahooDailyCloses(
+  symbol: string,
+  fromDate: string,
+): Promise<CandlePoint[]> {
+  const period1 = Math.floor(new Date(`${fromDate}T00:00:00Z`).getTime() / 1000);
+  const period2 = Math.floor(Date.now() / 1000);
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+    `?period1=${period1}&period2=${period2}&interval=1d`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      // Yahoo rejects requests without a browser-ish agent.
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new MarketUpstreamError(`Yahoo request failed: ${String(error)}`);
+  }
+
+  if (response.status === 404) throw new SymbolNotFoundError(symbol);
+  if (!response.ok) {
+    throw new MarketUpstreamError(
+      `Yahoo request for ${symbol} failed with status ${response.status}`,
+      response.status,
+    );
+  }
+
+  const data = (await response.json()) as {
+    chart?: {
+      result?: Array<{
+        timestamp?: number[];
+        indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+      }>;
+    };
+  };
+
+  const result = data.chart?.result?.[0];
+  const timestamps = result?.timestamp;
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (!timestamps || !closes) throw new SymbolNotFoundError(symbol);
+
+  const out: CandlePoint[] = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    const close = closes[i];
+    if (close == null || !Number.isFinite(close)) continue;
+    out.push({
+      date: new Date(timestamps[i]! * 1000).toISOString().slice(0, 10),
+      close,
+    });
+  }
+  return out;
+}
+
 // Official Tesouro Direto historical price dataset (Tesouro Transparente).
 // One big semicolon-separated, decimal-comma CSV covering every title and its
 // full history. Columns:
