@@ -37,6 +37,20 @@ const CANDLE_CONCURRENCY = 6;
 
 const QUOTE_TTL_MS = 15 * 60 * 1000;
 const NOT_FOUND_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long the tail of a live-price benchmark stays trusted. Same TTL as
+ * quotes, and for the same reason: today's point is provisional while the
+ * market is open — before the open it doesn't exist at all, and after it the
+ * value keeps moving until the close.
+ */
+const BENCHMARK_TAIL_TTL_MS = QUOTE_TTL_MS;
+
+/**
+ * Benchmarks whose series comes from a live price feed, so the last point is
+ * provisional intraday. The rest (IPCA, poupança) are monthly prints spread
+ * pro rata: missing recent days are expected and refetching cannot fill them.
+ */
+const LIVE_TAIL_BENCHMARKS = new Set<BenchmarkId>(["IBOV"]);
 
 export type QuoteStatus = "ok" | "stale" | "not_found" | "unavailable";
 
@@ -51,6 +65,14 @@ export interface QuoteResult {
 export function todayIso(): string {
   const now = new Date();
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** Local-timezone calendar date of an epoch-ms instant (0 = never). */
+function isoDayOf(ms: number): string {
+  if (ms === 0) return "";
+  return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000)
     .toISOString()
     .slice(0, 10);
 }
@@ -80,8 +102,8 @@ export class MarketCacheService {
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
   private candlesSyncedOn = new Map<string, string>();
   private cdiSyncedOn: string | null = null;
-  /** benchmark id -> ISO date of last tail-check, to fetch at most once a day */
-  private benchmarkSyncedOn = new Map<string, string>();
+  /** benchmark id -> epoch ms of the last tail-check, to rate-limit refetches */
+  private benchmarkSyncedAt = new Map<string, number>();
   /** tesouro title key -> ISO date of last CSV sync, to fetch at most once a day */
   private tesouroSyncedOn = new Map<string, string>();
 
@@ -444,10 +466,18 @@ export class MarketCacheService {
       .where(eq(benchmarkSync.benchmarkId, id));
 
     const needsBackfill = !coverage || fromDate < coverage.coversFrom;
+    // `coversTo` records how far we *asked* upstream, not how far it answered:
+    // a sync that runs before the market opens legitimately gets no point for
+    // today. So it can't be the only tail signal — otherwise the first load of
+    // the day would freeze the benchmark a day behind until tomorrow, showing
+    // a flat zero for today while the index moves. For live-price series the
+    // tail therefore expires on a TTL instead.
+    const lastSync = this.benchmarkSyncedAt.get(id) ?? 0;
     const needsTail =
       !!coverage &&
-      coverage.coversTo < today &&
-      this.benchmarkSyncedOn.get(id) !== today;
+      (LIVE_TAIL_BENCHMARKS.has(id)
+        ? Date.now() - lastSync > BENCHMARK_TAIL_TTL_MS
+        : coverage.coversTo < today && isoDayOf(lastSync) !== today);
 
     if (needsBackfill || needsTail) {
       // Always refetch the whole window rather than stitching edges: these
@@ -456,6 +486,9 @@ export class MarketCacheService {
       const start = coverage && coverage.coversFrom < fromDate
         ? coverage.coversFrom
         : fromDate;
+      // Record the attempt up front so a failing provider is retried on the
+      // next TTL rather than on every page load.
+      this.benchmarkSyncedAt.set(id, Date.now());
       try {
         const points = await this.fetchBenchmarkReturns(id, start, today);
         if (points.length > 0) {
@@ -468,7 +501,13 @@ export class MarketCacheService {
                 dailyReturn: point.dailyReturn,
               })),
             )
-            .onConflictDoNothing();
+            // Overwrite rather than ignore: today's return is recomputed from a
+            // still-moving close, so the stored value has to follow it. Closed
+            // days re-resolve to the same number, so this is a no-op for them.
+            .onConflictDoUpdate({
+              target: [benchmarkPoints.benchmarkId, benchmarkPoints.date],
+              set: { dailyReturn: sql`excluded.daily_return` },
+            });
           await db
             .insert(benchmarkSync)
             .values({
@@ -482,7 +521,6 @@ export class MarketCacheService {
               set: { coversFrom: start, coversTo: today, updatedAt: new Date() },
             });
         }
-        this.benchmarkSyncedOn.set(id, today);
       } catch (error) {
         if (!(error instanceof MarketUpstreamError)) throw error;
         // Transient upstream failure: serve whatever is already cached.
