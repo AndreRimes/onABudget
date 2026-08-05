@@ -129,10 +129,17 @@ const REQUEST_CONCURRENCY = 6;
  * for transient reasons are listed in `failed` so they are NOT mistaken for
  * not-found.
  */
-export async function fetchQuotes(
-  symbols: string[],
-): Promise<{ quotes: BrapiQuote[]; failed: string[] }> {
-  if (symbols.length === 0) return { quotes: [], failed: [] };
+export async function fetchQuotes(symbols: string[]): Promise<{
+  /**
+   * Keyed by the symbol that was REQUESTED, never the one brapi echoed back.
+   * They differ for renamed or merged tickers — asking for RVBI11 answers with
+   * symbol "PSEC11" — and keying by the response would leave the caller unable
+   * to find the quote it asked for, which reads as "ticker does not exist".
+   */
+  quotes: Map<string, BrapiQuote>;
+  failed: string[];
+}> {
+  if (symbols.length === 0) return { quotes: new Map(), failed: [] };
 
   const results = await mapWithConcurrency(
     symbols,
@@ -155,15 +162,15 @@ export async function fetchQuotes(
     },
   );
 
-  const quotes: BrapiQuote[] = [];
+  const quotes = new Map<string, BrapiQuote>();
   const failed: string[] = [];
   for (const result of results) {
-    if (result.quote) quotes.push(result.quote);
+    if (result.quote) quotes.set(result.symbol, result.quote);
     else if (result.transient) failed.push(result.symbol);
   }
 
   // Everything failing transiently means the provider itself is down.
-  if (quotes.length === 0 && failed.length === symbols.length) {
+  if (quotes.size === 0 && failed.length === symbols.length) {
     throw new MarketUpstreamError("brapi unreachable for all symbols");
   }
 

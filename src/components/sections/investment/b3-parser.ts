@@ -9,6 +9,12 @@
 //         "Compra / Venda" rows, imported as fixed-income trades.
 import * as XLSX from "xlsx";
 import {
+  asString,
+  normalizeHeader,
+  parseBrDate,
+  parseBrNumber,
+} from "~/lib/parse";
+import {
   isTesouroProduct,
   normalizeTesouroTitleKey,
 } from "~/server/api/investments/tesouro-title";
@@ -43,49 +49,7 @@ export interface ParseResult {
   ignoredRows: number;
 }
 
-function normalizeHeader(header: string): string {
-  return header
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-function parseBrDate(value: unknown): string | null {
-  if (value instanceof Date && !isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
-  }
-  if (typeof value === "number") {
-    // Excel serial date: days since 1899-12-30
-    const millis = Date.UTC(1899, 11, 30) + Math.round(value) * 86_400_000;
-    const date = new Date(millis);
-    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-  }
-  if (typeof value === "string") {
-    const match = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(value.trim());
-    if (match) return `${match[3]}-${match[2]}-${match[1]}`;
-  }
-  return null;
-}
-
-function parseBrNumber(value: unknown): number | null {
-  if (typeof value === "number") return isNaN(value) ? null : value;
-  if (typeof value !== "string") return null;
-  const cleaned = value
-    .replace(/R\$\s?/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".")
-    .trim();
-  if (cleaned === "" || cleaned === "-") return null;
-  const parsed = Number(cleaned);
-  return isNaN(parsed) ? null : parsed;
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-/** Strip the fractional-market suffix ("PETR4F" → "PETR4"). */
+/** Strip the fractional-market suffix ("PETR4F" -> "PETR4"). */
 function normalizeTicker(raw: string): string {
   const ticker = raw.trim().toUpperCase();
   return /^[A-Z]{4}\d{1,2}F$/.test(ticker) ? ticker.slice(0, -1) : ticker;

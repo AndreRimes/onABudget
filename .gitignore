@@ -12,6 +12,11 @@
 /prisma/db.sqlite
 /prisma/db.sqlite-journal
 db.sqlite
+db.sqlite-journal
+db.sqlite-wal
+# local snapshots taken before schema changes
+db.sqlite.bak-*
+db.sqlite.damaged*
 
 # next.js
 /.next/

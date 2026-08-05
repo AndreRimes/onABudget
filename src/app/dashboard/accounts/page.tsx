@@ -9,6 +9,7 @@ import { CreateAccountDialog } from "~/components/sections/account/CreateAccount
 import { DeleteAccountDialog } from "~/components/sections/account/DeleteAccount"
 import { EditAccountDialog } from "~/components/sections/account/EditAccountDialog"
 import { type accounts } from "~/server/db/schema"
+import { ACCOUNT_TYPE_LABELS } from "~/lib/account-type";
 import { api } from "~/trpc/react"
 
 export type Account = typeof accounts.$inferSelect
@@ -76,8 +77,8 @@ function AccountsTable() {
                 <TableCell className="font-medium">{account.id}</TableCell>
                 <TableCell>{account.name}</TableCell>
                 <TableCell>
-                  <Badge variant={account.accountType === "CHECKING" ? "outline" : "secondary"}>
-                    {account.accountType}
+                  <Badge variant={account.accountType === "INVESTMENT" ? "secondary" : "outline"}>
+                    {ACCOUNT_TYPE_LABELS[account.accountType]}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right font-mono">

@@ -17,6 +17,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import type { Account } from "~/app/dashboard/accounts/page"
+import {
+  ACCOUNT_TYPES,
+  ACCOUNT_TYPE_LABELS,
+  type AccountType,
+} from "~/lib/account-type"
 import { api } from "~/trpc/react"
 
 
@@ -28,7 +33,7 @@ interface EditAccountDialogProps {
 }
 
 export function EditAccountDialog({ account, open, onOpenChange }: EditAccountDialogProps) {
-  const [accountType, setAccountType] = useState<"CHECKING" | "INVESTMENT">("CHECKING")
+  const [accountType, setAccountType] = useState<AccountType>("CHECKING")
   const [balance, setBalance] = useState("")
   const [name, setName] = useState("")
   const utils = api.useUtils()
@@ -72,13 +77,16 @@ export function EditAccountDialog({ account, open, onOpenChange }: EditAccountDi
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label htmlFor="edit-accountType">Account Type</Label>
-              <Select value={accountType} onValueChange={(v) => setAccountType(v as "CHECKING" | "INVESTMENT")}>
+              <Select value={accountType} onValueChange={(v) => setAccountType(v as AccountType)}>
                 <SelectTrigger id="edit-accountType">
                   <SelectValue placeholder="Select account type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CHECKING">Checking</SelectItem>
-                  <SelectItem value="INVESTMENT">Investment</SelectItem>
+                  {ACCOUNT_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {ACCOUNT_TYPE_LABELS[type]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

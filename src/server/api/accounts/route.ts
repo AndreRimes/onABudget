@@ -7,7 +7,7 @@ export const accountRouter = createTRPCRouter({
   create: protectedProcedure
     .input(
       z.object({
-        accountType: z.enum(["CHECKING", "INVESTMENT"]),
+        accountType: z.enum(["CHECKING", "INVESTMENT", "CREDIT_CARD"]),
         balance: z.number().optional().default(0),
         name: z.string().min(1),
       }),
@@ -47,8 +47,8 @@ export const accountRouter = createTRPCRouter({
     .input(
       z.object({
         id: z.number(),
-        type: z.enum(["CHECKING", "INVESTMENT"]).optional(),
-        accountType: z.enum(["CHECKING", "INVESTMENT"]).optional(),
+        type: z.enum(["CHECKING", "INVESTMENT", "CREDIT_CARD"]).optional(),
+        accountType: z.enum(["CHECKING", "INVESTMENT", "CREDIT_CARD"]).optional(),
         balance: z.number().optional(),
         name: z.string().min(1).optional(),
       }),

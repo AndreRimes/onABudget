@@ -5,6 +5,7 @@ import { z } from "zod";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "~/server/db";
 import { accounts, dividends, investmentTransactions } from "~/server/db/schema";
+import { matchAccountId } from "~/server/api/accounts/match";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -47,45 +48,6 @@ export function b3SourceHash(row: B3Row): string {
   // against rows imported before per-institution routing existed. (The odds of
   // the same ticker/qty/price/day at two different brokers are negligible.)
   return `${row.kind}|${row.date}|${row.ticker}|${quantity}|${row.amount.toFixed(2)}`;
-}
-
-function normalizeName(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-/**
- * Best-effort match of a B3 "Instituição" string to one of the user's
- * investment accounts, by shared name token (e.g. "XP INVESTIMENTOS CCTVM S/A"
- * → an account named "XP"). Returns null when nothing matches confidently.
- */
-export function matchAccountId(
-  institution: string,
-  accounts: Array<{ id: number; name: string }>,
-): number | null {
-  const inst = normalizeName(institution);
-  if (!inst) return null;
-  const instTokens = new Set(inst.split(/[^a-z0-9]+/).filter(Boolean));
-
-  let best: { id: number; score: number } | null = null;
-  for (const account of accounts) {
-    const name = normalizeName(account.name);
-    if (!name) continue;
-    const nameTokens = name.split(/[^a-z0-9]+/).filter(Boolean);
-    // Score = how many of the account's tokens appear in the institution.
-    const score = nameTokens.filter(
-      (token) =>
-        instTokens.has(token) ||
-        [...instTokens].some((it) => it.startsWith(token) && token.length >= 3),
-    ).length;
-    if (score > 0 && (!best || score > best.score)) {
-      best = { id: account.id, score };
-    }
-  }
-  return best?.id ?? null;
 }
 
 async function userInvestmentAccounts(userId: string) {

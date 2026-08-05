@@ -25,6 +25,7 @@ import {
     SelectValue,
 } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
+import { isSpendingAccount } from "~/lib/account-type";
 import { api } from "~/trpc/react";
 
 function formatDateInput(input: string): string {
@@ -56,7 +57,7 @@ export function CreateExpenseDialog() {
   const { data: accounts } = api.account.getAll.useQuery();
   const { data: categories } = api.category.getAll.useQuery();
 
-  const checkingAccounts = accounts?.filter((acc) => acc.accountType === "CHECKING") || [];
+  const spendingAccounts = accounts?.filter(isSpendingAccount) ?? [];
 
   const { mutate, isPending } = api.expenses.create.useMutation({
     onSuccess: () => {
@@ -114,7 +115,7 @@ export function CreateExpenseDialog() {
                   <SelectValue placeholder="Selecione a conta" />
                 </SelectTrigger>
                 <SelectContent>
-                  {checkingAccounts.map((account) => (
+                  {spendingAccounts.map((account) => (
                     <SelectItem key={account.id} value={account.id.toString()}>
                       {account.name}
                     </SelectItem>

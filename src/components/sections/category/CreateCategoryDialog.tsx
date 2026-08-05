@@ -17,10 +17,14 @@ import {
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
+import {
+  useControllableOpen,
+  type ControllableOpenProps,
+} from "~/lib/use-controllable-open";
 import { api } from "~/trpc/react";
 
-export function CreateCategoryDialog() {
-  const [open, setOpen] = useState(false);
+export function CreateCategoryDialog(props: ControllableOpenProps = {}) {
+  const { isControlled, open, setOpen } = useControllableOpen(props);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("#FFFFFF");
@@ -58,12 +62,14 @@ export function CreateCategoryDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">
-          <Plus className="h-4 w-4 mr-2" />
-          Nova Categoria
-        </Button>
-      </DialogTrigger>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <Button variant="outline">
+            <Plus className="h-4 w-4 mr-2" />
+            Nova Categoria
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Criar Nova Categoria</DialogTitle>

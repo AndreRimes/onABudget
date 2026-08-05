@@ -8,6 +8,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   DollarSign,
+  CreditCard,
   PiggyBank,
   Target,
   TrendingDown,
@@ -60,6 +61,7 @@ import {
 } from "~/components/ui/dialog";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { ACCOUNT_TYPE_LABELS } from "~/lib/account-type";
 import { api } from "~/trpc/react";
 import { toast } from "sonner";
 
@@ -636,17 +638,17 @@ export default function DashboardPage() {
                     className="flex items-center justify-between rounded-lg border p-3"
                   >
                     <div className="flex items-center gap-3">
-                      {acc.accountType === "CHECKING" ? (
-                        <DollarSign className="text-muted-foreground h-5 w-5" />
-                      ) : (
+                      {acc.accountType === "INVESTMENT" ? (
                         <PiggyBank className="text-muted-foreground h-5 w-5" />
+                      ) : acc.accountType === "CREDIT_CARD" ? (
+                        <CreditCard className="text-muted-foreground h-5 w-5" />
+                      ) : (
+                        <DollarSign className="text-muted-foreground h-5 w-5" />
                       )}
                       <div>
                         <p className="font-medium">{acc.name}</p>
                         <Badge variant="outline" className="text-xs">
-                          {acc.accountType === "CHECKING"
-                            ? "Conta Corrente"
-                            : "Investimento"}
+                          {ACCOUNT_TYPE_LABELS[acc.accountType]}
                         </Badge>
                       </div>
                     </div>

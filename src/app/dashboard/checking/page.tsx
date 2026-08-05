@@ -1,16 +1,8 @@
 "use client";
 
-import {
-  endOfMonth,
-  endOfYear,
-  format,
-  parseISO,
-  startOfMonth,
-  startOfYear,
-  subMonths,
-} from "date-fns";
+import { format, parseISO, startOfMonth } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -22,11 +14,33 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Target, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pencil, Target, Trash2 } from "lucide-react";
 import { CreateCategoryDialog } from "~/components/sections/category/CreateCategoryDialog";
 import { CreateExpenseDialog } from "~/components/sections/expense/CreateExpenseDialog";
+import {
+  EditExpenseDialog,
+  type EditableExpense,
+} from "~/components/sections/expense/EditExpenseDialog";
+import {
+  ExpenseFilters,
+  defaultExpenseFilters,
+  hasNarrowingFilters,
+  monthsInPeriod,
+  periodLabel,
+  periodRange,
+  type ExpenseFilterState,
+} from "~/components/sections/expense/ExpenseFilters";
+import { ImportFaturaDialog } from "~/components/sections/expense/ImportFaturaDialog";
+import { ImportStatementDialog } from "~/components/sections/expense/ImportStatementDialog";
+import { RecurringExpensesDialog } from "~/components/sections/expense/RecurringExpensesDialog";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "~/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -52,13 +66,6 @@ import {
   ChartTooltipContent,
 } from "~/components/ui/chart";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -66,60 +73,27 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { isSpendingAccount } from "~/lib/account-type";
+import { stripAccents } from "~/lib/parse";
 import { api } from "~/trpc/react";
 
-type DateFilter =
-  | "current-month"
-  | "last-month"
-  | "last-3-months"
-  | "last-6-months"
-  | "current-year"
-  | "all";
-
 export default function CheckingPage() {
-  const [dateFilter, setDateFilter] = useState<DateFilter>("current-month");
-  const [selectedAccount, setSelectedAccount] = useState<number | "all">("all");
+  const [filters, setFilters] = useState<ExpenseFilterState>(
+    defaultExpenseFilters,
+  );
+  const selectedAccount = filters.accountId;
 
-  const dateRange = useMemo(() => {
-    const now = new Date();
-
-    switch (dateFilter) {
-      case "current-month":
-        return {
-          startDate: format(startOfMonth(now), "yyyy-MM-dd"),
-          endDate: format(endOfMonth(now), "yyyy-MM-dd"),
-        };
-      case "last-month":
-        const lastMonth = subMonths(now, 1);
-        return {
-          startDate: format(startOfMonth(lastMonth), "yyyy-MM-dd"),
-          endDate: format(endOfMonth(lastMonth), "yyyy-MM-dd"),
-        };
-      case "last-3-months":
-        return {
-          startDate: format(subMonths(now, 3), "yyyy-MM-dd"),
-          endDate: format(now, "yyyy-MM-dd"),
-        };
-      case "last-6-months":
-        return {
-          startDate: format(subMonths(now, 6), "yyyy-MM-dd"),
-          endDate: format(now, "yyyy-MM-dd"),
-        };
-      case "current-year":
-        return {
-          startDate: format(startOfYear(now), "yyyy-MM-dd"),
-          endDate: format(endOfYear(now), "yyyy-MM-dd"),
-        };
-      case "all":
-        return undefined;
-      default:
-        return undefined;
-    }
-  }, [dateFilter]);
+  const dateRange = useMemo(() => periodRange(filters), [filters]);
 
   const { data: accounts } = api.account.getAll.useQuery();
-  const checkingAccounts =
-    accounts?.filter((acc) => acc.accountType === "CHECKING") || [];
+  const spendingAccounts = accounts?.filter(isSpendingAccount) ?? [];
+
+  const [overflowDialog, setOverflowDialog] = useState<
+    "import" | "fatura" | "recurring" | "category" | null
+  >(null);
+  const [editingExpense, setEditingExpense] = useState<EditableExpense | null>(
+    null,
+  );
 
   const { data: expensesFromUser } = api.expenses.getAllFromUser.useQuery(
     { dateRange },
@@ -134,13 +108,43 @@ export default function CheckingPage() {
   const isLoading =
     selectedAccount === "all" ? !expensesFromUser : isLoadingAccount;
 
-  // Normalize expenses data
+  // Months that have spending, so the period picker only offers real ones.
+  const { data: expenseMonths } = api.expenses.getMonths.useQuery({
+    accountId: selectedAccount === "all" ? undefined : selectedAccount,
+  });
+
+  // Category and text filters are applied here rather than server-side: the
+  // period query has already narrowed the rows to something small, and doing it
+  // in the client keeps typing in the search box instant.
   const allExpenses = useMemo(() => {
-    if (selectedAccount === "all") {
-      return expensesFromUser || [];
-    }
-    return expensesFromAccount || [];
-  }, [selectedAccount, expensesFromUser, expensesFromAccount]);
+    const rows =
+      selectedAccount === "all"
+        ? (expensesFromUser ?? [])
+        : (expensesFromAccount ?? []);
+
+    const categoryIds = new Set(filters.categoryIds);
+    // Accent-insensitive, so "acai" finds "AÇAÍ".
+    const term = stripAccents(filters.search).trim().toLowerCase();
+
+    if (categoryIds.size === 0 && term === "") return rows;
+
+    return rows.filter((row) => {
+      if (categoryIds.size > 0 && !categoryIds.has(row.expenses.categoryId)) {
+        return false;
+      }
+      if (term === "") return true;
+      const haystack = stripAccents(
+        `${row.expenses.description ?? ""} ${row.expense_categories.name}`,
+      ).toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [
+    selectedAccount,
+    expensesFromUser,
+    expensesFromAccount,
+    filters.categoryIds,
+    filters.search,
+  ]);
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -156,50 +160,18 @@ export default function CheckingPage() {
     return { total, count, average };
   }, [allExpenses]);
 
+  // Within a single month, running-total-against-budget is the useful shape.
+  // Across several months it is not: the line only ever climbs, so it says
+  // nothing about whether any given month was good or bad. Multi-month periods
+  // therefore plot the total *per month* instead.
+  const isDailyChart = filters.mode === "month";
+
   const chartData = useMemo(() => {
-    if (!allExpenses) return [];
-
-    const getGroupKey = (date: Date) => {
-      switch (dateFilter) {
-        case "current-month":
-        case "last-month":
-          return format(date, "yyyy-MM-dd");
-        case "last-3-months":
-        case "last-6-months":
-        case "current-year":
-          // Group by month
-          return format(date, "yyyy-MM");
-        case "all":
-          return format(date, "yyyy");
-        default:
-          return format(date, "yyyy-MM-dd");
-      }
-    };
-
-    const getFormattedLabel = (groupKey: string) => {
-      switch (dateFilter) {
-        case "current-month":
-        case "last-month":
-          return format(parseISO(groupKey), "dd/MM", { locale: ptBR });
-        case "last-3-months":
-        case "last-6-months":
-        case "current-year":
-          return format(parseISO(groupKey + "-01"), "MMM/yy", { locale: ptBR });
-        case "all":
-          return groupKey;
-        default:
-          return groupKey;
-      }
-    };
-
     const expensesByPeriod = allExpenses.reduce(
       (acc, expense) => {
         const date = parseISO(expense.expenses.expenseDate);
-        const groupKey = getGroupKey(date);
-        if (!acc[groupKey]) {
-          acc[groupKey] = 0;
-        }
-        acc[groupKey] += expense.expenses.amount;
+        const groupKey = format(date, isDailyChart ? "yyyy-MM-dd" : "yyyy-MM");
+        acc[groupKey] = (acc[groupKey] ?? 0) + expense.expenses.amount;
         return acc;
       },
       {} as Record<string, number>,
@@ -209,25 +181,68 @@ export default function CheckingPage() {
       .map(([groupKey, amount]) => ({
         date: groupKey,
         amount: Number(amount.toFixed(2)),
-        formattedDate: getFormattedLabel(groupKey),
+        formattedDate: isDailyChart
+          ? format(parseISO(groupKey), "dd/MM", { locale: ptBR })
+          : format(parseISO(`${groupKey}-01`), "MMM/yy", { locale: ptBR }),
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
     let cumulative = 0;
     return data.map((item) => {
       cumulative += item.amount;
-      return {
-        ...item,
-        cumulative: Number(cumulative.toFixed(2)),
-      };
+      return { ...item, cumulative: Number(cumulative.toFixed(2)) };
     });
-  }, [allExpenses, dateFilter]);
+  }, [allExpenses, isDailyChart]);
+
+  // Distinct months present, used to scale a monthly budget over "Tudo".
+  const distinctMonths = useMemo(
+    () =>
+      new Set(allExpenses.map((e) => e.expenses.expenseDate.slice(0, 7))).size,
+    [allExpenses],
+  );
+
+  const sortedExpenses = useMemo(() => {
+    return [...allExpenses].sort((a, b) => {
+      switch (filters.sort) {
+        case "date-asc":
+          return a.expenses.expenseDate.localeCompare(b.expenses.expenseDate);
+        case "amount-desc":
+          return b.expenses.amount - a.expenses.amount;
+        case "amount-asc":
+          return a.expenses.amount - b.expenses.amount;
+        default:
+          return b.expenses.expenseDate.localeCompare(a.expenses.expenseDate);
+      }
+    });
+  }, [allExpenses, filters.sort]);
 
   // Budget data
   const { data: currentBudget } = api.budget.getLatest.useQuery();
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
   const [budgetInput, setBudgetInput] = useState("");
   const utils = api.useUtils();
+
+  // Post any due fixed expenses. Idempotent server-side (each occurrence has a
+  // unique source hash), so the only reason to guard is to avoid firing it on
+  // every re-render.
+  const hasMaterialized = useRef(false);
+  const { mutate: materializeRecurring } =
+    api.expenses.materializeRecurring.useMutation({
+      onSuccess: ({ created }) => {
+        if (created === 0) return;
+        void utils.expenses.getAllFromUser.invalidate();
+        void utils.expenses.getAllFromAccount.invalidate();
+        toast.success(
+          `${created} despesa${created !== 1 ? "s" : ""} fixa${created !== 1 ? "s" : ""} lançada${created !== 1 ? "s" : ""}`,
+        );
+      },
+    });
+
+  useEffect(() => {
+    if (hasMaterialized.current) return;
+    hasMaterialized.current = true;
+    materializeRecurring();
+  }, [materializeRecurring]);
 
   const { mutate: createBudget, isPending: isCreatingBudget } =
     api.budget.create.useMutation({
@@ -268,13 +283,21 @@ export default function CheckingPage() {
     }
   };
 
-  const budgetAmount = currentBudget?.amount ?? 0;
-  const budgetUsedPercent = budgetAmount > 0 ? (stats.total / budgetAmount) * 100 : 0;
+  // The budget is a *monthly* figure, so comparing a whole year of spending
+  // against it would always read as a catastrophic overrun. Scale it to the
+  // number of months on screen and say so in the card.
+  const monthlyBudget = currentBudget?.amount ?? 0;
+  const periodMonths = monthsInPeriod(filters, distinctMonths);
+  const budgetAmount = monthlyBudget * periodMonths;
+  const budgetUsedPercent =
+    budgetAmount > 0 ? (stats.total / budgetAmount) * 100 : 0;
   const isOverBudget = budgetAmount > 0 && stats.total > budgetAmount;
   const budgetRemaining = budgetAmount - stats.total;
 
   const { data: categories } = api.category.getAll.useQuery();
-  const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(null);
+  const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(
+    null,
+  );
 
   const { mutate: deleteExpense, isPending: isDeleting } =
     api.expenses.delete.useMutation({
@@ -331,6 +354,10 @@ export default function CheckingPage() {
       label: "Gasto Acumulado",
       color: "hsl(var(--primary))",
     },
+    amount: {
+      label: "Gasto no Mês",
+      color: "hsl(var(--primary))",
+    },
     budget: {
       label: "Orçamento",
       color: "hsl(var(--destructive))",
@@ -349,48 +376,62 @@ export default function CheckingPage() {
         <h1 className="text-3xl font-bold">Checking Accounts</h1>
 
         <div className="flex gap-3">
-          <CreateCategoryDialog />
+          {/* Controlled from the menu below: a trigger nested in the dropdown
+              would be unmounted with the menu before the dialog could open. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon">
+                <MoreHorizontal className="h-4 w-4" />
+                <span className="sr-only">Mais ações</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setOverflowDialog("import")}>
+                Importar extrato (conta)
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setOverflowDialog("fatura")}>
+                Importar fatura (cartão)
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setOverflowDialog("recurring")}>
+                Despesas fixas
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setOverflowDialog("category")}>
+                Nova categoria
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <CreateExpenseDialog />
         </div>
       </div>
 
-      <div className="flex justify-end gap-4">
-        <Select
-          value={selectedAccount.toString()}
-          onValueChange={(value) =>
-            setSelectedAccount(value === "all" ? "all" : Number(value))
-          }
-        >
-          <SelectTrigger className="w-50">
-            <SelectValue placeholder="Selecione a conta" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todas as contas</SelectItem>
-            {checkingAccounts.map((account) => (
-              <SelectItem key={account.id} value={account.id.toString()}>
-                {account.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <ImportStatementDialog
+        open={overflowDialog === "import"}
+        onOpenChange={(open) => setOverflowDialog(open ? "import" : null)}
+      />
+      <ImportFaturaDialog
+        open={overflowDialog === "fatura"}
+        onOpenChange={(open) => setOverflowDialog(open ? "fatura" : null)}
+      />
+      <RecurringExpensesDialog
+        open={overflowDialog === "recurring"}
+        onOpenChange={(open) => setOverflowDialog(open ? "recurring" : null)}
+      />
+      <CreateCategoryDialog
+        open={overflowDialog === "category"}
+        onOpenChange={(open) => setOverflowDialog(open ? "category" : null)}
+      />
+      <EditExpenseDialog
+        expense={editingExpense}
+        onClose={() => setEditingExpense(null)}
+      />
 
-        <Select
-          value={dateFilter}
-          onValueChange={(value) => setDateFilter(value as DateFilter)}
-        >
-          <SelectTrigger className="w-50">
-            <SelectValue placeholder="Período" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="current-month">Mês atual</SelectItem>
-            <SelectItem value="last-month">Mês passado</SelectItem>
-            <SelectItem value="last-3-months">Últimos 3 meses</SelectItem>
-            <SelectItem value="last-6-months">Últimos 6 meses</SelectItem>
-            <SelectItem value="current-year">Ano atual</SelectItem>
-            <SelectItem value="all">Todos</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <ExpenseFilters
+        value={filters}
+        onChange={setFilters}
+        accounts={spendingAccounts}
+        categories={categories ?? []}
+        months={expenseMonths ?? []}
+      />
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
@@ -406,6 +447,9 @@ export default function CheckingPage() {
                 currency: "BRL",
               }).format(stats.total)}
             </div>
+            <p className="text-muted-foreground text-xs">
+              {periodLabel(filters)}
+            </p>
           </CardContent>
         </Card>
 
@@ -437,7 +481,15 @@ export default function CheckingPage() {
         {/* Budget Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Orçamento</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Orçamento
+              {periodMonths > 1 && (
+                <span className="text-muted-foreground font-normal">
+                  {" "}
+                  ({periodMonths} meses)
+                </span>
+              )}
+            </CardTitle>
             <Dialog open={budgetDialogOpen} onOpenChange={setBudgetDialogOpen}>
               <DialogTrigger asChild>
                 <Button
@@ -525,8 +577,14 @@ export default function CheckingPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Evolução de Gastos</CardTitle>
-            <CardDescription>Acumulado ao longo do período</CardDescription>
+            <CardTitle>
+              {isDailyChart ? "Evolução de Gastos" : "Gastos por Mês"}
+            </CardTitle>
+            <CardDescription>
+              {isDailyChart
+                ? "Acumulado ao longo do mês"
+                : "Total gasto em cada mês do período"}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {chartData.length > 0 ? (
@@ -577,13 +635,18 @@ export default function CheckingPage() {
                       <ChartTooltipContent
                         indicator="line"
                         labelFormatter={(value, payload) => {
-                          if (payload?.[0]) {
-                            const date = payload[0].payload.date;
-                            return format(parseISO(date), "dd/MM/yyyy", {
-                              locale: ptBR,
-                            });
-                          }
-                          return value;
+                          const entry = payload?.[0] as
+                            | { payload?: { date?: string } }
+                            | undefined;
+                          const date = entry?.payload?.date;
+                          if (!date) return String(value);
+                          return isDailyChart
+                            ? format(parseISO(date), "dd/MM/yyyy", {
+                                locale: ptBR,
+                              })
+                            : format(parseISO(`${date}-01`), "MMMM 'de' yyyy", {
+                                locale: ptBR,
+                              });
                         }}
                         formatter={(value) =>
                           new Intl.NumberFormat("pt-BR", {
@@ -595,21 +658,24 @@ export default function CheckingPage() {
                     }
                   />
                   <Area
-                    dataKey="cumulative"
+                    dataKey={isDailyChart ? "cumulative" : "amount"}
                     type="monotone"
                     fill="url(#fillCumulative)"
                     stroke="hsl(var(--primary))"
                     strokeWidth={2}
                   />
-                  {budgetAmount > 0 && (
+                  {/* Always the monthly figure: in month mode the cumulative
+                      line is compared against it, in multi-month mode each
+                      month's own total is. */}
+                  {monthlyBudget > 0 && (
                     <ReferenceLine
-                      y={budgetAmount}
+                      y={monthlyBudget}
                       stroke="hsl(var(--destructive))"
                       strokeDasharray="6 4"
                       strokeWidth={2}
                     >
                       <Label
-                        value={`Orçamento: ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 }).format(budgetAmount)}`}
+                        value={`Orçamento: ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 }).format(monthlyBudget)}`}
                         position="insideTopRight"
                         className="fill-destructive text-xs font-medium"
                       />
@@ -732,16 +798,22 @@ export default function CheckingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Transações Recentes</CardTitle>
+          <CardTitle>Transações</CardTitle>
+          <CardDescription>
+            {sortedExpenses.length} lançamento
+            {sortedExpenses.length === 1 ? "" : "s"} · {periodLabel(filters)}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="flex items-center justify-center p-8">
               Carregando...
             </div>
-          ) : !allExpenses || allExpenses.length === 0 ? (
+          ) : sortedExpenses.length === 0 ? (
             <div className="text-muted-foreground flex items-center justify-center p-8">
-              Nenhuma despesa encontrada
+              {hasNarrowingFilters(filters)
+                ? "Nenhuma despesa corresponde aos filtros"
+                : `Nenhuma despesa em ${periodLabel(filters)}`}
             </div>
           ) : (
             <div className="rounded-md border">
@@ -756,58 +828,72 @@ export default function CheckingPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {allExpenses
-                    .sort(
-                      (a, b) =>
-                        parseISO(b.expenses.expenseDate).getTime() -
-                        parseISO(a.expenses.expenseDate).getTime(),
-                    )
-                    .map((expense) => (
-                      <TableRow key={expense.expenses.id}>
-                        <TableCell>
-                          {format(
-                            parseISO(expense.expenses.expenseDate),
-                            "dd/MM/yyyy",
-                            { locale: ptBR },
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {expense.expenses.description || "-"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            style={{
-                              borderColor:
-                                expense.expense_categories.color ||
-                                "hsl(var(--muted))",
-                              color:
-                                expense.expense_categories.color ||
-                                "hsl(var(--muted))",
-                            }}
-                          >
-                            {categoryMap.get(expense.expense_categories.id)
-                              ?.name || "Sem categoria"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {new Intl.NumberFormat("pt-BR", {
-                            style: "currency",
-                            currency: "BRL",
-                          }).format(expense.expenses.amount)}
-                        </TableCell>
-                        <TableCell>
+                  {sortedExpenses.map((expense) => (
+                    <TableRow key={expense.expenses.id}>
+                      <TableCell>
+                        {format(
+                          parseISO(expense.expenses.expenseDate),
+                          "dd/MM/yyyy",
+                          { locale: ptBR },
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {expense.expenses.description || "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          style={{
+                            borderColor:
+                              expense.expense_categories.color ||
+                              "hsl(var(--muted))",
+                            color:
+                              expense.expense_categories.color ||
+                              "hsl(var(--muted))",
+                          }}
+                        >
+                          {categoryMap.get(expense.expense_categories.id)
+                            ?.name || "Sem categoria"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {new Intl.NumberFormat("pt-BR", {
+                          style: "currency",
+                          currency: "BRL",
+                        }).format(expense.expenses.amount)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={() => setDeletingExpenseId(expense.expenses.id)}
+                            className="text-muted-foreground hover:text-foreground h-8 w-8"
+                            onClick={() =>
+                              setEditingExpense({
+                                id: expense.expenses.id,
+                                categoryId: expense.expenses.categoryId,
+                                description: expense.expenses.description,
+                                amount: expense.expenses.amount,
+                                expenseDate: expense.expenses.expenseDate,
+                              })
+                            }
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive h-8 w-8"
+                            onClick={() =>
+                              setDeletingExpenseId(expense.expenses.id)
+                            }
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>
@@ -817,14 +903,17 @@ export default function CheckingPage() {
 
       <Dialog
         open={deletingExpenseId !== null}
-        onOpenChange={(open) => { if (!open) setDeletingExpenseId(null); }}
+        onOpenChange={(open) => {
+          if (!open) setDeletingExpenseId(null);
+        }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Remover despesa</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Tem certeza que deseja remover esta despesa? Esta ação não pode ser desfeita.
+          <p className="text-muted-foreground text-sm">
+            Tem certeza que deseja remover esta despesa? Esta ação não pode ser
+            desfeita.
           </p>
           <DialogFooter>
             <DialogClose asChild>

@@ -1,9 +1,7 @@
-export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value);
-}
+// formatCurrency lives in ~/lib/format so the expense side can share it; it is
+// re-exported here so existing investment imports keep working.
+export { formatCurrency } from "~/lib/format";
+import { formatCurrency } from "~/lib/format";
 
 export function formatPercent(value: number): string {
   return new Intl.NumberFormat("pt-BR", {

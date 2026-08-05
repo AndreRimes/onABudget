@@ -18,11 +18,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
+import {
+  ACCOUNT_TYPES,
+  ACCOUNT_TYPE_LABELS,
+  type AccountType,
+} from "~/lib/account-type"
 import { api } from "~/trpc/react"
 
 export function CreateAccountDialog() {
   const [open, setOpen] = useState(false)
-  const [accountType, setAccountType] = useState<"CHECKING" | "INVESTMENT">("CHECKING")
+  const [accountType, setAccountType] = useState<AccountType>("CHECKING")
   const [balance, setBalance] = useState("")
   const [accountName, setAccountName] = useState("")
 
@@ -64,13 +69,16 @@ export function CreateAccountDialog() {
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label htmlFor="accountType">Account Type</Label>
-              <Select value={accountType} onValueChange={(v) => setAccountType(v as "CHECKING" | "INVESTMENT")}>
+              <Select value={accountType} onValueChange={(v) => setAccountType(v as AccountType)}>
                 <SelectTrigger id="accountType">
                   <SelectValue placeholder="Select account type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="CHECKING">Checking</SelectItem>
-                  <SelectItem value="INVESTMENT">Investment</SelectItem>
+                  {ACCOUNT_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {ACCOUNT_TYPE_LABELS[type]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

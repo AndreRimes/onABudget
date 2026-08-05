@@ -139,7 +139,8 @@ export class MarketCacheService {
 
     try {
       const { quotes, failed } = await fetchQuotes(toFetch);
-      quoteBySymbol = new Map(quotes.map((q) => [q.symbol, q]));
+      // Already keyed by the requested symbol — see fetchQuotes.
+      quoteBySymbol = quotes;
       failedSymbols = new Set(failed);
     } catch (error) {
       if (!(error instanceof MarketUpstreamError)) throw error;

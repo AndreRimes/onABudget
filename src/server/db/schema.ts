@@ -6,6 +6,7 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 export const budget = sqliteTable("budget", {
@@ -22,8 +23,10 @@ export const accounts = sqliteTable("accounts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: text("user_id").notNull(),
   name: text("name").notNull(),
+  // CREDIT_CARD holds card purchases imported from a fatura. It is a spending
+  // account like CHECKING (expenses hang off it), not an investment one.
   accountType: text("account_type", {
-    enum: ["CHECKING", "INVESTMENT"],
+    enum: ["CHECKING", "INVESTMENT", "CREDIT_CARD"],
   }).notNull(),
   balance: real("balance").notNull().default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -44,8 +47,47 @@ export const expenseCategories = sqliteTable("expense_categories", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const expenses = sqliteTable("expenses", {
+export const expenses = sqliteTable(
+  "expenses",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    checkingAccountId: integer("checking_account_id")
+      .notNull()
+      .references(() => accounts.id, {
+        onDelete: "cascade",
+      }),
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => expenseCategories.id),
+    description: text("description"),
+    amount: real("amount").notNull(),
+    expenseDate: text("expense_date").notNull(),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    // How the row got here. MANUAL rows are typed by hand and have no hash;
+    // IMPORT and RECURRING rows are machine-generated and always carry one.
+    source: text("source", { enum: ["MANUAL", "IMPORT", "RECURRING"] })
+      .notNull()
+      .default("MANUAL"),
+    // Dedup key, same contract as investmentTransactions.sourceHash: unique so
+    // re-importing an overlapping statement (or reloading the page with a
+    // recurring rule due) is a no-op. NULL for manual entries — SQLite allows
+    // any number of NULLs in a unique index.
+    sourceHash: text("source_hash").unique(),
+  },
+  (table) => [
+    index("expenses_account_date_idx").on(
+      table.checkingAccountId,
+      table.expenseDate,
+    ),
+  ],
+);
+
+// Templates for fixed monthly expenses (rent, streaming, gym). Materialized
+// into real `expenses` rows by materializeRecurring(), which is idempotent via
+// a `recurring:{ruleId}:{YYYY-MM}` source hash.
+export const recurringExpenses = sqliteTable("recurring_expenses", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: text("user_id").notNull(),
   checkingAccountId: integer("checking_account_id")
     .notNull()
     .references(() => accounts.id, {
@@ -54,11 +96,55 @@ export const expenses = sqliteTable("expenses", {
   categoryId: integer("category_id")
     .notNull()
     .references(() => expenseCategories.id),
-  description: text("description"),
+  description: text("description").notNull(),
   amount: real("amount").notNull(),
-  expenseDate: text("expense_date").notNull(),
+  dayOfMonth: integer("day_of_month").notNull(), // 1-31, clamped to month length
+  startMonth: text("start_month").notNull(), // YYYY-MM, first month to post
+  endMonth: text("end_month"), // YYYY-MM inclusive, null = open-ended
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// Merchants the user marked as "not an expense" during an import: paying the
+// credit-card bill, moving money between their own accounts, buying an
+// investment. Kept separate from expenseCategoryRules so that table's
+// categoryId can stay NOT NULL.
+export const expenseIgnoreRules = sqliteTable(
+  "expense_ignore_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id").notNull(),
+    pattern: text("pattern").notNull(), // output of normalizeMerchant()
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("expense_ignore_rules_user_pattern_idx").on(
+      table.userId,
+      table.pattern,
+    ),
+  ],
+);
+
+// Learned merchant -> category mappings. Written whenever the user picks a
+// category during a statement import, so the next import already knows it.
+export const expenseCategoryRules = sqliteTable(
+  "expense_category_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: text("user_id").notNull(),
+    pattern: text("pattern").notNull(), // output of normalizeMerchant()
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => expenseCategories.id),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("expense_category_rules_user_pattern_idx").on(
+      table.userId,
+      table.pattern,
+    ),
+  ],
+);
 
 export const investmentTransactions = sqliteTable("investment_transactions", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -336,6 +422,21 @@ export const expenseCategoriesRelations = relations(
   expenseCategories,
   ({ many }) => ({
     expenses: many(expenses),
+    recurringExpenses: many(recurringExpenses),
+  }),
+);
+
+export const recurringExpensesRelations = relations(
+  recurringExpenses,
+  ({ one }) => ({
+    account: one(accounts, {
+      fields: [recurringExpenses.checkingAccountId],
+      references: [accounts.id],
+    }),
+    category: one(expenseCategories, {
+      fields: [recurringExpenses.categoryId],
+      references: [expenseCategories.id],
+    }),
   }),
 );
 

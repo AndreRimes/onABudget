@@ -1,18 +1,20 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import type { AccountType } from "~/lib/account-type";
+import { SPENDING_ACCOUNT_TYPES } from "~/lib/account-type";
 import { db } from "~/server/db";
 import { accounts } from "~/server/db/schema";
 
 export type CreateAccountInput = {
   userId: string;
   name: string;
-  accountType: "CHECKING" | "INVESTMENT";
+  accountType: AccountType;
   balance?: number;
 };
 
 export type UpdateAccountInput = {
   id: number;
   userId: string;
-  accountType?: "CHECKING" | "INVESTMENT";
+  accountType?: AccountType;
   balance?: number;
   name?: string;
 };
@@ -75,6 +77,16 @@ export const accountRepository = {
    * transactions or dividends into someone else's account by guessing an id.
    */
   ownsInvestmentAccount: async (userId: string, accountId: number) => {
+    return await ownsAccountOfType(userId, accountId, "INVESTMENT");
+  },
+
+  /**
+   * Spending-account counterpart of `ownsInvestmentAccount`: true for a
+   * checking account or a credit card the user owns. Every write that takes an
+   * expense's account id from the client — including the bulk statement and
+   * fatura imports — must pass through here.
+   */
+  ownsSpendingAccount: async (userId: string, accountId: number) => {
     const [account] = await db
       .select({ id: accounts.id })
       .from(accounts)
@@ -82,9 +94,40 @@ export const accountRepository = {
         and(
           eq(accounts.id, accountId),
           eq(accounts.userId, userId),
-          eq(accounts.accountType, "INVESTMENT"),
+          inArray(accounts.accountType, [...SPENDING_ACCOUNT_TYPES]),
         ),
       );
     return account !== undefined;
   },
+
+  /** All accounts of the user that can hold expenses. */
+  findSpendingAccounts: async (userId: string) => {
+    return await db
+      .select({ id: accounts.id, name: accounts.name })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.userId, userId),
+          inArray(accounts.accountType, [...SPENDING_ACCOUNT_TYPES]),
+        ),
+      );
+  },
 };
+
+async function ownsAccountOfType(
+  userId: string,
+  accountId: number,
+  accountType: AccountType,
+) {
+  const [account] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.id, accountId),
+        eq(accounts.userId, userId),
+        eq(accounts.accountType, accountType),
+      ),
+    );
+  return account !== undefined;
+}

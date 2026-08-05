@@ -1,7 +1,7 @@
 "use client";
 
-import { FileSpreadsheet, FileUp, UploadCloud, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { FileUp } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   useControllableOpen,
@@ -10,6 +10,7 @@ import {
 import { cn } from "~/lib/utils";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
+import { FileDropzone } from "~/components/ui/file-dropzone";
 import {
   Dialog,
   DialogContent,
@@ -55,7 +56,6 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [ignoredRows, setIgnoredRows] = useState(0);
   const [fileName, setFileName] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [assetTypeByTicker, setAssetTypeByTicker] = useState<
     Record<string, string>
   >({});
@@ -63,7 +63,6 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   const [accountByInstitution, setAccountByInstitution] = useState<
     Record<string, string>
   >({});
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const utils = api.useUtils();
   const { data: accounts } = api.account.getAll.useQuery();
@@ -112,8 +111,6 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
     setAssetTypeByTicker({});
     setAccountByInstitution({});
     setFileName(null);
-    setIsDragging(false);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleFile = async (file: File) => {
@@ -218,71 +215,14 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label htmlFor="b3File">Arquivo (.xlsx) *</Label>
-            <input
+            <FileDropzone
               id="b3File"
-              ref={fileInputRef}
-              type="file"
               accept=".xlsx,.xls"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void handleFile(file);
-              }}
+              fileName={fileName}
+              onFile={(file) => void handleFile(file)}
+              onClear={resetState}
+              hint="Relatório .xlsx da Área do Investidor da B3"
             />
-            {fileName ? (
-              <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
-                <FileSpreadsheet className="h-5 w-5 shrink-0 text-primary" />
-                <span className="flex-1 truncate text-sm font-medium">
-                  {fileName}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    resetState();
-                  }}
-                >
-                  <X className="mr-1 h-4 w-4" />
-                  Trocar
-                </Button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragging(true);
-                }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setIsDragging(false);
-                  const file = e.dataTransfer.files?.[0];
-                  if (file) void handleFile(file);
-                }}
-                className={cn(
-                  "flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors",
-                  isDragging
-                    ? "border-primary bg-primary/5"
-                    : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/30",
-                )}
-              >
-                <UploadCloud className="h-8 w-8 text-muted-foreground" />
-                <p className="text-sm">
-                  <span className="font-medium text-foreground">
-                    Clique para selecionar
-                  </span>{" "}
-                  <span className="text-muted-foreground">
-                    ou arraste o arquivo aqui
-                  </span>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Relatório .xlsx da Área do Investidor da B3
-                </p>
-              </button>
-            )}
           </div>
 
           {isPreviewing && (
