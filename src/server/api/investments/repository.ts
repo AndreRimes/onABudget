@@ -7,7 +7,11 @@ import {
   dividends,
 } from "~/server/db/schema";
 import type { CandlePoint } from "~/server/services/brapi";
-import { marketCacheService, todayIso } from "~/server/services/market-cache";
+import {
+  marketCacheService,
+  todayIso,
+  type QuoteStatus,
+} from "~/server/services/market-cache";
 import { dividendRepository } from "../dividends/repository";
 import { BENCHMARK_IDS } from "./benchmarks";
 import {
@@ -34,6 +38,67 @@ export type CreateInvestmentInput = {
   fixedIncomeRate?: number | null;
   fixedIncomeMaturityDate?: string | null;
 };
+
+/** The still-held positions that are priced from an external source. */
+interface MarketTargets {
+  /** Assets priced by a live quote — the asset name *is* the ticker. */
+  symbols: string[];
+  /** Tesouro positions, as [assetName, canonical title key]. */
+  tesouro: Array<[string, string]>;
+}
+
+/**
+ * Which assets in a ledger still need market data: everything with a positive
+ * net quantity, split by how it is priced. Shared by the snapshot and by the
+ * forced quote refresh so both ask the providers for exactly the same set.
+ */
+function resolveMarketTargets(
+  transactions: Pick<
+    InvestmentTransaction,
+    "assetName" | "transactionType" | "quantity" | "isFixedIncome" | "tesouroTitle"
+  >[],
+): MarketTargets {
+  const netQuantity = new Map<
+    string,
+    { quantity: number; fixed: boolean; tesouroTitle: string | null }
+  >();
+  for (const tx of transactions) {
+    const entry = netQuantity.get(tx.assetName) ?? {
+      quantity: 0,
+      fixed: tx.isFixedIncome ?? false,
+      tesouroTitle: tx.tesouroTitle ?? null,
+    };
+    entry.quantity += tx.transactionType === "BUY" ? tx.quantity : -tx.quantity;
+    netQuantity.set(tx.assetName, entry);
+  }
+
+  const held = [...netQuantity.entries()].filter(
+    ([, entry]) => entry.quantity > 1e-9,
+  );
+
+  return {
+    symbols: held
+      .filter(([, entry]) => !entry.fixed && !entry.tesouroTitle)
+      .map(([assetName]) => assetName),
+    tesouro: held
+      .filter(([, entry]) => entry.tesouroTitle)
+      .map(([assetName, entry]) => [assetName, entry.tesouroTitle!]),
+  };
+}
+
+/** Earliest transaction date in the ledger, or today when it is empty. */
+function ledgerStart(
+  transactions: Pick<InvestmentTransaction, "transactionDate">[],
+  today: string,
+): string {
+  return transactions.reduce(
+    (earliest, tx) =>
+      tx.transactionDate.slice(0, 10) < earliest
+        ? tx.transactionDate.slice(0, 10)
+        : earliest,
+    today,
+  );
+}
 
 const transactionColumns = {
   id: investmentTransactions.id,
@@ -293,6 +358,70 @@ export class InvestmentRepository {
   }
 
   /**
+   * Force a quote refresh for the user's held positions, as of *now*.
+   *
+   * The snapshot normally serves prices cached for up to the quote TTL, so a
+   * page reload can legitimately show a price minutes old. This is the manual
+   * escape hatch: it skips every cache guard and hits the providers, then the
+   * next snapshot read picks the fresh rows up from the same cache tables.
+   *
+   * `assetName` narrows it to one position. Never throws for an individual
+   * asset — a provider that is down simply reports a non-"ok" status.
+   */
+  async refreshQuotes(
+    userId: string,
+    assetName?: string,
+  ): Promise<{
+    refreshedAt: string;
+    quotes: Array<{
+      assetName: string;
+      price: number | null;
+      status: QuoteStatus;
+      asOf: string | null;
+    }>;
+  }> {
+    const allTransactions = await this.findByUserId(userId);
+    const transactions = assetName
+      ? allTransactions.filter((tx) => tx.assetName === assetName)
+      : allTransactions;
+
+    const { symbols, tesouro } = resolveMarketTargets(transactions);
+    const today = todayIso();
+    const fromDate = ledgerStart(transactions, today);
+    const titleKeys = [...new Set(tesouro.map(([, titleKey]) => titleKey))];
+
+    const [quotes, tesouroByTitle] = await Promise.all([
+      marketCacheService.getQuotes(symbols, { force: true }),
+      marketCacheService.getTesouroPrices(titleKeys, fromDate, { force: true }),
+    ]);
+
+    const results = symbols.map((symbol) => {
+      const quote = quotes.get(symbol);
+      return {
+        assetName: symbol,
+        price: quote?.price ?? null,
+        status: quote?.status ?? ("unavailable" as QuoteStatus),
+        asOf: quote?.asOf?.toISOString() ?? null,
+      };
+    });
+
+    // Tesouro positions have no intraday quote: their "cotação" is the latest
+    // official daily PU, so report that instead of leaving them out.
+    for (const [tesouroAsset, titleKey] of tesouro) {
+      const series = tesouroByTitle.get(titleKey);
+      const last = series?.[series.length - 1];
+      results.push({
+        assetName: tesouroAsset,
+        price: last?.close ?? null,
+        status: last ? "ok" : "unavailable",
+        asOf: last ? new Date(`${last.date}T00:00:00`).toISOString() : null,
+      });
+    }
+
+    return { refreshedAt: new Date().toISOString(), quotes: results };
+  }
+
+  /**
    * Single source of truth for the investments page: holdings, summary and
    * chart series computed in one pass over the same market data.
    *
@@ -324,45 +453,15 @@ export class InvestmentRepository {
       ? allDividends.filter((dividend) => dividend.assetName === assetName)
       : allDividends;
 
-    // Net quantity per asset, to know which market symbols need quotes and
-    // which Tesouro titles need official prices.
-    const netQuantity = new Map<
-      string,
-      { quantity: number; fixed: boolean; tesouroTitle: string | null }
-    >();
-    for (const tx of transactions) {
-      const entry = netQuantity.get(tx.assetName) ?? {
-        quantity: 0,
-        fixed: tx.isFixedIncome ?? false,
-        tesouroTitle: tx.tesouroTitle ?? null,
-      };
-      entry.quantity +=
-        tx.transactionType === "BUY" ? tx.quantity : -tx.quantity;
-      netQuantity.set(tx.assetName, entry);
-    }
-    const activeMarketSymbols = [...netQuantity.entries()]
-      .filter(
-        ([, entry]) =>
-          entry.quantity > 1e-9 && !entry.fixed && !entry.tesouroTitle,
-      )
-      .map(([assetName]) => assetName);
-
-    // assetName -> Tesouro title, for the still-held Tesouro positions.
-    const heldTesouro = [...netQuantity.entries()].filter(
-      ([, entry]) => entry.quantity > 1e-9 && entry.tesouroTitle,
-    );
+    // Which assets need quotes, and which Tesouro titles need official prices.
+    const { symbols: activeMarketSymbols, tesouro: heldTesouro } =
+      resolveMarketTargets(transactions);
     const tesouroTitleKeys = [
-      ...new Set(heldTesouro.map(([, entry]) => entry.tesouroTitle!)),
+      ...new Set(heldTesouro.map(([, titleKey]) => titleKey)),
     ];
 
     const today = todayIso();
-    const fullStart = transactions.reduce(
-      (earliest, tx) =>
-        tx.transactionDate.slice(0, 10) < earliest
-          ? tx.transactionDate.slice(0, 10)
-          : earliest,
-      today,
-    );
+    const fullStart = ledgerStart(transactions, today);
 
     const [quotes, candles, benchmarks, tesouroByTitle] = await Promise.all([
       marketCacheService.getQuotes(activeMarketSymbols),
@@ -377,8 +476,8 @@ export class InvestmentRepository {
     // Re-key the Tesouro price series by assetName so the engine can look them
     // up the same way it looks up equity candles.
     const tesouroCandles = new Map<string, CandlePoint[]>();
-    for (const [assetName, entry] of heldTesouro) {
-      const series = tesouroByTitle.get(entry.tesouroTitle!);
+    for (const [assetName, titleKey] of heldTesouro) {
+      const series = tesouroByTitle.get(titleKey);
       if (series) tesouroCandles.set(assetName, series);
     }
 

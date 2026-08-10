@@ -54,6 +54,15 @@ const LIVE_TAIL_BENCHMARKS = new Set<BenchmarkId>(["IBOV"]);
 
 export type QuoteStatus = "ok" | "stale" | "not_found" | "unavailable";
 
+export interface RefreshOptions {
+  /**
+   * Ignore every cache guard (quote TTL, negative cache, once-a-day sync) and
+   * go straight to the provider. For the "atualizar cotação" action: the user
+   * asked for a price as of *now*, so a cached one is not an answer.
+   */
+  force?: boolean;
+}
+
 export interface QuoteResult {
   price: number | null;
   previousClose: number | null;
@@ -108,11 +117,14 @@ export class MarketCacheService {
   private tesouroSyncedOn = new Map<string, string>();
 
   /**
-   * Current quotes for a batch of symbols, cache-first.
-   * Never throws for the batch: individual symbols degrade to
+   * Current quotes for a batch of symbols, cache-first (`force` bypasses the
+   * cache entirely). Never throws for the batch: individual symbols degrade to
    * "stale" / "unavailable" / "not_found".
    */
-  async getQuotes(symbols: string[]): Promise<Map<string, QuoteResult>> {
+  async getQuotes(
+    symbols: string[],
+    { force = false }: RefreshOptions = {},
+  ): Promise<Map<string, QuoteResult>> {
     const results = new Map<string, QuoteResult>();
     if (symbols.length === 0) return results;
 
@@ -126,7 +138,11 @@ export class MarketCacheService {
     const toFetch: string[] = [];
     for (const symbol of symbols) {
       const meta = metaBySymbol.get(symbol);
-      if (
+      if (force) {
+        // Still keep `meta` around: a forced fetch that fails transiently falls
+        // back to the last known price below, same as a normal one.
+        toFetch.push(symbol);
+      } else if (
         meta?.status === "NOT_FOUND" &&
         meta.updatedAt &&
         now - meta.updatedAt.getTime() < NOT_FOUND_TTL_MS
@@ -568,13 +584,16 @@ export class MarketCacheService {
   async getTesouroPrices(
     titleKeys: string[],
     fromDate: string,
+    { force = false }: RefreshOptions = {},
   ): Promise<Map<string, CandlePoint[]>> {
     const result = new Map<string, CandlePoint[]>();
     const keys = [...new Set(titleKeys)];
     if (keys.length === 0) return result;
 
     const today = todayIso();
-    const stale = keys.filter((key) => this.tesouroSyncedOn.get(key) !== today);
+    const stale = force
+      ? keys
+      : keys.filter((key) => this.tesouroSyncedOn.get(key) !== today);
     if (stale.length > 0) {
       try {
         const prices = await fetchTesouroPrices(new Set(stale), fromDate);

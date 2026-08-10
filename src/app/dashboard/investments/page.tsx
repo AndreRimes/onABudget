@@ -33,6 +33,7 @@ import { AllocationDonut } from "~/components/sections/investment/AllocationDonu
 import { HoldingsSection } from "~/components/sections/investment/HoldingsSection";
 import { InvestmentsSkeleton } from "~/components/sections/investment/InvestmentsSkeleton";
 import { PerformanceChart } from "~/components/sections/investment/PerformanceChart";
+import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { SummaryCards } from "~/components/sections/investment/SummaryCards";
 
 type TimeRange = "1d" | "5d" | "1mo" | "6mo" | "1y" | "max";
@@ -87,6 +88,8 @@ export default function InvestmentsPage() {
               ))}
             </SelectContent>
           </Select>
+
+          <RefreshQuotesButton />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

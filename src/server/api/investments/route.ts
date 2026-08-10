@@ -222,6 +222,22 @@ export const investmentsRouter = createTRPCRouter({
         input?.assetName,
       );
     }),
+  /**
+   * Forces the periodic quote refresh to happen now. A mutation rather than a
+   * query on purpose: it always hits the external providers and writes the
+   * cache, so it must never be replayed by react-query on its own.
+   */
+  refreshQuotes: protectedProcedure
+    .input(
+      z.object({ assetName: z.string().min(1).optional() }).optional(),
+    )
+    .mutation(async ({ ctx, input }) => {
+      return await investmentRepository.refreshQuotes(
+        ctx.session.user.id,
+        input?.assetName,
+      );
+    }),
+
   searchStocks: protectedProcedure
     .input(z.object({ query: z.string() }))
     .query(async ({ input }) => {

@@ -29,6 +29,7 @@ import { DeleteAssetDialog } from "~/components/sections/investment/DeleteAssetD
 import { DividendsTable } from "~/components/sections/investment/DividendsTable";
 import { EditFixedIncomeDialog } from "~/components/sections/investment/EditFixedIncomeDialog";
 import { PerformanceChart } from "~/components/sections/investment/PerformanceChart";
+import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { RenameAssetDialog } from "~/components/sections/investment/RenameAssetDialog";
 import { TransactionsTable } from "~/components/sections/investment/TransactionsTable";
 import { assetDetailHref } from "~/components/sections/investment/asset-href";
@@ -148,6 +149,12 @@ export default function AssetDetailPage() {
               ))}
             </SelectContent>
           </Select>
+
+          {/* Only assets priced from a provider can be refreshed; a plain
+              fixed-income position is accrued, not quoted. */}
+          {holding && (!holding.isFixedIncome || holding.tesouroTitle) && (
+            <RefreshQuotesButton assetName={assetName} />
+          )}
 
           <RenameAssetDialog
             assetName={assetName}
