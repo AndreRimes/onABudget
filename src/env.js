@@ -16,7 +16,12 @@ export const env = createEnv({
       .enum(["development", "test", "production"])
       .default("development"),
     BRAPI_API_TOKEN: z.string().optional(),
-    METRICS_TOKEN: z.string().optional(),
+    /**
+     * Bearer token Prometheus must send to scrape /api/metrics. Kept optional
+     * here on purpose: the endpoint fails closed in production instead, so a
+     * missing monitoring token can never stop the whole app from booting.
+     */
+    METRICS_TOKEN: z.string().min(16).optional(),
   },
 
   /**

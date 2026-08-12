@@ -4,6 +4,7 @@ import { type NextRequest } from "next/server";
 import { env } from "~/env";
 import { appRouter } from "~/server/api/root";
 import { createTRPCContext } from "~/server/api/trpc";
+import { withHttpMetrics } from "~/server/metrics/http";
 
 export const dynamic = "force-dynamic";
 
@@ -33,4 +34,14 @@ const handler = (req: NextRequest) =>
         : undefined,
   });
 
-export { handler as GET, handler as POST };
+/**
+ * Note: tRPC batches several procedures into one HTTP request, and server
+ * components call the router directly via ~/trpc/server (no HTTP at all). So
+ * these HTTP counts and trpc_requests_total measure different things and must
+ * never be divided by one another.
+ */
+const instrumented = withHttpMetrics("/api/trpc", (req) =>
+  handler(req as NextRequest),
+);
+
+export { instrumented as GET, instrumented as POST };

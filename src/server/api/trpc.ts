@@ -13,6 +13,12 @@ import { ZodError } from "zod";
 
 import { auth } from "~/server/better-auth";
 import { db } from "~/server/db";
+import {
+  trpcRequestDuration,
+  trpcRequestsInFlight,
+  trpcRequestsTotal,
+} from "~/server/metrics/instruments";
+import { withUpstreamFanoutScope } from "~/server/metrics/upstream";
 
 /**
  * 1. CONTEXT
@@ -80,26 +86,45 @@ export const createCallerFactory = t.createCallerFactory;
 export const createTRPCRouter = t.router;
 
 /**
- * Middleware for timing procedure execution and adding an artificial delay in development.
+ * Records Prometheus metrics for every procedure, and adds an artificial delay
+ * in development.
  *
- * You can remove this if you don't like it, but it can help catch unwanted waterfalls by simulating
- * network latency that would occur in production but not in local development.
+ * The dev delay simulates network latency that would occur in production but
+ * not locally, which helps catch unwanted waterfalls. It is applied *before*
+ * the timer starts so the fake latency doesn't dominate dev histograms.
  */
-const timingMiddleware = t.middleware(async ({ next, path }) => {
-  const start = Date.now();
-
+const metricsMiddleware = t.middleware(async ({ next, path, type }) => {
   if (t._config.isDev) {
-    // artificial delay in dev
     const waitMs = Math.floor(Math.random() * 400) + 100;
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
-  const result = await next();
+  const labels = { procedure: path, type };
+  const stop = trpcRequestDuration.startTimer(labels);
+  trpcRequestsInFlight.inc({ type });
 
-  const end = Date.now();
-  console.log(`[TRPC] ${path} took ${end - start}ms to execute`);
+  try {
+    // Scope outbound provider calls to this procedure, so we can measure how
+    // many brapi/BCB requests one procedure costs (see ~/server/metrics/upstream).
+    const result = await withUpstreamFanoutScope(path, () => next());
 
-  return result;
+    // tRPC catches downstream errors and returns them as `{ ok: false, error }`
+    // rather than throwing, so the result must be inspected — a try/catch alone
+    // would record every failed procedure as a success.
+    trpcRequestsTotal.inc({
+      ...labels,
+      code: result.ok ? "OK" : result.error.code,
+    });
+
+    return result;
+  } catch (cause) {
+    // Defensive: reaching here means this middleware itself failed.
+    trpcRequestsTotal.inc({ ...labels, code: "INTERNAL_SERVER_ERROR" });
+    throw cause;
+  } finally {
+    stop();
+    trpcRequestsInFlight.dec({ type });
+  }
 });
 
 /**
@@ -109,7 +134,7 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
  * guarantee that a user querying is authorized, but you can still access user session data if they
  * are logged in.
  */
-export const publicProcedure = t.procedure.use(timingMiddleware);
+export const publicProcedure = t.procedure.use(metricsMiddleware);
 
 /**
  * Protected (authenticated) procedure
@@ -119,8 +144,10 @@ export const publicProcedure = t.procedure.use(timingMiddleware);
  *
  * @see https://trpc.io/docs/procedures
  */
+// metricsMiddleware runs before the session check on purpose, so rejected calls
+// are counted with code="UNAUTHORIZED" rather than disappearing.
 export const protectedProcedure = t.procedure
-  .use(timingMiddleware)
+  .use(metricsMiddleware)
   .use(({ ctx, next }) => {
     if (!ctx.session?.user) {
       throw new TRPCError({ code: "UNAUTHORIZED" });

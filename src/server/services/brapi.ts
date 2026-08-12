@@ -2,6 +2,14 @@
 // No caching and no TRPCError here — callers go through MarketCacheService,
 // which owns persistence and error presentation.
 import { tesouroTitleKeyFromParts } from "~/server/api/investments/tesouro-title";
+import {
+  upstreamRequestDuration,
+  upstreamRequestsInFlight,
+  upstreamRequestsTotal,
+  type UpstreamOperation,
+  type UpstreamProvider,
+} from "~/server/metrics/instruments";
+import { countUpstreamCall } from "~/server/metrics/upstream";
 
 /** The requested symbol does not exist at the provider (permanent). */
 export class SymbolNotFoundError extends Error {
@@ -40,7 +48,9 @@ interface BrapiHistoricalPoint {
 }
 
 interface BrapiQuoteResponse {
-  results?: Array<BrapiQuote & { historicalDataPrice?: BrapiHistoricalPoint[] }>;
+  results?: Array<
+    BrapiQuote & { historicalDataPrice?: BrapiHistoricalPoint[] }
+  >;
 }
 
 export interface CandlePoint {
@@ -88,9 +98,54 @@ function brapiUrl(path: string, params: Record<string, string> = {}): URL {
 /**
  * fetch with a hard timeout so a stalled upstream can never hang a request
  * (and, in turn, leave the investments page loading forever).
+ *
+ * This is also where every outbound provider request is metered. All four
+ * fetchers below funnel through here, and fetchQuotes issues one request per
+ * symbol — so instrumenting at this level (rather than per exported function)
+ * is what makes the real request volume and the per-procedure fan-out visible.
+ * Deliberately labelled by provider/operation only, never by symbol.
  */
-async function fetchWithTimeout(url: string): Promise<Response> {
-  return await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+async function fetchWithTimeout(
+  url: string,
+  provider: UpstreamProvider,
+  operation: UpstreamOperation,
+): Promise<Response> {
+  const labels = { provider, operation };
+  const stop = upstreamRequestDuration.startTimer(labels);
+  upstreamRequestsInFlight.inc({ provider });
+  countUpstreamCall();
+
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+
+    // Note a 200 with an empty `results` array is a logical not-found that
+    // counts as a success here; the authoritative semantic status is
+    // market_quote_results_total, recorded by MarketCacheService.
+    upstreamRequestsTotal.inc({
+      ...labels,
+      outcome: response.ok
+        ? "success"
+        : response.status === 404
+          ? "not_found"
+          : "http_error",
+      status_class: `${Math.floor(response.status / 100)}xx`,
+    });
+
+    return response;
+  } catch (error) {
+    // AbortSignal.timeout rejects with a DOMException named "TimeoutError".
+    const outcome =
+      error instanceof Error && error.name === "TimeoutError"
+        ? "timeout"
+        : "network_error";
+    upstreamRequestsTotal.inc({ ...labels, outcome, status_class: "none" });
+    throw error;
+  } finally {
+    stop();
+    upstreamRequestsInFlight.dec({ provider });
+  }
 }
 
 /**
@@ -111,9 +166,8 @@ export async function mapWithConcurrency<T, R>(
       results[index] = await fn(items[index]!);
     }
   }
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    () => worker(),
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () =>
+    worker(),
   );
   await Promise.all(workers);
   return results;
@@ -147,7 +201,11 @@ export async function fetchQuotes(symbols: string[]): Promise<{
     async (symbol) => {
       let response: Response;
       try {
-        response = await fetchWithTimeout(brapiUrl(`/quote/${symbol}`).toString());
+        response = await fetchWithTimeout(
+          brapiUrl(`/quote/${symbol}`).toString(),
+          "brapi",
+          "quote",
+        );
       } catch {
         return { symbol, quote: null, transient: true };
       }
@@ -189,6 +247,8 @@ export async function fetchCandles(
   try {
     response = await fetchWithTimeout(
       brapiUrl(`/quote/${symbol}`, { range, interval: "1d" }).toString(),
+      "brapi",
+      "candles",
     );
   } catch (error) {
     throw new MarketUpstreamError(`brapi request failed: ${String(error)}`);
@@ -216,13 +276,17 @@ export async function fetchCandles(
 }
 
 /** Search brapi's ticker list. Used by the ticker autocomplete. */
-export async function searchStocks(query: string): Promise<
+export async function searchStocks(
+  query: string,
+): Promise<
   Array<{ stock: string; name: string; close: number | null; type: string }>
 > {
   let response: Response;
   try {
     response = await fetchWithTimeout(
       brapiUrl(`/quote/list`, { search: query, limit: "10" }).toString(),
+      "brapi",
+      "search",
     );
   } catch (error) {
     throw new MarketUpstreamError(`brapi request failed: ${String(error)}`);
@@ -235,7 +299,12 @@ export async function searchStocks(query: string): Promise<
   }
 
   const data = (await response.json()) as {
-    stocks?: Array<{ stock: string; name: string; close: number | null; type: string }>;
+    stocks?: Array<{
+      stock: string;
+      name: string;
+      close: number | null;
+      type: string;
+    }>;
   };
   return data.stocks ?? [];
 }
@@ -260,7 +329,7 @@ export async function fetchCdiDailyRates(
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(url.toString());
+    response = await fetchWithTimeout(url.toString(), "bcb", "cdi");
   } catch (error) {
     throw new MarketUpstreamError(`BCB request failed: ${String(error)}`);
   }
@@ -271,7 +340,10 @@ export async function fetchCdiDailyRates(
     );
   }
 
-  const data = (await response.json()) as Array<{ data: string; valor: string }>;
+  const data = (await response.json()) as Array<{
+    data: string;
+    valor: string;
+  }>;
 
   return data.map((point) => ({
     date: point.data.split("/").reverse().join("-"),

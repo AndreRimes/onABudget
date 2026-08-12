@@ -18,7 +18,12 @@ import {
   pricesToDailyReturns,
 } from "./benchmark-math";
 import {
-  BCB_SERIES,
+  marketCacheLookups,
+  marketQuoteResults,
+  marketSyncTotal,
+} from "~/server/metrics/instruments";
+import { BCB_SERIES } from "./brapi";
+import {
   type BrapiQuote,
   type BrapiRange,
   type CandlePoint,
@@ -117,8 +122,24 @@ export class MarketCacheService {
   private tesouroSyncedOn = new Map<string, string>();
 
   /**
+<<<<<<< HEAD
    * Current quotes for a batch of symbols, cache-first (`force` bypasses the
    * cache entirely). Never throws for the batch: individual symbols degrade to
+=======
+   * Records the freshness of what callers actually got. This is the
+   * authoritative "not found" signal — brapi answers 200 with an empty result
+   * set for unknown tickers, which the HTTP-level metric counts as a success.
+   */
+  private recordQuoteResults(results: Map<string, QuoteResult>): void {
+    for (const { status } of results.values()) {
+      marketQuoteResults.inc({ status });
+    }
+  }
+
+  /**
+   * Current quotes for a batch of symbols, cache-first.
+   * Never throws for the batch: individual symbols degrade to
+>>>>>>> 561cb07 (prometheus metrics export)
    * "stale" / "unavailable" / "not_found".
    */
   async getQuotes(
@@ -147,6 +168,7 @@ export class MarketCacheService {
         meta.updatedAt &&
         now - meta.updatedAt.getTime() < NOT_FOUND_TTL_MS
       ) {
+        marketCacheLookups.inc({ kind: "quote", result: "negative_hit" });
         results.set(symbol, {
           price: null,
           previousClose: null,
@@ -158,6 +180,7 @@ export class MarketCacheService {
         meta.lastPriceAt &&
         now - meta.lastPriceAt.getTime() < QUOTE_TTL_MS
       ) {
+        marketCacheLookups.inc({ kind: "quote", result: "hit" });
         results.set(symbol, {
           price: meta.lastPrice,
           previousClose: meta.previousClose,
@@ -165,11 +188,15 @@ export class MarketCacheService {
           asOf: meta.lastPriceAt,
         });
       } else {
+        marketCacheLookups.inc({ kind: "quote", result: "miss" });
         toFetch.push(symbol);
       }
     }
 
-    if (toFetch.length === 0) return results;
+    if (toFetch.length === 0) {
+      this.recordQuoteResults(results);
+      return results;
+    }
 
     const fetchedAt = new Date();
     let quoteBySymbol = new Map<string, BrapiQuote>();
@@ -252,6 +279,7 @@ export class MarketCacheService {
       }
     }
 
+    this.recordQuoteResults(results);
     return results;
   }
 
@@ -309,15 +337,27 @@ export class MarketCacheService {
     today: string,
     meta: typeof marketSymbols.$inferSelect | undefined,
   ): Promise<void> {
-    if (meta?.status === "NOT_FOUND") return;
+    if (meta?.status === "NOT_FOUND") {
+      marketCacheLookups.inc({ kind: "candles", result: "negative_hit" });
+      return;
+    }
 
     const coverageFrom = meta?.candlesFrom ?? null;
     const coverageTo = meta?.candlesTo ?? null;
-    if (this.candlesSyncedOn.get(symbol) === today) return;
+    if (this.candlesSyncedOn.get(symbol) === today) {
+      marketCacheLookups.inc({ kind: "candles", result: "daily_guard_hit" });
+      return;
+    }
 
-    const needsBackfill = !coverageFrom || !coverageTo || fromDate < coverageFrom;
+    const needsBackfill =
+      !coverageFrom || !coverageTo || fromDate < coverageFrom;
     const needsTailSync = !!coverageTo && coverageTo < today;
-    if (!needsBackfill && !needsTailSync) return;
+    if (!needsBackfill && !needsTailSync) {
+      marketCacheLookups.inc({ kind: "candles", result: "hit" });
+      return;
+    }
+
+    marketCacheLookups.inc({ kind: "candles", result: "miss" });
 
     // Note: a backfill that doesn't reach `fromDate` is not necessarily a bug —
     // brapi's free plan only ever returns the last ~3 months of candles no
@@ -328,6 +368,10 @@ export class MarketCacheService {
     try {
       const candles = await fetchCandles(symbol, range);
       this.candlesSyncedOn.set(symbol, today);
+      marketSyncTotal.inc({
+        kind: "candles",
+        outcome: candles.length === 0 ? "empty" : "success",
+      });
       if (candles.length === 0) return;
 
       await db
@@ -344,7 +388,9 @@ export class MarketCacheService {
       const fetchedFrom = candles[0]!.date;
       const fetchedTo = candles[candles.length - 1]!.date;
       const newFrom =
-        !coverageFrom || fetchedFrom < coverageFrom ? fetchedFrom : coverageFrom;
+        !coverageFrom || fetchedFrom < coverageFrom
+          ? fetchedFrom
+          : coverageFrom;
       const newTo =
         !coverageTo || fetchedTo > coverageTo ? fetchedTo : coverageTo;
       await db
@@ -358,10 +404,15 @@ export class MarketCacheService {
         })
         .onConflictDoUpdate({
           target: marketSymbols.symbol,
-          set: { candlesFrom: newFrom, candlesTo: newTo, updatedAt: new Date() },
+          set: {
+            candlesFrom: newFrom,
+            candlesTo: newTo,
+            updatedAt: new Date(),
+          },
         });
     } catch (error) {
       if (error instanceof SymbolNotFoundError) {
+        marketSyncTotal.inc({ kind: "candles", outcome: "not_found" });
         await db
           .insert(marketSymbols)
           .values({ symbol, status: "NOT_FOUND", updatedAt: new Date() })
@@ -372,6 +423,7 @@ export class MarketCacheService {
         return;
       }
       if (!(error instanceof MarketUpstreamError)) throw error;
+      marketSyncTotal.inc({ kind: "candles", outcome: "upstream_error" });
       // Transient failure: don't hammer it again today; serve cached data.
       this.candlesSyncedOn.set(symbol, today);
     }
@@ -396,14 +448,30 @@ export class MarketCacheService {
       missing.push([fromDate, today]);
     } else {
       if (fromDate < bounds.min) missing.push([fromDate, bounds.min]);
-      if (bounds.max < today && this.cdiSyncedOn !== today) {
-        missing.push([bounds.max, today]);
+      if (bounds.max < today) {
+        if (this.cdiSyncedOn === today) {
+          // Tail is stale but already checked today — the guard that keeps the
+          // BCB request count down.
+          marketCacheLookups.inc({ kind: "cdi", result: "daily_guard_hit" });
+        } else {
+          missing.push([bounds.max, today]);
+        }
       }
+    }
+
+    if (missing.length === 0) {
+      marketCacheLookups.inc({ kind: "cdi", result: "hit" });
+    } else {
+      marketCacheLookups.inc({ kind: "cdi", result: "miss" }, missing.length);
     }
 
     for (const [start, end] of missing) {
       try {
         const rates = await fetchCdiDailyRates(start, end);
+        marketSyncTotal.inc({
+          kind: "cdi",
+          outcome: rates.length > 0 ? "success" : "empty",
+        });
         if (rates.length > 0) {
           await db
             .insert(cdiRates)
@@ -417,6 +485,7 @@ export class MarketCacheService {
         }
       } catch (error) {
         if (!(error instanceof MarketUpstreamError)) throw error;
+        marketSyncTotal.inc({ kind: "cdi", outcome: "upstream_error" });
         // Transient BCB failure: serve what is cached.
       }
     }
