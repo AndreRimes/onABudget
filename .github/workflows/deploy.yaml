@@ -10,7 +10,12 @@ env:
   DOCKER_IMAGE: andrerimes/onabudget
 
 jobs:
+  quality:
+    uses: ./.github/workflows/sonar.yml
+    secrets: inherit
+
   build-and-push:
+    needs: quality
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -41,4 +46,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=
+          cache-to: type=registry,ref=${{ env.DOCKER_IMAGE }}:buildcache,mode=max
