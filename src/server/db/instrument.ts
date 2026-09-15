@@ -1,4 +1,9 @@
-import type { Client, InStatement } from "@libsql/client";
+import type {
+  Client,
+  InArgs,
+  InStatement,
+  TransactionMode,
+} from "@libsql/client";
 
 import {
   dbQueriesInFlight,
@@ -15,25 +20,45 @@ import {
  * instead gives real wall-clock timings and covers Drizzle queries, the
  * better-auth adapter (same client) and any raw `client.execute`.
  *
- * Known gap: statements issued inside `client.transaction()` are not seen. The
- * app uses no transactions today, so coverage is complete in practice.
+ * Known gap: statements issued inside `client.transaction()` are not seen.
+ * The importers (statement, B3, Pluggy investments) and the recurring-expense
+ * poster all write inside one, so their per-row writes are invisible here —
+ * only the procedure-level histogram in ~/server/api/trpc.ts times them.
  */
 
-/** The 14 real tables, so `table` can never take an unbounded value. */
+/**
+ * Every table in the schema, so `table` can never take an unbounded value.
+ * Keep in step with ~/server/db/schema.ts: a table missing here is bucketed
+ * as "other", which is where the market-cache reads hid until this was
+ * brought up to date.
+ */
 const TABLES = new Set([
-  "budget",
-  "accounts",
-  "asset_types",
-  "expense_categories",
-  "expenses",
-  "investment_transactions",
-  "dividends",
-  "market_symbols",
-  "market_candles",
-  "cdi_rates",
-  "user",
-  "session",
   "account",
+  "account_balance_snapshots",
+  "accounts",
+  "asset_labels",
+  "asset_types",
+  "bank_account_links",
+  "bank_connections",
+  "benchmark_points",
+  "benchmark_sync",
+  "budget",
+  "cdi_rates",
+  "dividends",
+  "expense_categories",
+  "expense_category_rules",
+  "expense_ignore_rules",
+  "expenses",
+  "fund_quota_coverage",
+  "fund_quotas",
+  "investment_transactions",
+  "market_candles",
+  "market_symbols",
+  "provider_holdings",
+  "recurring_expenses",
+  "session",
+  "tesouro_prices",
+  "user",
   "verification",
 ]);
 
@@ -45,8 +70,13 @@ const UNKNOWN = { operation: "other", table: "other" } as const;
  * Cardinality-safe labels derived from the SQL. The statement text itself is
  * never used as a label value.
  */
-function labelsFor(stmt: InStatement): { operation: string; table: string } {
-  const sql = (typeof stmt === "string" ? stmt : stmt.sql).trimStart();
+/** The statement forms `execute`/`batch` accept: an object, a string, or a [sql, args] tuple. */
+type StatementLike = InStatement | [string, InArgs?];
+
+function labelsFor(stmt: StatementLike): { operation: string; table: string } {
+  const sql = (
+    typeof stmt === "string" ? stmt : Array.isArray(stmt) ? stmt[0] : stmt.sql
+  ).trimStart();
 
   const first = /^[a-z]+/i.exec(sql)?.[0]?.toLowerCase() ?? "";
   const operation = OPERATIONS.has(first) ? first : "other";
@@ -84,20 +114,27 @@ type Batch = Client["batch"];
 export function instrumentClient(client: Client): Client {
   return new Proxy(client, {
     get(target, prop) {
+      // Both methods are overloaded (`execute(stmt)` / `execute(sql, args)`),
+      // which a typed spread cannot forward; the wrappers take the widest form
+      // and hand the call through untouched.
       if (prop === "execute") {
-        const execute: Execute = (...args) =>
-          timed(labelsFor(args[0]), () => target.execute(...args));
-        return execute;
+        const execute = (stmt: InStatement | string, args?: InArgs) =>
+          timed(labelsFor(stmt), () =>
+            typeof stmt === "string"
+              ? target.execute(stmt, args)
+              : target.execute(stmt),
+          );
+        return execute as Execute;
       }
 
       if (prop === "batch") {
-        const batch: Batch = (...args) =>
+        const batch = (stmts: StatementLike[], mode?: TransactionMode) =>
           timed(
             // A batch runs as one transaction; attribute it to its first statement.
-            args[0].length > 0 ? labelsFor(args[0][0]!) : UNKNOWN,
-            () => target.batch(...args),
+            stmts.length > 0 ? labelsFor(stmts[0]!) : UNKNOWN,
+            () => target.batch(stmts, mode),
           );
-        return batch;
+        return batch as Batch;
       }
 
       // Read against `target`, not the proxy — routing a getter back through

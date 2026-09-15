@@ -32,7 +32,7 @@ export function CreateAssetTypeDialog(props: ControllableOpenProps = {}) {
 
   const { mutate, isPending } = api.assetTypes.create.useMutation({
     onSuccess: () => {
-      utils.assetTypes.getAll.invalidate();
+      void utils.assetTypes.getAll.invalidate();
       toast.success("Tipo de ativo criado com sucesso!");
       setOpen(false);
       // Reset form
@@ -101,7 +101,11 @@ export function CreateAssetTypeDialog(props: ControllableOpenProps = {}) {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
               Cancelar
             </Button>
             <Button type="submit" disabled={isPending}>

@@ -1,0 +1,41 @@
+name: Check
+
+# No `push` trigger of its own: deploy.yaml calls this workflow on every push
+# to main, so adding one here would run the whole job twice per push.
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # Env validation is skipped and the URL is a throwaway: nothing here
+      # touches a database, but `~/env` is imported transitively and would
+      # otherwise refuse to load without the real deployment's variables.
+      - name: Typecheck
+        run: pnpm typecheck
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          DATABASE_URL: "file::memory:"
+
+      - name: Test
+        run: pnpm test

@@ -92,7 +92,7 @@ export function ImportFaturaDialog(props: ControllableOpenProps = {}) {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="sm:max-w-4xl lg:max-w-6xl">
         <DialogHeader>
           <DialogTitle>Importar fatura do cartão</DialogTitle>
           <DialogDescription>
@@ -117,7 +117,7 @@ export function ImportFaturaDialog(props: ControllableOpenProps = {}) {
           </div>
 
           {isReadingPdf && (
-            <p className="text-sm text-muted-foreground">Lendo o PDF...</p>
+            <p className="text-muted-foreground text-sm">Lendo o PDF...</p>
           )}
 
           <div className="grid gap-2">
@@ -127,7 +127,9 @@ export function ImportFaturaDialog(props: ControllableOpenProps = {}) {
             <Textarea
               id="faturaText"
               rows={6}
-              placeholder={"03 jul   IFOOD *RESTAURANTE      R$ 45,90\n05 jul   NETFLIX.COM 03/12       R$ 55,90"}
+              placeholder={
+                "03 jul   IFOOD *RESTAURANTE      R$ 45,90\n05 jul   NETFLIX.COM 03/12       R$ 55,90"
+              }
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
               className="font-mono text-xs"
@@ -146,25 +148,25 @@ export function ImportFaturaDialog(props: ControllableOpenProps = {}) {
           {parsed && (
             <>
               {parsed.referenceMonth && (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-muted-foreground text-xs">
                   Fatura reconhecida como referente a {parsed.referenceMonth}.
                   Compras de meses anteriores mantêm a data original.
                 </p>
               )}
 
               {parsed.unparsedSamples.length > 0 && (
-                <div className="grid gap-1 rounded-lg border border-amber-500/40 p-3">
-                  <p className="text-sm font-medium text-amber-600 dark:text-amber-500">
+                <div className="border-foreground bg-highlight/50 grid gap-1 border-2 p-3">
+                  <p className="text-sm font-bold">
                     {parsed.unparsedSamples.length} linha
                     {parsed.unparsedSamples.length !== 1 ? "s" : ""} não
                     reconhecida
                     {parsed.unparsedSamples.length !== 1 ? "s" : ""}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-muted-foreground text-xs">
                     Se alguma delas for uma compra, me avise para ajustar o
                     leitor:
                   </p>
-                  <ul className="font-mono text-xs text-muted-foreground">
+                  <ul className="text-muted-foreground font-mono text-xs">
                     {parsed.unparsedSamples.map((sample, index) => (
                       <li key={index} className="truncate">
                         {sample}

@@ -108,7 +108,12 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
   };
 
   const submit = () => {
-    if (!form.accountId || !form.categoryId || !form.description || !form.amount) {
+    if (
+      !form.accountId ||
+      !form.categoryId ||
+      !form.description ||
+      !form.amount
+    ) {
       toast.error("Preencha conta, categoria, descrição e valor");
       return;
     }
@@ -145,7 +150,7 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="sm:max-w-2xl lg:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Despesas fixas</DialogTitle>
           <DialogDescription>
@@ -161,14 +166,15 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
               {rules.map((rule) => (
                 <div
                   key={rule.id}
-                  className="flex items-center gap-3 rounded-lg border p-3"
+                  className="flex items-center gap-3 border-2 p-3"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">
                       {rule.description}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Todo dia {rule.dayOfMonth} · {categoryName(rule.categoryId)}
+                    <p className="text-muted-foreground text-xs">
+                      Todo dia {rule.dayOfMonth} ·{" "}
+                      {categoryName(rule.categoryId)}
                       {rule.endMonth ? ` · até ${rule.endMonth}` : ""}
                     </p>
                   </div>
@@ -194,7 +200,7 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
                     size="sm"
                     onClick={() => remove({ id: rule.id })}
                   >
-                    <Trash2 className="h-4 w-4 text-destructive" />
+                    <Trash2 className="text-destructive h-4 w-4" />
                   </Button>
                 </div>
               ))}
@@ -202,16 +208,18 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
           )}
 
           {rules?.length === 0 && !showForm && (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               Nenhuma despesa fixa cadastrada ainda.
             </p>
           )}
 
           {showForm ? (
-            <div className="grid gap-3 rounded-lg border p-3">
+            <div className="grid gap-3 border-2 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium">
-                  {form.id === null ? "Nova despesa fixa" : "Editar despesa fixa"}
+                  {form.id === null
+                    ? "Nova despesa fixa"
+                    : "Editar despesa fixa"}
                 </p>
                 <Button
                   type="button"
@@ -237,7 +245,10 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
                     </SelectTrigger>
                     <SelectContent>
                       {spendingAccounts.map((account) => (
-                        <SelectItem key={account.id} value={account.id.toString()}>
+                        <SelectItem
+                          key={account.id}
+                          value={account.id.toString()}
+                        >
                           {account.name}
                         </SelectItem>
                       ))}
@@ -377,7 +388,11 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
             Fechar
           </Button>
         </DialogFooter>

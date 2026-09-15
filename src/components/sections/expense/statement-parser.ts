@@ -2,7 +2,7 @@
 // spreadsheet (CSV or xlsx). Unlike the B3 reports there is no single known
 // layout, so columns are auto-detected by header name and the caller can
 // override the guess with an explicit mapping when detection fails.
-import * as XLSX from "xlsx";
+import type * as XLSX from "xlsx";
 import {
   asString,
   decodeUtf8OrCp1252,
@@ -87,13 +87,23 @@ function detectColumn(
   return undefined;
 }
 
+/**
+ * SheetJS is ~1 MB and only ever needed once a spreadsheet has been picked, so
+ * it is loaded on that first parse instead of riding along with the page.
+ * The same arrangement `pdf-text.ts` uses for pdfjs.
+ */
+async function loadXlsx(): Promise<typeof XLSX> {
+  return await import("xlsx");
+}
+
 function sheetRecords(
+  xlsx: typeof XLSX,
   workbook: XLSX.WorkBook,
   raw: boolean,
 ): Record<string, unknown>[] {
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error("Planilha vazia");
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(
+  return xlsx.utils.sheet_to_json<Record<string, unknown>>(
     workbook.Sheets[sheetName]!,
     { defval: null, raw },
   );
@@ -110,14 +120,18 @@ function sheetRecords(
  * -4590. Decoding explicitly and keeping cells raw hands both jobs to
  * parseBrDate / parseBrNumber, which know the BR conventions.
  */
-function readRecords(buffer: ArrayBuffer): Record<string, unknown>[] {
+async function readRecords(
+  buffer: ArrayBuffer,
+): Promise<Record<string, unknown>[]> {
+  const xlsx = await loadXlsx();
   const bytes = new Uint8Array(buffer);
   const isXlsx = bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK" zip container
   const isLegacyXls = bytes[0] === 0xd0 && bytes[1] === 0xcf; // OLE compound
 
   if (isXlsx || isLegacyXls) {
     return sheetRecords(
-      XLSX.read(buffer, { type: "array", cellDates: true }),
+      xlsx,
+      xlsx.read(buffer, { type: "array", cellDates: true }),
       false,
     );
   }
@@ -125,7 +139,8 @@ function readRecords(buffer: ArrayBuffer): Record<string, unknown>[] {
   const text = decodeUtf8OrCp1252(bytes);
   const readCsv = (fieldSeparator?: string) =>
     sheetRecords(
-      XLSX.read(text, { type: "string", raw: true, FS: fieldSeparator }),
+      xlsx,
+      xlsx.read(text, { type: "string", raw: true, FS: fieldSeparator }),
       true,
     );
 
@@ -153,11 +168,11 @@ function previewCell(value: unknown): string {
   return "";
 }
 
-export function parseStatementSpreadsheet(
+export async function parseStatementSpreadsheet(
   buffer: ArrayBuffer,
   mapping?: ColumnMapping,
-): SpreadsheetParseResult {
-  const records = readRecords(buffer);
+): Promise<SpreadsheetParseResult> {
+  const records = await readRecords(buffer);
   if (records.length === 0) {
     throw new Error("Nenhuma linha encontrada na planilha");
   }

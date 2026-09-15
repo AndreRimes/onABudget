@@ -25,14 +25,14 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { api } from "~/trpc/react";
+import { AllocationDonut, PerformanceChart } from "~/components/lazy-charts";
 import { CreateInvestmentDialog } from "~/components/sections/investment/CreateInvestmentDialog";
 import { AddDividendDialog } from "~/components/sections/investment/AddDividendDialog";
 import { ImportB3Dialog } from "~/components/sections/investment/ImportB3Dialog";
 import { CreateAssetTypeDialog } from "~/components/sections/asset-type/CreateAssetTypeDialog";
-import { AllocationDonut } from "~/components/sections/investment/AllocationDonut";
 import { HoldingsSection } from "~/components/sections/investment/HoldingsSection";
 import { InvestmentsSkeleton } from "~/components/sections/investment/InvestmentsSkeleton";
-import { PerformanceChart } from "~/components/sections/investment/PerformanceChart";
+import { ReconciliationCard } from "~/components/sections/investment/ReconciliationCard";
 import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { SummaryCards } from "~/components/sections/investment/SummaryCards";
 
@@ -66,9 +66,12 @@ export default function InvestmentsPage() {
   );
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-3xl font-bold">Investimentos</h1>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="form-label">FORM IN-01 · CARTEIRA</p>
+          <h1 className="display mt-1">INVESTIMENTOS</h1>
+        </div>
 
         {/* One primary action; the rest live behind a single overflow trigger
             so the row no longer wraps into four equal-weight buttons. */}
@@ -137,7 +140,7 @@ export default function InvestmentsPage() {
         <Card className="border-destructive/50 bg-destructive/5">
           <CardContent className="flex flex-col items-start gap-3 py-6">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
               <div className="space-y-1 text-sm">
                 <p className="font-medium">
                   Não foi possível carregar os investimentos.
@@ -160,9 +163,9 @@ export default function InvestmentsPage() {
       ) : (
         <>
           {snapshot.issues.length > 0 && (
-            <Card className="border-amber-500/50 bg-amber-500/5">
+            <Card className="bg-highlight/50">
               <CardContent className="flex items-start gap-3 py-4">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
                 <div className="space-y-1 text-sm">
                   {snapshot.issues.map((issue) => (
                     <p key={issue.assetName} className="text-muted-foreground">
@@ -175,6 +178,8 @@ export default function InvestmentsPage() {
           )}
 
           <SummaryCards summary={snapshot.summary} />
+
+          <ReconciliationCard reconciliation={snapshot.reconciliation} />
 
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">

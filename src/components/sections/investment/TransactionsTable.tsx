@@ -38,6 +38,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { api, type RouterOutputs } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 import { EditTransactionDialog } from "./EditTransactionDialog";
 import { toDisplayDate } from "./date-input";
 import { formatCurrency } from "./format";
@@ -61,7 +62,7 @@ export function TransactionsTable({ assetName }: { assetName: string }) {
       onSuccess: () => {
         void utils.investments.getByAssetName.invalidate();
         void utils.investments.getAllFromUser.invalidate();
-        void utils.investments.getPortfolioSnapshot.invalidate();
+        void invalidatePortfolio(utils);
         toast.success("Transação excluída");
         setDeleting(null);
       },
@@ -86,7 +87,7 @@ export function TransactionsTable({ assetName }: { assetName: string }) {
             ))}
           </div>
         ) : !transactions?.length ? (
-          <p className="py-6 text-center text-muted-foreground">
+          <p className="text-muted-foreground py-6 text-center">
             Nenhuma transação registrada
           </p>
         ) : (

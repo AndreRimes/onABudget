@@ -60,8 +60,12 @@ const NOISE_WORDS = new Set([
 
 /**
  * Reduces a statement description to a stable merchant key, so that
- * "Compra no débito - IFOOD *REST SAO JOAO 03/07" and
- * "PIX ENVIADO IFOOD 12/08" both collapse onto "IFOOD".
+ * "Compra no débito - PADARIA SAO JOAO 03/07" and
+ * "PIX ENVIADO PADARIA SAO JOAO" both collapse onto "PADARIA SAO JOAO".
+ *
+ * The key is the first three meaningful tokens, not the first one: a marketplace
+ * line like "IFOOD *REST SAO JOAO" keeps its sub-merchant ("IFOOD REST SAO")
+ * rather than collapsing every order placed through one app onto a single key.
  *
  * Returns "" when nothing meaningful survives, in which case no suggestion is
  * made rather than a bad one.

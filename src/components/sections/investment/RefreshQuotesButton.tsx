@@ -4,6 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 
 /**
  * Forces the quote refresh that otherwise only happens on the cache TTL, so a
@@ -20,7 +21,7 @@ export function RefreshQuotesButton({ assetName }: { assetName?: string }) {
     onSuccess: async (result) => {
       // Awaited so the button keeps spinning until the refetched snapshot is
       // on screen — settling earlier would flash the old numbers as "updated".
-      await utils.investments.getPortfolioSnapshot.invalidate();
+      await invalidatePortfolio(utils);
 
       const time = new Date(result.refreshedAt).toLocaleTimeString("pt-BR", {
         hour: "2-digit",
@@ -53,7 +54,9 @@ export function RefreshQuotesButton({ assetName }: { assetName?: string }) {
       onClick={() => mutate(assetName ? { assetName } : undefined)}
       title="Busca o preço atual na API, ignorando o cache"
     >
-      <RefreshCw className={`mr-2 h-4 w-4 ${isPending ? "animate-spin" : ""}`} />
+      <RefreshCw
+        className={`mr-2 h-4 w-4 ${isPending ? "animate-spin" : ""}`}
+      />
       {isPending
         ? "Atualizando..."
         : assetName

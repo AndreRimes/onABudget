@@ -7,12 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "~/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -28,7 +23,6 @@ import {
 import { DeleteAssetDialog } from "~/components/sections/investment/DeleteAssetDialog";
 import { DividendsTable } from "~/components/sections/investment/DividendsTable";
 import { EditFixedIncomeDialog } from "~/components/sections/investment/EditFixedIncomeDialog";
-import { PerformanceChart } from "~/components/sections/investment/PerformanceChart";
 import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { RenameAssetDialog } from "~/components/sections/investment/RenameAssetDialog";
 import { TransactionsTable } from "~/components/sections/investment/TransactionsTable";
@@ -40,6 +34,7 @@ import {
   gainTone,
 } from "~/components/sections/investment/format";
 import { api } from "~/trpc/react";
+import { PerformanceChart } from "~/components/lazy-charts";
 
 type TimeRange = "1d" | "5d" | "1mo" | "6mo" | "1y" | "max";
 
@@ -81,7 +76,7 @@ function Stat({
           {value}
         </div>
         {hint && (
-          <p className="text-xs text-muted-foreground tabular-nums">{hint}</p>
+          <p className="text-muted-foreground text-xs tabular-nums">{hint}</p>
         )}
       </CardContent>
     </Card>
@@ -111,18 +106,20 @@ export default function AssetDetailPage() {
   const holding = snapshot?.holdings[0];
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <Link
             href="/dashboard/investments"
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm"
           >
             <ArrowLeft className="h-4 w-4" />
             Investimentos
           </Link>
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-3xl font-bold">{assetName}</h1>
+            <h1 className="display text-3xl md:text-4xl">
+              {holding?.label ?? assetName}
+            </h1>
             {holding && (
               <>
                 <Badge variant="outline">{holding.assetTypeName}</Badge>
@@ -130,6 +127,13 @@ export default function AssetDetailPage() {
               </>
             )}
           </div>
+          {/* The code stays visible even when a readable name leads: it is
+              the identifier the ledger, the provider and the CVM all use. */}
+          {holding?.label && (
+            <p className="text-muted-foreground font-mono text-xs">
+              {assetName}
+            </p>
+          )}
           {holding && <FixedIncomeBadges holding={holding} />}
         </div>
 
@@ -179,7 +183,7 @@ export default function AssetDetailPage() {
         <Card className="border-destructive/50 bg-destructive/5">
           <CardContent className="flex flex-col items-start gap-3 py-6">
             <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
               <div className="space-y-1 text-sm">
                 <p className="font-medium">
                   Não foi possível carregar este ativo.
@@ -210,9 +214,9 @@ export default function AssetDetailPage() {
       ) : (
         <>
           {snapshot.issues.length > 0 && (
-            <Card className="border-amber-500/50 bg-amber-500/5">
+            <Card className="bg-highlight/50">
               <CardContent className="flex items-start gap-3 py-4">
-                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
                 <div className="space-y-1 text-sm">
                   {snapshot.issues.map((issue) => (
                     <p key={issue.assetName} className="text-muted-foreground">

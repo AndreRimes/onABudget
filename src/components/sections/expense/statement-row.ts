@@ -19,6 +19,8 @@ export interface ParsedStatementRow {
   fitId: string | null;
   /** OFX `<ACCTID>`, used to namespace the FITID (only unique per account). */
   acctId: string | null;
+  /** Category suggested by Pluggy. File imports leave this unset. */
+  providerCategory?: string | null;
 }
 
 export interface StatementParseResult {

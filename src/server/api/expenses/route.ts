@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { accountRepository } from "../accounts/repository";
+import { categoryRepository } from "../category/repository";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import {
   createRecurring,
@@ -17,6 +18,8 @@ import {
   getAllExpensesByUser,
   getExpenseById,
   getExpenseMonths,
+  getMonthlyExpenseSummary,
+  getRecentExpenses,
   ownsExpense,
   updateExpense,
 } from "./repository";
@@ -28,12 +31,15 @@ import {
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida");
 
-const dateRange = z
-  .object({
-    startDate: z.string(),
-    endDate: z.string(),
-  })
-  .optional();
+const dateRangeShape = z.object({
+  startDate: z.string().max(32),
+  endDate: z.string().max(32),
+});
+
+const dateRange = dateRangeShape.optional();
+
+/** For the procedures that aggregate: an unbounded window makes no sense. */
+const requiredDateRange = dateRangeShape;
 
 /** Throws unless the checking account exists and belongs to the caller. */
 async function assertOwnsAccount(userId: string, accountId: number) {
@@ -41,6 +47,16 @@ async function assertOwnsAccount(userId: string, accountId: number) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Conta inválida",
+    });
+  }
+}
+
+/** Throws unless every category exists and belongs to the caller. */
+async function assertOwnsCategories(userId: string, categoryIds: number[]) {
+  if (!(await categoryRepository.ownsAll(userId, categoryIds))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Categoria inválida",
     });
   }
 }
@@ -63,11 +79,12 @@ export const expensesRouter = createTRPCRouter({
         amount: z.number().min(0.01),
         categoryId: z.number(),
         date: isoDate,
-        description: z.string().optional(),
+        description: z.string().max(500).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       await assertOwnsAccount(ctx.session.user.id, input.accountId);
+      await assertOwnsCategories(ctx.session.user.id, [input.categoryId]);
       return await createExpense({
         checkingAccountId: input.accountId,
         amount: input.amount,
@@ -98,6 +115,36 @@ export const expensesRouter = createTRPCRouter({
       );
     }),
 
+  /**
+   * Per-month, per-category totals for a window. What the dashboard's cards
+   * and both of its charts are built from — one grouped scan instead of
+   * shipping every expense row to the browser to be summed there.
+   */
+  getMonthlySummary: protectedProcedure
+    .input(z.object({ dateRange: requiredDateRange }))
+    .query(async ({ ctx, input }) => {
+      return await getMonthlyExpenseSummary(
+        ctx.session.user.id,
+        input.dateRange,
+      );
+    }),
+
+  /** Newest expenses in a window, for the dashboard's "recent" table. */
+  getRecent: protectedProcedure
+    .input(
+      z.object({
+        dateRange: requiredDateRange,
+        limit: z.number().int().min(1).max(50),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      return await getRecentExpenses(
+        ctx.session.user.id,
+        input.dateRange,
+        input.limit,
+      );
+    }),
+
   /** Months with spending, for the period picker. Cheap: one grouped scan. */
   getMonths: protectedProcedure
     .input(z.object({ accountId: z.number().optional() }).optional())
@@ -118,7 +165,7 @@ export const expensesRouter = createTRPCRouter({
         id: z.number(),
         accountId: z.number().optional(),
         categoryId: z.number().optional(),
-        description: z.string().optional(),
+        description: z.string().max(500).optional(),
         amount: z.number().min(0.01).optional(),
         date: isoDate.optional(),
       }),
@@ -128,6 +175,9 @@ export const expensesRouter = createTRPCRouter({
       // Moving an expense to another account requires owning the target too.
       if (input.accountId !== undefined) {
         await assertOwnsAccount(ctx.session.user.id, input.accountId);
+      }
+      if (input.categoryId !== undefined) {
+        await assertOwnsCategories(ctx.session.user.id, [input.categoryId]);
       }
       return await updateExpense(input.id, {
         checkingAccountId: input.accountId,
@@ -152,7 +202,7 @@ export const expensesRouter = createTRPCRouter({
     .input(
       z.object({
         rows: z.array(statementRowSchema).max(5000),
-        institution: z.string().default(""),
+        institution: z.string().max(200).default(""),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -167,12 +217,21 @@ export const expensesRouter = createTRPCRouter({
     .input(
       z.object({
         accountId: z.number(),
-        categoryByHash: z.record(z.string(), z.number()),
-        ignoredHashes: z.array(z.string()).default([]),
+        categoryByHash: z.record(z.string().max(200), z.number()),
+        pluggyCategoryHashes: z
+          .array(z.string().max(200))
+          .max(5000)
+          .default([]),
+        ignoredHashes: z.array(z.string().max(200)).max(5000).default([]),
         rows: z.array(statementRowSchema).max(5000),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await assertOwnsAccount(ctx.session.user.id, input.accountId);
+      await assertOwnsCategories(
+        ctx.session.user.id,
+        Object.values(input.categoryByHash),
+      );
       return await importStatementRows({
         userId: ctx.session.user.id,
         ...input,
@@ -194,7 +253,7 @@ export const expensesRouter = createTRPCRouter({
       z.object({
         accountId: z.number(),
         categoryId: z.number(),
-        description: z.string().min(1),
+        description: z.string().max(500).min(1),
         amount: z.number().min(0.01),
         dayOfMonth: z.number().int().min(1).max(31),
         startMonth: z.string().regex(/^\d{4}-\d{2}$/),
@@ -206,6 +265,7 @@ export const expensesRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       await assertOwnsAccount(ctx.session.user.id, input.accountId);
+      await assertOwnsCategories(ctx.session.user.id, [input.categoryId]);
       return await createRecurring(ctx.session.user.id, {
         checkingAccountId: input.accountId,
         categoryId: input.categoryId,
@@ -223,7 +283,7 @@ export const expensesRouter = createTRPCRouter({
         id: z.number(),
         accountId: z.number().optional(),
         categoryId: z.number().optional(),
-        description: z.string().min(1).optional(),
+        description: z.string().max(500).min(1).optional(),
         amount: z.number().min(0.01).optional(),
         dayOfMonth: z.number().int().min(1).max(31).optional(),
         startMonth: z
@@ -247,6 +307,9 @@ export const expensesRouter = createTRPCRouter({
       }
       if (accountId !== undefined) {
         await assertOwnsAccount(ctx.session.user.id, accountId);
+      }
+      if (rest.categoryId !== undefined) {
+        await assertOwnsCategories(ctx.session.user.id, [rest.categoryId]);
       }
       return await updateRecurring(ctx.session.user.id, id, {
         ...rest,

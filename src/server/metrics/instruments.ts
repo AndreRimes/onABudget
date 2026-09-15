@@ -99,8 +99,21 @@ export const trpcRequestsInFlight = defineMetric(
 
 /* -------------------------------------------------- external market data -- */
 
-export type UpstreamProvider = "brapi" | "bcb";
-export type UpstreamOperation = "quote" | "candles" | "search" | "cdi";
+export type UpstreamProvider = "brapi" | "bcb" | "pluggy";
+export type UpstreamOperation =
+  | "quote"
+  | "candles"
+  | "search"
+  | "cdi"
+  // Any BCB SGS series pulled through the generic fetcher (IPCA, poupança).
+  // Distinct from "cdi", which is the dedicated daily-CDI call.
+  | "benchmark"
+  | "auth"
+  | "items"
+  | "bank_accounts"
+  | "bank_transactions"
+  | "investments"
+  | "investment_transactions";
 
 /**
  * Labelled by provider/operation and never by symbol: a 60-holding portfolio

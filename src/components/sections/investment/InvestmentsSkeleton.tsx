@@ -24,7 +24,7 @@ export function InvestmentsSkeleton() {
             <Skeleton className="h-4 w-72" />
             <div className="flex gap-2">
               {Array.from({ length: 4 }).map((_, index) => (
-                <Skeleton key={index} className="h-7 w-20 rounded-full" />
+                <Skeleton key={index} className="h-7 w-20" />
               ))}
             </div>
           </CardHeader>

@@ -30,6 +30,8 @@ type PreviewResult = RouterOutputs["expenses"]["importStatementPreview"];
 
 /** Sentinel value of the category select meaning "do not import this row". */
 const IGNORE_VALUE = "__ignore__";
+/** Accepts the category Pluggy supplied, creating it on confirmation if needed. */
+const PLUGGY_CATEGORY_VALUE = "__pluggy__";
 
 interface StatementPreviewPanelProps {
   /** Rows produced by whichever parser ran (OFX, spreadsheet, fatura). */
@@ -38,6 +40,12 @@ interface StatementPreviewPanelProps {
   parserIgnoredCount: number;
   /** Bank name, when the source carried one — used to pre-select the account. */
   institution?: string;
+  /**
+   * Target account, when the caller already knows it. The Open Finance sync
+   * does (the provider account is linked to exactly one local account), where
+   * a file import can only guess from the institution name.
+   */
+  initialAccountId?: number | null;
   onImported: () => void;
   onCancel: () => void;
 }
@@ -52,11 +60,14 @@ export function StatementPreviewPanel({
   rows,
   parserIgnoredCount,
   institution = "",
+  initialAccountId = null,
   onImported,
   onCancel,
 }: StatementPreviewPanelProps) {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [accountId, setAccountId] = useState("");
+  const [accountId, setAccountId] = useState(
+    initialAccountId != null ? initialAccountId.toString() : "",
+  );
   const [categoryByHash, setCategoryByHash] = useState<Record<string, string>>(
     {},
   );
@@ -73,17 +84,24 @@ export function StatementPreviewPanel({
       onSuccess: (result) => {
         setPreviewError(null);
         setPreview(result);
-        if (result.suggestedAccountId != null) {
+        // A known target beats a guess: only fall back to the fuzzy
+        // institution match when the caller had nothing better.
+        if (initialAccountId != null) {
+          setAccountId(initialAccountId.toString());
+        } else if (result.suggestedAccountId != null) {
           setAccountId(result.suggestedAccountId.toString());
         }
-        // Pre-fill every row with whatever the categorizer guessed.
+        // Pluggy's exact local-category match wins; a new Pluggy label is a
+        // deliberate selectable suggestion, while file imports keep the
+        // existing history/rule behavior.
         setCategoryByHash(
           Object.fromEntries(
             result.rows
               .filter((entry) => entry.status === "new" && entry.hash)
               .map((entry) => [
                 entry.hash!,
-                entry.suggestedCategoryId?.toString() ?? "",
+                entry.suggestedCategoryId?.toString() ??
+                  (entry.providerCategory ? PLUGGY_CATEGORY_VALUE : ""),
               ]),
           ),
         );
@@ -165,7 +183,12 @@ export function StatementPreviewPanel({
    */
   const applyToSameDescription = (description: string, value: string) => {
     const hashes = newRows
-      .filter((entry) => entry.row.description === description && entry.hash)
+      .filter(
+        (entry) =>
+          entry.row.description === description &&
+          entry.hash &&
+          (value !== PLUGGY_CATEGORY_VALUE || !!entry.providerCategory),
+      )
       .map((entry) => entry.hash!);
 
     setIgnoredHashes((current) => {
@@ -199,9 +222,12 @@ export function StatementPreviewPanel({
       accountId: parseInt(accountId),
       categoryByHash: Object.fromEntries(
         Object.entries(categoryByHash)
-          .filter(([, value]) => value)
+          .filter(([, value]) => value && value !== PLUGGY_CATEGORY_VALUE)
           .map(([hash, value]) => [hash, parseInt(value)]),
       ),
+      pluggyCategoryHashes: Object.entries(categoryByHash)
+        .filter(([, value]) => value === PLUGGY_CATEGORY_VALUE)
+        .map(([hash]) => hash),
       ignoredHashes: [...ignoredHashes],
       rows,
     });
@@ -209,11 +235,11 @@ export function StatementPreviewPanel({
 
   if (previewError) {
     return (
-      <div className="grid gap-2 rounded-lg border border-destructive/50 p-3">
-        <p className="text-sm font-medium text-destructive">
+      <div className="border-destructive/50 grid gap-2 border-2 p-3">
+        <p className="text-destructive text-sm font-medium">
           Não consegui analisar os lançamentos
         </p>
-        <p className="font-mono text-xs break-words text-muted-foreground">
+        <p className="text-muted-foreground font-mono text-xs break-words">
           {previewError}
         </p>
         <div className="flex gap-2">
@@ -236,14 +262,14 @@ export function StatementPreviewPanel({
   if (isPreviewing || !preview) {
     return (
       <div className="grid gap-2">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-muted-foreground text-sm">
           {isPreviewing
             ? `Analisando ${rows.length} lançamentos...`
             : `${rows.length} lançamentos lidos do arquivo.`}
         </p>
         {(isSlow || !isPreviewing) && (
-          <div className="grid gap-2 rounded-lg border border-amber-500/40 p-3">
-            <p className="text-sm text-amber-600 dark:text-amber-500">
+          <div className="border-foreground bg-highlight/50 grid gap-2 border-2 p-3">
+            <p className="text-sm font-bold">
               {isSlow
                 ? "Está demorando mais que o normal. O servidor pode não ter respondido."
                 : "A análise não foi iniciada."}
@@ -280,7 +306,7 @@ export function StatementPreviewPanel({
 
   return (
     <>
-      <p className="text-sm text-muted-foreground">
+      <p className="text-muted-foreground text-sm">
         {newRows.length} lançamento{newRows.length !== 1 ? "s" : ""} novo
         {newRows.length !== 1 ? "s" : ""}, {counts.duplicate} duplicado
         {counts.duplicate !== 1 ? "s" : ""}
@@ -296,7 +322,10 @@ export function StatementPreviewPanel({
         <Select value={accountId} onValueChange={setAccountId}>
           <SelectTrigger
             id="previewAccount"
-            className={cn("w-full sm:w-72", !accountId && "border-amber-500/60")}
+            className={cn(
+              "w-full sm:w-72",
+              !accountId && "border-foreground bg-highlight/60",
+            )}
           >
             <SelectValue placeholder="Selecione a conta" />
           </SelectTrigger>
@@ -310,20 +339,20 @@ export function StatementPreviewPanel({
         </Select>
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        As categorias são sugeridas a partir do seu histórico. Escolher a
-        categoria de um lançamento aplica a todos com a mesma descrição, e o app
-        memoriza a escolha para as próximas importações.
+      <p className="text-muted-foreground text-xs">
+        O Pluggy sugere categorias quando disponível; seu histórico completa as
+        demais. Escolher uma categoria aplica a todos com a mesma descrição, e o
+        app memoriza a escolha para as próximas importações.
       </p>
 
       {missingCategoryCount > 0 && (
-        <p className="text-sm text-amber-600 dark:text-amber-500">
+        <p className="text-sm font-bold">
           {missingCategoryCount} lançamento
           {missingCategoryCount !== 1 ? "s" : ""} ainda sem categoria.
         </p>
       )}
 
-      <div className="max-h-96 overflow-y-auto rounded-lg border">
+      <div className="max-h-96 overflow-y-auto border-2">
         <Table>
           <TableHeader>
             <TableRow>
@@ -359,40 +388,52 @@ export function StatementPreviewPanel({
                   </TableCell>
                   <TableCell>
                     {isNew && entry.hash ? (
-                      <Select
-                        value={
-                          isIgnored
-                            ? IGNORE_VALUE
-                            : (categoryByHash[entry.hash] ?? "")
-                        }
-                        onValueChange={(value) =>
-                          applyToSameDescription(entry.row.description, value)
-                        }
-                      >
-                        <SelectTrigger
-                          className={cn(
-                            "w-44",
-                            !categoryByHash[entry.hash] &&
-                              !isIgnored &&
-                              "border-amber-500/60",
-                          )}
+                      <div className="grid gap-1">
+                        {entry.providerCategory && (
+                          <span className="text-muted-foreground text-xs">
+                            Pluggy: {entry.providerCategory}
+                          </span>
+                        )}
+                        <Select
+                          value={
+                            isIgnored
+                              ? IGNORE_VALUE
+                              : (categoryByHash[entry.hash] ?? "")
+                          }
+                          onValueChange={(value) =>
+                            applyToSameDescription(entry.row.description, value)
+                          }
                         >
-                          <SelectValue placeholder="Categoria" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {categories?.map((category) => (
-                            <SelectItem
-                              key={category.id}
-                              value={category.id.toString()}
-                            >
-                              {category.name}
+                          <SelectTrigger
+                            className={cn(
+                              "w-44",
+                              !categoryByHash[entry.hash] &&
+                                !isIgnored &&
+                                "border-foreground bg-highlight/60",
+                            )}
+                          >
+                            <SelectValue placeholder="Categoria" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {entry.providerCategory && (
+                              <SelectItem value={PLUGGY_CATEGORY_VALUE}>
+                                Usar categoria Pluggy
+                              </SelectItem>
+                            )}
+                            {categories?.map((category) => (
+                              <SelectItem
+                                key={category.id}
+                                value={category.id.toString()}
+                              >
+                                {category.name}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value={IGNORE_VALUE}>
+                              — Não é despesa —
                             </SelectItem>
-                          ))}
-                          <SelectItem value={IGNORE_VALUE}>
-                            — Não é despesa —
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     ) : (
                       <span className="text-xs">—</span>
                     )}

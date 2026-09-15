@@ -1,19 +1,16 @@
 "use client";
 
-import { format, parseISO, startOfMonth } from "date-fns";
+import {
+  eachDayOfInterval,
+  endOfMonth,
+  format,
+  isBefore,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Label,
-  Pie,
-  PieChart,
-  ReferenceLine,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { MoreHorizontal, Pencil, Target, Trash2 } from "lucide-react";
 import { CreateCategoryDialog } from "~/components/sections/category/CreateCategoryDialog";
 import { CreateExpenseDialog } from "~/components/sections/expense/CreateExpenseDialog";
@@ -59,12 +56,6 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
-import type { ChartConfig } from "~/components/ui/chart";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "~/components/ui/chart";
 import {
   Table,
   TableBody,
@@ -74,8 +65,11 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { isSpendingAccount } from "~/lib/account-type";
+import { formatCurrency } from "~/lib/format";
 import { stripAccents } from "~/lib/parse";
+import { useDebouncedValue } from "~/lib/use-debounced-value";
 import { api } from "~/trpc/react";
+import { ExpenseCharts } from "~/components/lazy-charts";
 
 export default function CheckingPage() {
   const [filters, setFilters] = useState<ExpenseFilterState>(
@@ -116,6 +110,11 @@ export default function CheckingPage() {
   // Category and text filters are applied here rather than server-side: the
   // period query has already narrowed the rows to something small, and doing it
   // in the client keeps typing in the search box instant.
+  // Debounced: the filtering below feeds every total, both charts and the
+  // whole table, so re-running it on each keystroke re-rendered all of that
+  // per character typed. A short pause is not noticeable; the stutter was.
+  const searchTerm = useDebouncedValue(filters.search, 200);
+
   const allExpenses = useMemo(() => {
     const rows =
       selectedAccount === "all"
@@ -124,7 +123,7 @@ export default function CheckingPage() {
 
     const categoryIds = new Set(filters.categoryIds);
     // Accent-insensitive, so "acai" finds "AÇAÍ".
-    const term = stripAccents(filters.search).trim().toLowerCase();
+    const term = stripAccents(searchTerm).trim().toLowerCase();
 
     if (categoryIds.size === 0 && term === "") return rows;
 
@@ -143,7 +142,7 @@ export default function CheckingPage() {
     expensesFromUser,
     expensesFromAccount,
     filters.categoryIds,
-    filters.search,
+    searchTerm,
   ]);
 
   // Calculate statistics
@@ -177,22 +176,54 @@ export default function CheckingPage() {
       {} as Record<string, number>,
     );
 
-    const data = Object.entries(expensesByPeriod)
-      .map(([groupKey, amount]) => ({
-        date: groupKey,
-        amount: Number(amount.toFixed(2)),
-        formattedDate: isDailyChart
-          ? format(parseISO(groupKey), "dd/MM", { locale: ptBR })
-          : format(parseISO(`${groupKey}-01`), "MMM/yy", { locale: ptBR }),
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    if (Object.keys(expensesByPeriod).length === 0) return [];
+
+    if (!isDailyChart) {
+      const data = Object.entries(expensesByPeriod)
+        .map(([groupKey, amount]) => ({
+          date: groupKey,
+          amount: Number(amount.toFixed(2)),
+          formattedDate: format(parseISO(`${groupKey}-01`), "MMM/yy", {
+            locale: ptBR,
+          }),
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      let cumulative = 0;
+      return data.map((item) => {
+        cumulative += item.amount;
+        return { ...item, cumulative: Number(cumulative.toFixed(2)) };
+      });
+    }
+
+    // Every day of the month, not only the ones that had a transaction. The
+    // axis is categorical, so plotting just the spending days squeezes the
+    // gaps shut: the running total then climbs on a timeline that is not the
+    // month's, and the line stops at the last purchase instead of reaching
+    // month end. Days with no spending hold the previous total, flat.
+    const monthStart = startOfMonth(parseISO(`${filters.month}-01`));
+    const monthEnd = endOfMonth(monthStart);
+    const today = startOfDay(new Date());
+    // Only truncate a month still in progress — a future month has no "today"
+    // inside it and would leave an empty interval.
+    const lastDay =
+      isBefore(today, monthEnd) && !isBefore(today, monthStart)
+        ? today
+        : monthEnd;
 
     let cumulative = 0;
-    return data.map((item) => {
-      cumulative += item.amount;
-      return { ...item, cumulative: Number(cumulative.toFixed(2)) };
+    return eachDayOfInterval({ start: monthStart, end: lastDay }).map((day) => {
+      const groupKey = format(day, "yyyy-MM-dd");
+      const amount = Number((expensesByPeriod[groupKey] ?? 0).toFixed(2));
+      cumulative += amount;
+      return {
+        date: groupKey,
+        amount,
+        formattedDate: format(day, "dd/MM", { locale: ptBR }),
+        cumulative: Number(cumulative.toFixed(2)),
+      };
     });
-  }, [allExpenses, isDailyChart]);
+  }, [allExpenses, isDailyChart, filters.month]);
 
   // Distinct months present, used to scale a monthly budget over "Tudo".
   const distinctMonths = useMemo(
@@ -247,7 +278,7 @@ export default function CheckingPage() {
   const { mutate: createBudget, isPending: isCreatingBudget } =
     api.budget.create.useMutation({
       onSuccess: () => {
-        utils.budget.getLatest.invalidate();
+        void utils.budget.getLatest.invalidate();
         toast.success("Orçamento definido!");
         setBudgetDialogOpen(false);
         setBudgetInput("");
@@ -258,7 +289,7 @@ export default function CheckingPage() {
   const { mutate: updateBudget, isPending: isUpdatingBudget } =
     api.budget.update.useMutation({
       onSuccess: () => {
-        utils.budget.getLatest.invalidate();
+        void utils.budget.getLatest.invalidate();
         toast.success("Orçamento atualizado!");
         setBudgetDialogOpen(false);
         setBudgetInput("");
@@ -302,8 +333,8 @@ export default function CheckingPage() {
   const { mutate: deleteExpense, isPending: isDeleting } =
     api.expenses.delete.useMutation({
       onSuccess: () => {
-        utils.expenses.getAllFromUser.invalidate();
-        utils.expenses.getAllFromAccount.invalidate();
+        void utils.expenses.getAllFromUser.invalidate();
+        void utils.expenses.getAllFromAccount.invalidate();
         toast.success("Despesa removida com sucesso!");
         setDeletingExpenseId(null);
       },
@@ -324,9 +355,7 @@ export default function CheckingPage() {
     const expensesByCategory = allExpenses.reduce(
       (acc, expense) => {
         const categoryId = expense.expense_categories.id;
-        if (!acc[categoryId]) {
-          acc[categoryId] = 0;
-        }
+        acc[categoryId] ??= 0;
         acc[categoryId] += expense.expenses.amount;
         return acc;
       },
@@ -339,7 +368,7 @@ export default function CheckingPage() {
         return {
           category: categoryInfo?.name || "Sem categoria",
           amount: Number(amount.toFixed(2)),
-          fill: categoryInfo?.color || "hsl(var(--muted))",
+          fill: categoryInfo?.color || "var(--muted)",
         };
       })
       .sort((a, b) => b.amount - a.amount);
@@ -349,31 +378,13 @@ export default function CheckingPage() {
     return categoryChartData.reduce((sum, item) => sum + item.amount, 0);
   }, [categoryChartData]);
 
-  const areaChartConfig = {
-    cumulative: {
-      label: "Gasto Acumulado",
-      color: "hsl(var(--primary))",
-    },
-    amount: {
-      label: "Gasto no Mês",
-      color: "hsl(var(--primary))",
-    },
-    budget: {
-      label: "Orçamento",
-      color: "hsl(var(--destructive))",
-    },
-  } satisfies ChartConfig;
-
-  const pieChartConfig = {
-    amount: {
-      label: "Valor",
-    },
-  } satisfies ChartConfig;
-
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Checking Accounts</h1>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="form-label">FORM CC-01 · LANÇAMENTOS</p>
+          <h1 className="display mt-1">CONTA CORRENTE</h1>
+        </div>
 
         <div className="flex gap-3">
           {/* Controlled from the menu below: a trigger nested in the dropdown
@@ -442,10 +453,7 @@ export default function CheckingPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {new Intl.NumberFormat("pt-BR", {
-                style: "currency",
-                currency: "BRL",
-              }).format(stats.total)}
+              {formatCurrency(stats.total)}
             </div>
             <p className="text-muted-foreground text-xs">
               {periodLabel(filters)}
@@ -470,10 +478,7 @@ export default function CheckingPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {new Intl.NumberFormat("pt-BR", {
-                style: "currency",
-                currency: "BRL",
-              }).format(stats.average)}
+              {formatCurrency(stats.average)}
             </div>
           </CardContent>
         </Card>
@@ -544,14 +549,20 @@ export default function CheckingPage() {
                   <span className="text-2xl font-bold">
                     {budgetUsedPercent.toFixed(0)}%
                   </span>
-                  <Badge variant={isOverBudget ? "destructive" : "outline"}>
+                  <span
+                    className={`stamp ${
+                      isOverBudget
+                        ? "border-destructive text-destructive"
+                        : "border-profit text-profit"
+                    }`}
+                  >
                     {isOverBudget ? "Acima" : "Dentro"}
-                  </Badge>
+                  </span>
                 </div>
-                <div className="bg-secondary h-2 w-full overflow-hidden rounded-full">
+                <div className="border-foreground bg-muted h-3 w-full overflow-hidden border-2">
                   <div
-                    className={`h-full rounded-full transition-all ${
-                      isOverBudget ? "bg-red-500" : "bg-green-500"
+                    className={`h-full transition-all ${
+                      isOverBudget ? "bg-loss" : "bg-profit"
                     }`}
                     style={{
                       width: `${Math.min(budgetUsedPercent, 100)}%`,
@@ -560,8 +571,8 @@ export default function CheckingPage() {
                 </div>
                 <p className="text-muted-foreground text-xs">
                   {isOverBudget
-                    ? `${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Math.abs(budgetRemaining))} acima do orçamento`
-                    : `${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(budgetRemaining)} restantes de ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(budgetAmount)}`}
+                    ? `${formatCurrency(Math.abs(budgetRemaining))} acima do orçamento`
+                    : `${formatCurrency(budgetRemaining)} restantes de ${formatCurrency(budgetAmount)}`}
                 </p>
               </div>
             ) : (
@@ -574,227 +585,13 @@ export default function CheckingPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {isDailyChart ? "Evolução de Gastos" : "Gastos por Mês"}
-            </CardTitle>
-            <CardDescription>
-              {isDailyChart
-                ? "Acumulado ao longo do mês"
-                : "Total gasto em cada mês do período"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {chartData.length > 0 ? (
-              <ChartContainer
-                config={areaChartConfig}
-                className="h-87.5 w-full"
-              >
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient
-                      id="fillCumulative"
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="1"
-                    >
-                      <stop offset="5%" stopColor="#7f22fe" stopOpacity={0.8} />
-                      <stop
-                        offset="95%"
-                        stopColor="#7f22fe"
-                        stopOpacity={0.1}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="formattedDate"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    minTickGap={32}
-                  />
-                  <YAxis
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tickFormatter={(value) =>
-                      new Intl.NumberFormat("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                        minimumFractionDigits: 0,
-                      }).format(value)
-                    }
-                  />
-                  <ChartTooltip
-                    cursor={false}
-                    content={
-                      <ChartTooltipContent
-                        indicator="line"
-                        labelFormatter={(value, payload) => {
-                          const entry = payload?.[0] as
-                            | { payload?: { date?: string } }
-                            | undefined;
-                          const date = entry?.payload?.date;
-                          if (!date) return String(value);
-                          return isDailyChart
-                            ? format(parseISO(date), "dd/MM/yyyy", {
-                                locale: ptBR,
-                              })
-                            : format(parseISO(`${date}-01`), "MMMM 'de' yyyy", {
-                                locale: ptBR,
-                              });
-                        }}
-                        formatter={(value) =>
-                          new Intl.NumberFormat("pt-BR", {
-                            style: "currency",
-                            currency: "BRL",
-                          }).format(value as number)
-                        }
-                      />
-                    }
-                  />
-                  <Area
-                    dataKey={isDailyChart ? "cumulative" : "amount"}
-                    type="monotone"
-                    fill="url(#fillCumulative)"
-                    stroke="hsl(var(--primary))"
-                    strokeWidth={2}
-                  />
-                  {/* Always the monthly figure: in month mode the cumulative
-                      line is compared against it, in multi-month mode each
-                      month's own total is. */}
-                  {monthlyBudget > 0 && (
-                    <ReferenceLine
-                      y={monthlyBudget}
-                      stroke="hsl(var(--destructive))"
-                      strokeDasharray="6 4"
-                      strokeWidth={2}
-                    >
-                      <Label
-                        value={`Orçamento: ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0 }).format(monthlyBudget)}`}
-                        position="insideTopRight"
-                        className="fill-destructive text-xs font-medium"
-                      />
-                    </ReferenceLine>
-                  )}
-                </AreaChart>
-              </ChartContainer>
-            ) : (
-              <div className="text-muted-foreground flex h-87.5 items-center justify-center">
-                Nenhum dado disponível para o período selecionado
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Gastos por Categoria</CardTitle>
-            <CardDescription>
-              Distribuição de gastos por categoria
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {categoryChartData.length > 0 ? (
-              <ChartContainer config={pieChartConfig} className="h-87.5 w-full">
-                <PieChart>
-                  <ChartTooltip
-                    cursor={false}
-                    content={
-                      <ChartTooltipContent
-                        hideLabel
-                        formatter={(value, name, item) => (
-                          <>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                                style={{
-                                  backgroundColor: item.payload.fill,
-                                }}
-                              />
-                              <span className="font-medium">
-                                {item.payload.category}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <span className="text-muted-foreground">
-                                Valor:
-                              </span>
-                              <span className="font-bold text-white">
-                                {new Intl.NumberFormat("pt-BR", {
-                                  style: "currency",
-                                  currency: "BRL",
-                                }).format(value as number)}
-                              </span>
-                              <span className="text-white">
-                                (
-                                {(
-                                  ((value as number) / totalExpenses) *
-                                  100
-                                ).toFixed(1)}
-                                %)
-                              </span>
-                            </div>
-                          </>
-                        )}
-                      />
-                    }
-                  />
-                  <Pie
-                    data={categoryChartData}
-                    dataKey="amount"
-                    nameKey="category"
-                    innerRadius={60}
-                    strokeWidth={5}
-                  >
-                    <Label
-                      content={({ viewBox }) => {
-                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          return (
-                            <text
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                            >
-                              <tspan
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                className="fill-white text-3xl font-bold"
-                              >
-                                {new Intl.NumberFormat("pt-BR", {
-                                  style: "currency",
-                                  currency: "BRL",
-                                  minimumFractionDigits: 0,
-                                }).format(totalExpenses)}
-                              </tspan>
-                              <tspan
-                                x={viewBox.cx}
-                                y={(viewBox.cy || 0) + 24}
-                                className="fill-white"
-                              >
-                                Total
-                              </tspan>
-                            </text>
-                          );
-                        }
-                      }}
-                    />
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            ) : (
-              <div className="text-muted-foreground flex h-87.5 items-center justify-center">
-                Nenhum dado disponível para o período selecionado
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <ExpenseCharts
+        chartData={chartData}
+        isDailyChart={isDailyChart}
+        monthlyBudget={monthlyBudget}
+        categoryChartData={categoryChartData}
+        totalExpenses={totalExpenses}
+      />
 
       <Card>
         <CardHeader>
@@ -816,7 +613,7 @@ export default function CheckingPage() {
                 : `Nenhuma despesa em ${periodLabel(filters)}`}
             </div>
           ) : (
-            <div className="rounded-md border">
+            <div className="border-2">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -846,10 +643,10 @@ export default function CheckingPage() {
                           style={{
                             borderColor:
                               expense.expense_categories.color ||
-                              "hsl(var(--muted))",
+                              "var(--muted)",
                             color:
                               expense.expense_categories.color ||
-                              "hsl(var(--muted))",
+                              "var(--muted)",
                           }}
                         >
                           {categoryMap.get(expense.expense_categories.id)
@@ -857,10 +654,7 @@ export default function CheckingPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-medium">
-                        {new Intl.NumberFormat("pt-BR", {
-                          style: "currency",
-                          currency: "BRL",
-                        }).format(expense.expenses.amount)}
+                        {formatCurrency(expense.expenses.amount)}
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-1">

@@ -268,7 +268,7 @@ export function ExpenseFilters({
         )}
 
         {value.mode === "all" && (
-          <div className="text-muted-foreground flex h-9 w-56 items-center justify-center rounded-md border px-3 text-sm">
+          <div className="text-muted-foreground flex h-9 w-56 items-center justify-center border-2 px-3 text-sm">
             Todo o período
           </div>
         )}
@@ -348,7 +348,7 @@ export function ExpenseFilters({
               onCheckedChange={() => toggleCategory(category.id)}
             >
               <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                className="border-foreground size-2.5 shrink-0 border"
                 style={{ backgroundColor: category.color }}
               />
               {category.name}

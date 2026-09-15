@@ -54,7 +54,9 @@ export function dueOccurrences(
 ): DueOccurrence[] {
   const currentMonth = todayIso.slice(0, 7);
   const lastMonth =
-    rule.endMonth && rule.endMonth < currentMonth ? rule.endMonth : currentMonth;
+    rule.endMonth && rule.endMonth < currentMonth
+      ? rule.endMonth
+      : currentMonth;
   if (rule.startMonth > lastMonth) return [];
 
   const occurrences: DueOccurrence[] = [];

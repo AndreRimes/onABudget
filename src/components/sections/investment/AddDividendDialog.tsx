@@ -28,6 +28,7 @@ import {
   type ControllableOpenProps,
 } from "~/lib/use-controllable-open";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 
 function formatDateInput(input: string): string {
   const digits = input.replace(/\D/g, "");
@@ -74,7 +75,7 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
 
   const { mutate, isPending } = api.dividends.create.useMutation({
     onSuccess: () => {
-      void utils.investments.getPortfolioSnapshot.invalidate();
+      void invalidatePortfolio(utils);
       void utils.dividends.getAllFromUser.invalidate();
       toast.success("Provento registrado com sucesso!");
       setOpen(false);
@@ -138,7 +139,10 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
                   </SelectTrigger>
                   <SelectContent>
                     {investmentAccounts.map((account) => (
-                      <SelectItem key={account.id} value={account.id.toString()}>
+                      <SelectItem
+                        key={account.id}
+                        value={account.id.toString()}
+                      >
                         {account.name}
                       </SelectItem>
                     ))}
@@ -170,11 +174,13 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(dividendTypeLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
+                    {Object.entries(dividendTypeLabels).map(
+                      ([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ),
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -198,7 +204,7 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
                 <Input
                   id="dividendPaymentDate"
                   type="text"
-                  placeholder="DD/MM/YYYY"
+                  placeholder="DD/MM/AAAA"
                   value={paymentDate}
                   onChange={(e) =>
                     setPaymentDate(formatDateInput(e.target.value))

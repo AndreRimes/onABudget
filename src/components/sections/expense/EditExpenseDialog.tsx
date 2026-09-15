@@ -42,7 +42,10 @@ interface EditExpenseDialogProps {
  * fixed amount every month — a bill that came in different needs fixing
  * without deleting and retyping it.
  */
-export function EditExpenseDialog({ expense, onClose }: EditExpenseDialogProps) {
+export function EditExpenseDialog({
+  expense,
+  onClose,
+}: EditExpenseDialogProps) {
   const [categoryId, setCategoryId] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState("");

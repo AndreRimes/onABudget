@@ -3,8 +3,10 @@ import { db } from "~/server/db";
 import {
   investmentTransactions,
   accounts,
+  assetLabels,
   assetTypes,
   dividends,
+  providerHoldings,
 } from "~/server/db/schema";
 import type { CandlePoint } from "~/server/services/brapi";
 import {
@@ -14,6 +16,11 @@ import {
 } from "~/server/services/market-cache";
 import { dividendRepository } from "../dividends/repository";
 import { BENCHMARK_IDS } from "./benchmarks";
+import {
+  reconcileHoldings,
+  type ProviderHoldingFact,
+  type Reconciliation,
+} from "./reconcile";
 import {
   computePortfolioSnapshot,
   type PortfolioSnapshot,
@@ -45,6 +52,8 @@ interface MarketTargets {
   symbols: string[];
   /** Tesouro positions, as [assetName, canonical title key]. */
   tesouro: Array<[string, string]>;
+  /** Fund positions, as [assetName, CNPJ]. Priced from the CVM quota series. */
+  funds: Array<[string, string]>;
 }
 
 /**
@@ -55,18 +64,29 @@ interface MarketTargets {
 function resolveMarketTargets(
   transactions: Pick<
     InvestmentTransaction,
-    "assetName" | "transactionType" | "quantity" | "isFixedIncome" | "tesouroTitle"
+    | "assetName"
+    | "transactionType"
+    | "quantity"
+    | "isFixedIncome"
+    | "tesouroTitle"
+    | "fundCnpj"
   >[],
 ): MarketTargets {
   const netQuantity = new Map<
     string,
-    { quantity: number; fixed: boolean; tesouroTitle: string | null }
+    {
+      quantity: number;
+      fixed: boolean;
+      tesouroTitle: string | null;
+      fundCnpj: string | null;
+    }
   >();
   for (const tx of transactions) {
     const entry = netQuantity.get(tx.assetName) ?? {
       quantity: 0,
       fixed: tx.isFixedIncome ?? false,
       tesouroTitle: tx.tesouroTitle ?? null,
+      fundCnpj: tx.fundCnpj ?? null,
     };
     entry.quantity += tx.transactionType === "BUY" ? tx.quantity : -tx.quantity;
     netQuantity.set(tx.assetName, entry);
@@ -77,12 +97,19 @@ function resolveMarketTargets(
   );
 
   return {
+    // A fund is never asked of the quote provider: its name is a CNPJ, which
+    // brapi can only ever answer "not found" to.
     symbols: held
-      .filter(([, entry]) => !entry.fixed && !entry.tesouroTitle)
+      .filter(
+        ([, entry]) => !entry.fixed && !entry.tesouroTitle && !entry.fundCnpj,
+      )
       .map(([assetName]) => assetName),
     tesouro: held
       .filter(([, entry]) => entry.tesouroTitle)
       .map(([assetName, entry]) => [assetName, entry.tesouroTitle!]),
+    funds: held
+      .filter(([, entry]) => entry.fundCnpj && !entry.tesouroTitle)
+      .map(([assetName, entry]) => [assetName, entry.fundCnpj!]),
   };
 }
 
@@ -98,6 +125,56 @@ function ledgerStart(
         : earliest,
     today,
   );
+}
+
+/**
+ * Provider-supplied facts about a user's assets: the readable label, and the
+ * quota the provider last reported (which only ever serves to pick between a
+ * fund's subclasses).
+ */
+async function assetLabelsFor(userId: string) {
+  return await db
+    .select({
+      assetName: assetLabels.assetName,
+      label: assetLabels.label,
+      providerQuota: assetLabels.providerQuota,
+    })
+    .from(assetLabels)
+    .where(eq(assetLabels.userId, userId));
+}
+
+/** What the provider last reported for each of this owner's holdings. */
+async function providerHoldingsFor(
+  userId: string,
+): Promise<ProviderHoldingFact[]> {
+  return await db
+    .select({
+      assetName: providerHoldings.assetName,
+      quantity: providerHoldings.quantity,
+      value: providerHoldings.value,
+      profit: providerHoldings.profit,
+      syncedAt: providerHoldings.syncedAt,
+    })
+    .from(providerHoldings)
+    .where(eq(providerHoldings.userId, userId));
+}
+
+/** CNPJ -> provider-reported quota, for the funds actually held. */
+function referenceQuotasFor(
+  labels: Array<{ assetName: string; providerQuota: number | null }>,
+  funds: Array<[string, string]>,
+): Map<string, number> {
+  const quotaByAsset = new Map(
+    labels
+      .filter((entry) => entry.providerQuota && entry.providerQuota > 0)
+      .map((entry) => [entry.assetName, entry.providerQuota!]),
+  );
+  const references = new Map<string, number>();
+  for (const [assetName, cnpj] of funds) {
+    const quota = quotaByAsset.get(assetName);
+    if (quota !== undefined) references.set(cnpj, quota);
+  }
+  return references;
 }
 
 const transactionColumns = {
@@ -116,6 +193,7 @@ const transactionColumns = {
   fixedIncomeRate: investmentTransactions.fixedIncomeRate,
   fixedIncomeMaturityDate: investmentTransactions.fixedIncomeMaturityDate,
   tesouroTitle: investmentTransactions.tesouroTitle,
+  fundCnpj: investmentTransactions.fundCnpj,
   sourceHash: investmentTransactions.sourceHash,
 };
 
@@ -380,19 +458,26 @@ export class InvestmentRepository {
       asOf: string | null;
     }>;
   }> {
-    const allTransactions = await this.findByUserId(userId);
     const transactions = assetName
-      ? allTransactions.filter((tx) => tx.assetName === assetName)
-      : allTransactions;
+      ? await this.findByAssetName(userId, assetName)
+      : await this.findByUserId(userId);
 
-    const { symbols, tesouro } = resolveMarketTargets(transactions);
+    const { symbols, tesouro, funds } = resolveMarketTargets(transactions);
     const today = todayIso();
     const fromDate = ledgerStart(transactions, today);
     const titleKeys = [...new Set(tesouro.map(([, titleKey]) => titleKey))];
+    const labels = await assetLabelsFor(userId);
 
-    const [quotes, tesouroByTitle] = await Promise.all([
+    const [quotes, tesouroByTitle, quotasByCnpj] = await Promise.all([
       marketCacheService.getQuotes(symbols, { force: true }),
       marketCacheService.getTesouroPrices(titleKeys, fromDate, { force: true }),
+      // Not forced: the CVM publishes once a day and the month already read
+      // today cannot have changed since. Only months still missing are fetched.
+      marketCacheService.getFundQuotas(
+        funds.map(([, cnpj]) => cnpj),
+        fromDate,
+        { referenceQuotas: referenceQuotasFor(labels, funds) },
+      ),
     ]);
 
     const results = symbols.map((symbol) => {
@@ -418,6 +503,19 @@ export class InvestmentRepository {
       });
     }
 
+    // Funds likewise: the latest published quota, which trails today by a few
+    // business days because that is when the CVM publishes it.
+    for (const [fundAsset, cnpj] of funds) {
+      const series = quotasByCnpj.get(cnpj);
+      const last = series?.[series.length - 1];
+      results.push({
+        assetName: fundAsset,
+        price: last?.close ?? null,
+        status: last ? "ok" : "unavailable",
+        asOf: last ? new Date(`${last.date}T00:00:00`).toISOString() : null,
+      });
+    }
+
     return { refreshedAt: new Date().toISOString(), quotes: results };
   }
 
@@ -437,25 +535,28 @@ export class InvestmentRepository {
     range: TimeRange = "max",
     includeSeries = true,
     assetName?: string,
-  ): Promise<PortfolioSnapshot> {
-    const [allTransactions, allDividends, allAssetTypes] = await Promise.all([
-      this.findByUserId(userId),
-      dividendRepository.findByUserId(userId),
-      db.select().from(assetTypes),
-    ]);
-
+  ): Promise<PortfolioSnapshot & { reconciliation: Reconciliation }> {
+    // Narrowed in SQL when one asset is being viewed: the detail page used to
+    // load the entire ledger and every dividend, then keep one asset's worth.
     // Narrowing here (rather than after the market fetches) also keeps the
     // quote/candle/Tesouro requests down to the single asset being viewed.
-    const transactions = assetName
-      ? allTransactions.filter((tx) => tx.assetName === assetName)
-      : allTransactions;
-    const userDividends = assetName
-      ? allDividends.filter((dividend) => dividend.assetName === assetName)
-      : allDividends;
+    const [transactions, userDividends, allAssetTypes] = await Promise.all([
+      assetName
+        ? this.findByAssetName(userId, assetName)
+        : this.findByUserId(userId),
+      assetName
+        ? dividendRepository.findByAssetName(userId, assetName)
+        : dividendRepository.findByUserId(userId),
+      db.select().from(assetTypes).where(eq(assetTypes.userId, userId)),
+    ]);
 
-    // Which assets need quotes, and which Tesouro titles need official prices.
-    const { symbols: activeMarketSymbols, tesouro: heldTesouro } =
-      resolveMarketTargets(transactions);
+    // Which assets need quotes, which Tesouro titles need official prices, and
+    // which funds need their CVM quota series.
+    const {
+      symbols: activeMarketSymbols,
+      tesouro: heldTesouro,
+      funds: heldFunds,
+    } = resolveMarketTargets(transactions);
     const tesouroTitleKeys = [
       ...new Set(heldTesouro.map(([, titleKey]) => titleKey)),
     ];
@@ -463,14 +564,37 @@ export class InvestmentRepository {
     const today = todayIso();
     const fullStart = ledgerStart(transactions, today);
 
-    const [quotes, candles, benchmarks, tesouroByTitle] = await Promise.all([
+    // Everything below is independent except the fund quotas, which need the
+    // provider's reference quota to pick a subclass — so only that one waits
+    // for the labels; the market fetches start at once.
+    const facts = Promise.all([
+      assetLabelsFor(userId),
+      providerHoldingsFor(userId),
+    ]);
+    const fundQuotas = facts.then(([labels]) =>
+      marketCacheService.getFundQuotas(
+        heldFunds.map(([, cnpj]) => cnpj),
+        fullStart,
+        { referenceQuotas: referenceQuotasFor(labels, heldFunds) },
+      ),
+    );
+    const [
+      quotes,
+      candles,
+      benchmarks,
+      tesouroByTitle,
+      [labels, providerFacts],
+      quotasByCnpj,
+    ] = await Promise.all([
       marketCacheService.getQuotes(activeMarketSymbols),
       marketCacheService.getCandles(activeMarketSymbols, fullStart),
-      // Always compute every benchmark, not just the ones currently toggled on:
-      // they are cheap once cached, and it lets the chart switch lines on and
-      // off instantly instead of refetching the whole snapshot per toggle.
+      // Always compute every benchmark, not just the ones currently toggled
+      // on: they are cheap once cached, and it lets the chart switch lines on
+      // and off instantly instead of refetching the whole snapshot per toggle.
       marketCacheService.getBenchmarks([...BENCHMARK_IDS], fullStart),
       marketCacheService.getTesouroPrices(tesouroTitleKeys, fullStart),
+      facts,
+      fundQuotas,
     ]);
 
     // Re-key the Tesouro price series by assetName so the engine can look them
@@ -481,7 +605,14 @@ export class InvestmentRepository {
       if (series) tesouroCandles.set(assetName, series);
     }
 
-    return computePortfolioSnapshot({
+    // Same for the fund quota series, which is keyed by CNPJ upstream.
+    const fundCandles = new Map<string, CandlePoint[]>();
+    for (const [assetName, cnpj] of heldFunds) {
+      const series = quotasByCnpj.get(cnpj);
+      if (series) fundCandles.set(assetName, series);
+    }
+
+    const snapshot = computePortfolioSnapshot({
       transactions: transactions.map((tx) => ({
         assetName: tx.assetName,
         assetTypeId: tx.assetTypeId,
@@ -494,6 +625,7 @@ export class InvestmentRepository {
         fixedIncomeRate: tx.fixedIncomeRate,
         fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
         tesouroTitle: tx.tesouroTitle ?? null,
+        fundCnpj: tx.fundCnpj ?? null,
       })),
       dividends: userDividends.map((dividend) => ({
         assetName: dividend.assetName,
@@ -503,14 +635,26 @@ export class InvestmentRepository {
       assetTypeNames: new Map(
         allAssetTypes.map((type) => [type.id, type.name]),
       ),
+      assetLabels: new Map(
+        labels.map((entry) => [entry.assetName, entry.label]),
+      ),
       quotes,
       candles,
       tesouroCandles,
+      fundCandles,
       benchmarks,
       range,
       today,
       includeSeries,
     });
+
+    // The bank's own figures ride along with the snapshot: the page that shows
+    // the portfolio is exactly where a disagreement with the source has to be
+    // visible, and the comparison costs one small table read.
+    return {
+      ...snapshot,
+      reconciliation: reconcileHoldings(snapshot.holdings, providerFacts),
+    };
   }
 }
 

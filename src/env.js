@@ -22,6 +22,24 @@ export const env = createEnv({
      * missing monitoring token can never stop the whole app from booting.
      */
     METRICS_TOKEN: z.string().min(16).optional(),
+    /**
+     * Meu Pluggy credentials (dashboard.pluggy.ai). Optional on purpose: with
+     * either one missing the whole Open Finance feature stays switched off and
+     * invisible, rather than half-rendering a surface that cannot work.
+     */
+    PLUGGY_CLIENT_ID: z.string().optional(),
+    PLUGGY_CLIENT_SECRET: z.string().optional(),
+    /**
+     * The single account allowed to see or use Open Finance. Meu Pluggy's free
+     * tier is licensed for personal use with your own accounts, so this is a
+     * hard gate, not a preference: every other user gets NOT_FOUND and no UI.
+     */
+    OPEN_FINANCE_OWNER_EMAIL: z.string().email().optional(),
+    /**
+     * "true" opens registration. Unset means open in development and closed
+     * in production — see `signupEnabled` in ~/server/better-auth/auth.
+     */
+    ALLOW_SIGNUP: z.enum(["true", "false"]).optional(),
   },
 
   /**
@@ -43,6 +61,10 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     BRAPI_API_TOKEN: process.env.BRAPI_API_TOKEN,
     METRICS_TOKEN: process.env.METRICS_TOKEN,
+    PLUGGY_CLIENT_ID: process.env.PLUGGY_CLIENT_ID,
+    PLUGGY_CLIENT_SECRET: process.env.PLUGGY_CLIENT_SECRET,
+    OPEN_FINANCE_OWNER_EMAIL: process.env.OPEN_FINANCE_OWNER_EMAIL,
+    ALLOW_SIGNUP: process.env.ALLOW_SIGNUP,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially

@@ -85,6 +85,83 @@
       "when": 1785851051702,
       "tag": "0011_smart_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788890159267,
+      "tag": "0012_secret_karnak",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788899987260,
+      "tag": "0013_pluggy_investments",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788984177303,
+      "tag": "0014_bitter_wonder_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1788985069121,
+      "tag": "0015_lazy_sway",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1788985845642,
+      "tag": "0016_nappy_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1788990363724,
+      "tag": "0017_gorgeous_ben_urich",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788990533584,
+      "tag": "0018_hard_prism",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1788990534584,
+      "tag": "0019_category_colors",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1788990535584,
+      "tag": "0020_provider_holdings",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1788990536584,
+      "tag": "0021_ownership_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1788990537584,
+      "tag": "0022_owner_scoped_source_hash",
+      "breakpoints": true
     }
   ]
 }

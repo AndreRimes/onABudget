@@ -8,6 +8,26 @@ type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
 export type Holding = Snapshot["holdings"][number];
 
 /**
+ * An asset's name as it should be read.
+ *
+ * The ledger key is the provider's code — a fund's CNPJ, a CDB's issuer code —
+ * because that is what is unique and what the price sources are keyed by. When
+ * a readable name came with it, that name leads and the code stays underneath
+ * as the identifier: two CDBs from the same bank are told apart only by it.
+ */
+export function AssetTitle({ holding }: { holding: Holding }) {
+  if (!holding.label) return <>{holding.assetName}</>;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="truncate">{holding.label}</span>
+      <span className="text-muted-foreground font-mono text-[11px] font-normal">
+        {holding.assetName}
+      </span>
+    </span>
+  );
+}
+
+/**
  * Flags a holding whose price couldn't be refreshed. Renders nothing when the
  * price is trustworthy, so it can be dropped next to any asset name.
  */
@@ -22,11 +42,7 @@ export function PriceStatusBadge({ holding }: { holding: Holding }) {
       ? "Ativo não encontrado na API de cotações; usando o preço médio de compra."
       : "Não foi possível atualizar a cotação; exibindo o último valor conhecido.";
   return (
-    <Badge
-      variant="outline"
-      title={title}
-      className="border-amber-500 text-xs text-amber-600"
-    >
+    <Badge variant="outline" title={title} className="bg-highlight text-[10px]">
       {label}
     </Badge>
   );
@@ -68,7 +84,7 @@ export function FixedIncomeBadges({ holding }: { holding: Holding }) {
         </Badge>
       )}
       {holding.fixedIncomeMaturityDate && (
-        <span className="text-xs text-muted-foreground">
+        <span className="text-muted-foreground text-xs">
           Venc:{" "}
           {format(parseISO(holding.fixedIncomeMaturityDate), "dd/MM/yyyy")}
         </span>

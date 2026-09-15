@@ -23,7 +23,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { useDebouncedValue } from "~/lib/use-debounced-value";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 import {
   formatDateInput,
   parseDisplayDate,
@@ -40,7 +42,9 @@ export function CreateInvestmentDialog() {
   const [pricePerUnit, setPricePerUnit] = useState("");
   const [transactionDate, setTransactionDate] = useState(todayDisplayDate());
   const [isFixedIncome, setIsFixedIncome] = useState(false);
-  const [fixedIncomeYieldType, setFixedIncomeYieldType] = useState<"CDI_PERCENTAGE" | "PREFIXED">("CDI_PERCENTAGE");
+  const [fixedIncomeYieldType, setFixedIncomeYieldType] = useState<
+    "CDI_PERCENTAGE" | "PREFIXED"
+  >("CDI_PERCENTAGE");
   const [fixedIncomeRate, setFixedIncomeRate] = useState("");
   const [fixedIncomeMaturityDate, setFixedIncomeMaturityDate] = useState("");
 
@@ -50,17 +54,20 @@ export function CreateInvestmentDialog() {
   const { data: accounts } = api.account.getAll.useQuery();
   const { data: assetTypes } = api.assetTypes.getAll.useQuery();
 
-  // Ticker suggestions (skipped for fixed income, which has free-form names)
+  // Ticker suggestions (skipped for fixed income, which has free-form names).
+  // Debounced: every distinct query is an upstream brapi request, and typing
+  // "PETR4" used to fire three of them.
+  const tickerQuery = useDebouncedValue(assetName.trim());
   const { data: tickerSuggestions } = api.investments.searchStocks.useQuery(
-    { query: assetName },
+    { query: tickerQuery },
     {
-      enabled: !isFixedIncome && assetName.length >= 3,
+      enabled: !isFixedIncome && tickerQuery.length >= 3,
       staleTime: 60 * 60 * 1000,
     },
   );
 
   const investmentAccounts =
-    accounts?.filter((acc) => acc.accountType === "INVESTMENT") || [];
+    accounts?.filter((acc) => acc.accountType === "INVESTMENT") ?? [];
 
   // State for fixed income invested amount
   const [investedAmount, setInvestedAmount] = useState("");
@@ -73,7 +80,7 @@ export function CreateInvestmentDialog() {
   const { mutate, isPending } = api.investments.create.useMutation({
     onSuccess: () => {
       void utils.investments.getAllFromUser.invalidate();
-      void utils.investments.getPortfolioSnapshot.invalidate();
+      void invalidatePortfolio(utils);
       toast.success("Investimento registrado com sucesso!");
       setOpen(false);
       // Reset form
@@ -99,12 +106,25 @@ export function CreateInvestmentDialog() {
     e.preventDefault();
 
     if (isFixedIncome) {
-      if (!accountId || !assetTypeId || !assetName || !investedAmount || !transactionDate) {
+      if (
+        !accountId ||
+        !assetTypeId ||
+        !assetName ||
+        !investedAmount ||
+        !transactionDate
+      ) {
         toast.error("Preencha todos os campos obrigatórios");
         return;
       }
     } else {
-      if (!accountId || !assetTypeId || !assetName || !quantity || !pricePerUnit || !transactionDate) {
+      if (
+        !accountId ||
+        !assetTypeId ||
+        !assetName ||
+        !quantity ||
+        !pricePerUnit ||
+        !transactionDate
+      ) {
         toast.error("Preencha todos os campos obrigatórios");
         return;
       }
@@ -117,7 +137,9 @@ export function CreateInvestmentDialog() {
     }
 
     const qty = isFixedIncome ? 1 : parseFloat(quantity);
-    const price = isFixedIncome ? parseFloat(investedAmount) : parseFloat(pricePerUnit);
+    const price = isFixedIncome
+      ? parseFloat(investedAmount)
+      : parseFloat(pricePerUnit);
 
     mutate({
       investmentAccountId: parseInt(accountId),
@@ -132,8 +154,12 @@ export function CreateInvestmentDialog() {
       ...(isFixedIncome
         ? {
             fixedIncomeYieldType,
-            fixedIncomeRate: fixedIncomeRate ? parseFloat(fixedIncomeRate) : null,
-            fixedIncomeMaturityDate: fixedIncomeMaturityDate ? parseDisplayDate(fixedIncomeMaturityDate) : null,
+            fixedIncomeRate: fixedIncomeRate
+              ? parseFloat(fixedIncomeRate)
+              : null,
+            fixedIncomeMaturityDate: fixedIncomeMaturityDate
+              ? parseDisplayDate(fixedIncomeMaturityDate)
+              : null,
           }
         : {
             fixedIncomeYieldType: null,
@@ -170,7 +196,10 @@ export function CreateInvestmentDialog() {
                   </SelectTrigger>
                   <SelectContent>
                     {investmentAccounts.map((account) => (
-                      <SelectItem key={account.id} value={account.id.toString()}>
+                      <SelectItem
+                        key={account.id}
+                        value={account.id.toString()}
+                      >
                         {account.name}
                       </SelectItem>
                     ))}
@@ -255,11 +284,15 @@ export function CreateInvestmentDialog() {
                 {/* Row: Tipo de Rendimento + Taxa */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="fixedIncomeYieldType">Tipo de Rendimento *</Label>
+                    <Label htmlFor="fixedIncomeYieldType">
+                      Tipo de Rendimento *
+                    </Label>
                     <Select
                       value={fixedIncomeYieldType}
                       onValueChange={(value) =>
-                        setFixedIncomeYieldType(value as "CDI_PERCENTAGE" | "PREFIXED")
+                        setFixedIncomeYieldType(
+                          value as "CDI_PERCENTAGE" | "PREFIXED",
+                        )
                       }
                     >
                       <SelectTrigger id="fixedIncomeYieldType">
@@ -281,14 +314,18 @@ export function CreateInvestmentDialog() {
                     <Input
                       id="fixedIncomeRate"
                       type="number"
-                      placeholder={fixedIncomeYieldType === "CDI_PERCENTAGE" ? "Ex: 100" : "Ex: 15"}
+                      placeholder={
+                        fixedIncomeYieldType === "CDI_PERCENTAGE"
+                          ? "Ex: 100"
+                          : "Ex: 15"
+                      }
                       value={fixedIncomeRate}
                       onChange={(e) => setFixedIncomeRate(e.target.value)}
                       min="0.01"
                       step="0.01"
                       required={isFixedIncome}
                     />
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-muted-foreground text-xs">
                       {fixedIncomeYieldType === "CDI_PERCENTAGE"
                         ? "100 = 100% do CDI, 110 = 110% do CDI"
                         : "Ex: 15 para 15% ao ano"}
@@ -313,13 +350,17 @@ export function CreateInvestmentDialog() {
                   </div>
 
                   <div className="grid gap-2">
-                    <Label htmlFor="transactionDate">Data do Investimento *</Label>
+                    <Label htmlFor="transactionDate">
+                      Data do Investimento *
+                    </Label>
                     <Input
                       id="transactionDate"
                       type="text"
-                      placeholder="DD/MM/YYYY"
+                      placeholder="DD/MM/AAAA"
                       value={transactionDate}
-                      onChange={(e) => setTransactionDate(formatDateInput(e.target.value))}
+                      onChange={(e) =>
+                        setTransactionDate(formatDateInput(e.target.value))
+                      }
                       maxLength={10}
                       required
                     />
@@ -329,16 +370,22 @@ export function CreateInvestmentDialog() {
                 {/* Row: Data de Vencimento (half width) */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="fixedIncomeMaturityDate">Data de Vencimento</Label>
+                    <Label htmlFor="fixedIncomeMaturityDate">
+                      Data de Vencimento
+                    </Label>
                     <Input
                       id="fixedIncomeMaturityDate"
                       type="text"
-                      placeholder="DD/MM/YYYY"
+                      placeholder="DD/MM/AAAA"
                       value={fixedIncomeMaturityDate}
-                      onChange={(e) => setFixedIncomeMaturityDate(formatDateInput(e.target.value))}
+                      onChange={(e) =>
+                        setFixedIncomeMaturityDate(
+                          formatDateInput(e.target.value),
+                        )
+                      }
                       maxLength={10}
                     />
-                    <p className="text-xs text-muted-foreground">Opcional</p>
+                    <p className="text-muted-foreground text-xs">Opcional</p>
                   </div>
                 </div>
               </>
@@ -382,9 +429,11 @@ export function CreateInvestmentDialog() {
                     <Input
                       id="transactionDate"
                       type="text"
-                      placeholder="DD/MM/YYYY"
+                      placeholder="DD/MM/AAAA"
                       value={transactionDate}
-                      onChange={(e) => setTransactionDate(formatDateInput(e.target.value))}
+                      onChange={(e) =>
+                        setTransactionDate(formatDateInput(e.target.value))
+                      }
                       maxLength={10}
                       required
                     />
@@ -393,9 +442,11 @@ export function CreateInvestmentDialog() {
               </>
             )}
 
-            <div className="rounded-lg border bg-muted/50 p-3">
+            <div className="bg-muted/50 border-2 p-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Valor Total:</span>
+                <span className="text-muted-foreground text-sm">
+                  Valor Total:
+                </span>
                 <span className="text-lg font-bold">
                   {new Intl.NumberFormat("pt-BR", {
                     style: "currency",

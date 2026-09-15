@@ -10,12 +10,17 @@ env:
   DOCKER_IMAGE: andrerimes/onabudget
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yaml
+
   quality:
     uses: ./.github/workflows/sonar.yml
     secrets: inherit
 
   build-and-push:
-    needs: quality
+    needs: 
+        - quality 
+        - check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

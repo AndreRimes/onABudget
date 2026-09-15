@@ -11,6 +11,7 @@ export type CreateBudgetInput = {
 
 export type UpdateBudgetInput = {
   id: number;
+  userId: string;
   amount?: number;
   startPeriod?: string;
   endPeriod?: string;
@@ -21,9 +22,7 @@ export const budgetRepository = {
     const [latestOpen] = await db
       .select()
       .from(budget)
-      .where(
-        and(eq(budget.userId, input.userId), isNull(budget.endPeriod)),
-      )
+      .where(and(eq(budget.userId, input.userId), isNull(budget.endPeriod)))
       .orderBy(desc(budget.startPeriod))
       .limit(1);
 
@@ -54,11 +53,11 @@ export const budgetRepository = {
       .orderBy(desc(budget.startPeriod));
   },
 
-  findById: async (id: number) => {
+  findById: async (userId: string, id: number) => {
     const [result] = await db
       .select()
       .from(budget)
-      .where(eq(budget.id, id));
+      .where(and(eq(budget.id, id), eq(budget.userId, userId)));
     return result;
   },
 
@@ -98,21 +97,25 @@ export const budgetRepository = {
     const updateData: Partial<typeof budget.$inferInsert> = {};
 
     if (input.amount !== undefined) updateData.amount = input.amount;
-    if (input.startPeriod !== undefined) updateData.startPeriod = input.startPeriod;
+    if (input.startPeriod !== undefined)
+      updateData.startPeriod = input.startPeriod;
     if (input.endPeriod !== undefined) updateData.endPeriod = input.endPeriod;
 
+    // Owner predicate in the WHERE, same contract as every other repository:
+    // an id that belongs to someone else matches nothing and returns
+    // undefined, which the router reports as NOT_FOUND.
     const [updated] = await db
       .update(budget)
       .set(updateData)
-      .where(eq(budget.id, input.id))
+      .where(and(eq(budget.id, input.id), eq(budget.userId, input.userId)))
       .returning();
     return updated;
   },
 
-  delete: async (id: number) => {
+  delete: async (userId: string, id: number) => {
     const [deleted] = await db
       .delete(budget)
-      .where(eq(budget.id, id))
+      .where(and(eq(budget.id, id), eq(budget.userId, userId)))
       .returning();
     return deleted;
   },

@@ -122,7 +122,7 @@ export function PerformanceChart({
             role="group"
             aria-label="Índices para comparação"
           >
-            <span className="mr-1 text-xs text-muted-foreground">
+            <span className="text-muted-foreground mr-1 text-xs">
               Comparar com:
             </span>
             {available.map((id) => {
@@ -136,10 +136,10 @@ export function PerformanceChart({
                   aria-pressed={isOn}
                   title={benchmark.description}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                    "border-foreground inline-flex items-center gap-1.5 border-2 px-2.5 py-1 font-mono text-[11px] font-bold tracking-wider uppercase transition-colors",
                     isOn
-                      ? "border-transparent bg-accent text-accent-foreground"
-                      : "border-border text-muted-foreground hover:bg-accent/50",
+                      ? "bg-hard text-highlight"
+                      : "bg-card text-muted-foreground hover:bg-muted",
                   )}
                 >
                   <SeriesSwatch
@@ -233,8 +233,8 @@ export function PerformanceChart({
                       const gain = Number(row.gain);
 
                       return (
-                        <div className="min-w-56 rounded-lg border bg-popover p-3 text-sm shadow-md">
-                          <p className="mb-2 font-medium text-muted-foreground">
+                        <div className="bg-popover min-w-56 border-2 p-3 text-sm shadow-md">
+                          <p className="text-muted-foreground mb-2 font-medium">
                             {String(row.label)}
                           </p>
 
@@ -242,15 +242,12 @@ export function PerformanceChart({
                             {/* Identity is name + swatch, never colour alone. */}
                             <div className="flex items-center justify-between gap-4">
                               <span className="flex items-center gap-1.5">
-                                <SeriesSwatch
-                                  color={PORTFOLIO_COLOR}
-                                  dash=""
-                                />
+                                <SeriesSwatch color={PORTFOLIO_COLOR} dash="" />
                                 Carteira
                               </span>
                               <span className="font-semibold tabular-nums">
                                 {formatCurrency(gain)}
-                                <span className="ml-1 text-xs text-muted-foreground">
+                                <span className="text-muted-foreground ml-1 text-xs">
                                   ({formatPercent(pct(gain))})
                                 </span>
                               </span>
@@ -263,7 +260,7 @@ export function PerformanceChart({
                                   key={id}
                                   className="flex items-center justify-between gap-4"
                                 >
-                                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                                  <span className="text-muted-foreground flex items-center gap-1.5">
                                     <SeriesSwatch
                                       color={BENCHMARKS[id].colorVar}
                                       dash={BENCHMARKS[id].dash}
@@ -272,7 +269,7 @@ export function PerformanceChart({
                                   </span>
                                   <span className="tabular-nums">
                                     {formatCurrency(amount)}
-                                    <span className="ml-1 text-xs text-muted-foreground">
+                                    <span className="text-muted-foreground ml-1 text-xs">
                                       ({formatPercent(pct(amount))})
                                     </span>
                                   </span>
@@ -281,7 +278,7 @@ export function PerformanceChart({
                             })}
                           </div>
 
-                          <div className="mt-2 space-y-1 border-t pt-2 text-xs text-muted-foreground">
+                          <div className="text-muted-foreground mt-2 space-y-1 border-t pt-2 text-xs">
                             <div className="flex justify-between gap-4">
                               <span>Patrimônio</span>
                               <span className="tabular-nums">
@@ -350,7 +347,7 @@ export function PerformanceChart({
               {visible.map((id) => (
                 <span
                   key={id}
-                  className="flex items-center gap-1.5 text-muted-foreground"
+                  className="text-muted-foreground flex items-center gap-1.5"
                 >
                   <SeriesSwatch
                     color={BENCHMARKS[id].colorVar}

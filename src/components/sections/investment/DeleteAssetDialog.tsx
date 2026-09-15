@@ -15,6 +15,7 @@ import {
 } from "~/components/ui/alert-dialog";
 import { Button } from "~/components/ui/button";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 
 export function DeleteAssetDialog({
   assetName,
@@ -29,7 +30,7 @@ export function DeleteAssetDialog({
 
   const { mutate, isPending } = api.investments.deleteAsset.useMutation({
     onSuccess: (result) => {
-      void utils.investments.getPortfolioSnapshot.invalidate();
+      void invalidatePortfolio(utils);
       void utils.investments.getAllFromUser.invalidate();
       void utils.dividends.getAllFromUser.invalidate();
       toast.success(

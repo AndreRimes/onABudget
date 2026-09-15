@@ -1,8 +1,8 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -10,76 +10,89 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useEffect, useState } from "react"
-import { toast } from "sonner"
-import type { Account } from "~/app/dashboard/accounts/page"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import type { Account } from "~/app/dashboard/accounts/page";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_LABELS,
   type AccountType,
-} from "~/lib/account-type"
-import { api } from "~/trpc/react"
-
-
+} from "~/lib/account-type";
+import { api } from "~/trpc/react";
 
 interface EditAccountDialogProps {
-  account: Account | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  account: Account | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function EditAccountDialog({ account, open, onOpenChange }: EditAccountDialogProps) {
-  const [accountType, setAccountType] = useState<AccountType>("CHECKING")
-  const [balance, setBalance] = useState("")
-  const [name, setName] = useState("")
-  const utils = api.useUtils()
+export function EditAccountDialog({
+  account,
+  open,
+  onOpenChange,
+}: EditAccountDialogProps) {
+  const [accountType, setAccountType] = useState<AccountType>("CHECKING");
+  const [balance, setBalance] = useState("");
+  const [name, setName] = useState("");
+  const utils = api.useUtils();
 
-  const {mutate, isPending} = api.account.update.useMutation({
+  const { mutate, isPending } = api.account.update.useMutation({
     onSuccess: () => {
       onOpenChange(false);
-      utils.account.getAll.invalidate();
+      void utils.account.getAll.invalidate();
     },
     onError: (error) => {
-      toast.error("Error updating account: " + error.message);
-    }
-  })
+      toast.error("Erro ao atualizar conta: " + error.message);
+    },
+  });
 
   useEffect(() => {
     if (account) {
-      setAccountType(account.accountType)
-      setBalance(account.balance.toString())
+      setAccountType(account.accountType);
+      setBalance(account.balance.toString());
     }
-  }, [account])
+  }, [account]);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!account) return
+    e.preventDefault();
+    if (!account) return;
     mutate({
       id: account.id,
       accountType,
       balance: parseFloat(balance),
       name,
     });
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Edit Account</DialogTitle>
-          <DialogDescription>Update account details for Account #{account?.id}</DialogDescription>
+          <DialogTitle>Editar conta</DialogTitle>
+          <DialogDescription>
+            Altere os dados da conta #{account?.id}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="edit-accountType">Account Type</Label>
-              <Select value={accountType} onValueChange={(v) => setAccountType(v as AccountType)}>
+              <Label htmlFor="edit-accountType">Tipo da conta</Label>
+              <Select
+                value={accountType}
+                onValueChange={(v) => setAccountType(v as AccountType)}
+              >
                 <SelectTrigger id="edit-accountType">
-                  <SelectValue placeholder="Select account type" />
+                  <SelectValue placeholder="Selecione o tipo" />
                 </SelectTrigger>
                 <SelectContent>
                   {ACCOUNT_TYPES.map((type) => (
@@ -91,17 +104,17 @@ export function EditAccountDialog({ account, open, onOpenChange }: EditAccountDi
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="edit-accountName">Account Name</Label>
+              <Label htmlFor="edit-accountName">Nome da conta</Label>
               <Input
                 id="edit-accountName"
                 type="text"
-                placeholder="Account Name"
+                placeholder="Ex: Banco Inter, XP, Nubank..."
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="edit-balance">Balance</Label>
+              <Label htmlFor="edit-balance">Saldo</Label>
               <Input
                 id="edit-balance"
                 type="number"
@@ -113,15 +126,19 @@ export function EditAccountDialog({ account, open, onOpenChange }: EditAccountDi
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
             </Button>
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Saving..." : "Save Changes"}
+              {isPending ? "Salvando..." : "Salvar alterações"}
             </Button>
           </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

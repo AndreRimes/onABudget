@@ -53,8 +53,18 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
 const t = initTRPC.context<typeof createTRPCContext>().create({
   transformer: superjson,
   errorFormatter({ shape, error }) {
+    // An uncaught error carries whatever its cause said — a libsql message, a
+    // stack fragment, a file path. Only deliberate TRPCErrors get to speak to
+    // the client in production; everything else is logged on the server.
+    const internal = error.code === "INTERNAL_SERVER_ERROR";
+    const message =
+      internal && process.env.NODE_ENV === "production"
+        ? "Erro interno"
+        : shape.message;
+    if (internal) console.error("[trpc] internal error", error.cause ?? error);
     return {
       ...shape,
+      message,
       data: {
         ...shape.data,
         zodError:

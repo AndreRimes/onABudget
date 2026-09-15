@@ -3,11 +3,14 @@
 // have a short TTL; unknown tickers are negative-cached so they don't burn
 // requests on every page load.
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { chunk } from "~/lib/chunk";
 import { db } from "~/server/db";
 import {
   benchmarkPoints,
   benchmarkSync,
   cdiRates,
+  fundQuotaCoverage,
+  fundQuotas,
   marketCandles,
   marketSymbols,
   tesouroPrices,
@@ -37,6 +40,7 @@ import {
   fetchYahooDailyCloses,
   mapWithConcurrency,
 } from "./brapi";
+import { fetchFundQuotas } from "./cvm-funds";
 
 const CANDLE_CONCURRENCY = 6;
 
@@ -91,6 +95,34 @@ function isoDayOf(ms: number): string {
     .slice(0, 10);
 }
 
+/**
+ * How long a single request may spend backfilling CVM monthly files before it
+ * gives up and serves what it has. One month costs a ~10 MB download, so a
+ * fund held for two years cannot be filled in one page load — and should not
+ * hold one up either.
+ */
+const FUND_BACKFILL_BUDGET_MS = 20_000;
+
+/** Rows per INSERT — one fund-month is ~22 rows, so this is many months. */
+const FUND_QUOTA_CHUNK_SIZE = 500;
+
+/** Every YYYY-MM from `from` to `to`, inclusive and ascending. */
+function monthsBetween(from: string, to: string): string[] {
+  const months: string[] = [];
+  let [year, month] = from.split("-").map(Number) as [number, number];
+  while (`${year}-${String(month).padStart(2, "0")}` <= to) {
+    months.push(`${year}-${String(month).padStart(2, "0")}`);
+    month++;
+    if (month > 12) {
+      month = 1;
+      year++;
+    }
+    // A malformed `from` must not spin forever.
+    if (months.length > 600) break;
+  }
+  return months;
+}
+
 function daysBetween(fromIso: string, toIso: string): number {
   return Math.ceil(
     (new Date(toIso).getTime() - new Date(fromIso).getTime()) / 86_400_000,
@@ -120,12 +152,10 @@ export class MarketCacheService {
   private benchmarkSyncedAt = new Map<string, number>();
   /** tesouro title key -> ISO date of last CSV sync, to fetch at most once a day */
   private tesouroSyncedOn = new Map<string, string>();
+  /** CVM month (YYYY-MM) -> ISO date it was last downloaded, same reason */
+  private fundMonthSyncedOn = new Map<string, string>();
 
   /**
-<<<<<<< HEAD
-   * Current quotes for a batch of symbols, cache-first (`force` bypasses the
-   * cache entirely). Never throws for the batch: individual symbols degrade to
-=======
    * Records the freshness of what callers actually got. This is the
    * authoritative "not found" signal — brapi answers 200 with an empty result
    * set for unknown tickers, which the HTTP-level metric counts as a success.
@@ -137,9 +167,8 @@ export class MarketCacheService {
   }
 
   /**
-   * Current quotes for a batch of symbols, cache-first.
-   * Never throws for the batch: individual symbols degrade to
->>>>>>> 561cb07 (prometheus metrics export)
+   * Current quotes for a batch of symbols, cache-first (`force` bypasses the
+   * cache entirely). Never throws for the batch: individual symbols degrade to
    * "stale" / "unavailable" / "not_found".
    */
   async getQuotes(
@@ -213,29 +242,23 @@ export class MarketCacheService {
       failedSymbols = new Set(toFetch);
     }
 
+    // Rows to write are collected and upserted in one statement at the end:
+    // a cold portfolio of forty tickers used to cost forty serialized writes
+    // on top of the forty fetches, inside the request that renders the page.
+    const found: Array<typeof marketSymbols.$inferInsert> = [];
+    const notFound: Array<typeof marketSymbols.$inferInsert> = [];
+
     for (const symbol of toFetch) {
       const quote = quoteBySymbol.get(symbol);
       if (quote?.regularMarketPrice != null) {
-        await db
-          .insert(marketSymbols)
-          .values({
-            symbol,
-            status: "OK",
-            lastPrice: quote.regularMarketPrice,
-            previousClose: quote.regularMarketPreviousClose ?? null,
-            lastPriceAt: fetchedAt,
-            updatedAt: fetchedAt,
-          })
-          .onConflictDoUpdate({
-            target: marketSymbols.symbol,
-            set: {
-              status: "OK",
-              lastPrice: quote.regularMarketPrice,
-              previousClose: quote.regularMarketPreviousClose ?? null,
-              lastPriceAt: fetchedAt,
-              updatedAt: fetchedAt,
-            },
-          });
+        found.push({
+          symbol,
+          status: "OK",
+          lastPrice: quote.regularMarketPrice,
+          previousClose: quote.regularMarketPreviousClose ?? null,
+          lastPriceAt: fetchedAt,
+          updatedAt: fetchedAt,
+        });
         results.set(symbol, {
           price: quote.regularMarketPrice,
           previousClose: quote.regularMarketPreviousClose ?? null,
@@ -263,13 +286,7 @@ export class MarketCacheService {
         }
       } else {
         // brapi answered but the symbol is not in its results → it does not exist.
-        await db
-          .insert(marketSymbols)
-          .values({ symbol, status: "NOT_FOUND", updatedAt: fetchedAt })
-          .onConflictDoUpdate({
-            target: marketSymbols.symbol,
-            set: { status: "NOT_FOUND", updatedAt: fetchedAt },
-          });
+        notFound.push({ symbol, status: "NOT_FOUND", updatedAt: fetchedAt });
         results.set(symbol, {
           price: null,
           previousClose: null,
@@ -277,6 +294,33 @@ export class MarketCacheService {
           asOf: null,
         });
       }
+    }
+
+    if (found.length > 0) {
+      await db
+        .insert(marketSymbols)
+        .values(found)
+        .onConflictDoUpdate({
+          target: marketSymbols.symbol,
+          set: {
+            status: "OK",
+            lastPrice: sql`excluded.last_price`,
+            previousClose: sql`excluded.previous_close`,
+            lastPriceAt: sql`excluded.last_price_at`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    }
+    // A symbol that stopped existing keeps its last known price on the row;
+    // only the status and the timestamp move, as before.
+    if (notFound.length > 0) {
+      await db
+        .insert(marketSymbols)
+        .values(notFound)
+        .onConflictDoUpdate({
+          target: marketSymbols.symbol,
+          set: { status: "NOT_FOUND", updatedAt: fetchedAt },
+        });
     }
 
     this.recordQuoteResults(results);
@@ -515,20 +559,22 @@ export class MarketCacheService {
     fromDate: string,
   ): Promise<Map<BenchmarkId, Map<string, number>>> {
     const entries = await Promise.all(
-      ids.map(async (id): Promise<[BenchmarkId, Map<string, number>] | null> => {
-        try {
-          // CDI predates this table and already holds full history in
-          // `cdi_rates`, so it keeps its own (already correct) path.
-          const returns =
-            id === "CDI"
-              ? await this.getCdiRates(fromDate)
-              : await this.getBenchmarkReturns(id, fromDate);
-          return returns.size > 0 ? [id, returns] : null;
-        } catch (error) {
-          if (!(error instanceof MarketUpstreamError)) throw error;
-          return null;
-        }
-      }),
+      ids.map(
+        async (id): Promise<[BenchmarkId, Map<string, number>] | null> => {
+          try {
+            // CDI predates this table and already holds full history in
+            // `cdi_rates`, so it keeps its own (already correct) path.
+            const returns =
+              id === "CDI"
+                ? await this.getCdiRates(fromDate)
+                : await this.getBenchmarkReturns(id, fromDate);
+            return returns.size > 0 ? [id, returns] : null;
+          } catch (error) {
+            if (!(error instanceof MarketUpstreamError)) throw error;
+            return null;
+          }
+        },
+      ),
     );
 
     return new Map(
@@ -568,9 +614,10 @@ export class MarketCacheService {
       // Always refetch the whole window rather than stitching edges: these
       // series are small (one point per day) and a single window keeps the
       // day-over-day return maths correct across the seam.
-      const start = coverage && coverage.coversFrom < fromDate
-        ? coverage.coversFrom
-        : fromDate;
+      const start =
+        coverage && coverage.coversFrom < fromDate
+          ? coverage.coversFrom
+          : fromDate;
       // Record the attempt up front so a failing provider is retried on the
       // next TTL rather than on every page load.
       this.benchmarkSyncedAt.set(id, Date.now());
@@ -603,7 +650,11 @@ export class MarketCacheService {
             })
             .onConflictDoUpdate({
               target: benchmarkSync.benchmarkId,
-              set: { coversFrom: start, coversTo: today, updatedAt: new Date() },
+              set: {
+                coversFrom: start,
+                coversTo: today,
+                updatedAt: new Date(),
+              },
             });
         }
       } catch (error) {
@@ -696,6 +747,130 @@ export class MarketCacheService {
       } else {
         result.set(row.titleKey, [{ date: row.date, close: row.sellPrice }]);
       }
+    }
+
+    return result;
+  }
+
+  /**
+   * Official daily quota values for the given funds, as a candle-like series
+   * per CNPJ — the fund equivalent of `getTesouroPrices`.
+   *
+   * The CVM publishes one file per calendar month covering every fund in the
+   * country, so the unit of work is (fund, month) and each pair is downloaded
+   * at most once, ever, except the current month, which is re-read once a day
+   * as new days are appended to it.
+   *
+   * A first load for a long-held fund therefore has a year of months to fetch.
+   * Rather than make the user wait for all of them, the backfill runs newest
+   * month first under a wall-clock budget and stops when it runs out: the
+   * chart gets its recent history immediately, and the older months fill in
+   * over the next few loads. Anything already cached is served regardless.
+   */
+  async getFundQuotas(
+    cnpjs: string[],
+    fromDate: string,
+    {
+      force = false,
+      referenceQuotas,
+      budgetMs = FUND_BACKFILL_BUDGET_MS,
+    }: RefreshOptions & {
+      /** CNPJ -> quota the provider reports, to pick between subclasses. */
+      referenceQuotas?: Map<string, number>;
+      budgetMs?: number;
+    } = {},
+  ): Promise<Map<string, CandlePoint[]>> {
+    const result = new Map<string, CandlePoint[]>();
+    const wanted = [...new Set(cnpjs)].filter((cnpj) => cnpj.length === 14);
+    if (wanted.length === 0) return result;
+
+    const today = todayIso();
+    const currentMonth = today.slice(0, 7);
+    const months = monthsBetween(fromDate.slice(0, 7), currentMonth);
+
+    // (fund, month) pairs still to read, newest month first.
+    const covered = new Set(
+      (
+        await db
+          .select({
+            cnpj: fundQuotaCoverage.cnpj,
+            month: fundQuotaCoverage.month,
+          })
+          .from(fundQuotaCoverage)
+          .where(inArray(fundQuotaCoverage.cnpj, wanted))
+      ).map((row) => `${row.cnpj}:${row.month}`),
+    );
+
+    const pending = new Map<string, string[]>(); // month -> cnpjs
+    for (const month of months) {
+      // The running month is never "done": it grows by a row per business day.
+      const alwaysStale =
+        month === currentMonth && this.fundMonthSyncedOn.get(month) !== today;
+      const missing = wanted.filter(
+        (cnpj) => force || alwaysStale || !covered.has(`${cnpj}:${month}`),
+      );
+      if (missing.length > 0) pending.set(month, missing);
+    }
+
+    const deadline = Date.now() + budgetMs;
+    for (const month of [...pending.keys()].sort().reverse()) {
+      if (Date.now() > deadline) break;
+      const funds = pending.get(month)!;
+      try {
+        const points = await fetchFundQuotas({
+          cnpjs: new Set(funds),
+          month,
+          fromDate,
+          referenceQuotas,
+        });
+        marketSyncTotal.inc({
+          kind: "fund_quotas",
+          outcome: points.length > 0 ? "success" : "empty",
+        });
+        if (points.length > 0) {
+          for (const batch of chunk(points, FUND_QUOTA_CHUNK_SIZE)) {
+            await db
+              .insert(fundQuotas)
+              .values(
+                batch.map((point) => ({
+                  cnpj: point.cnpj,
+                  date: point.date,
+                  quota: point.quota,
+                })),
+              )
+              .onConflictDoNothing();
+          }
+        }
+        // Mark every requested fund, including ones this month said nothing
+        // about: a fund that did not exist yet must not re-download the file
+        // on every page load looking for itself.
+        await db
+          .insert(fundQuotaCoverage)
+          .values(funds.map((cnpj) => ({ cnpj, month, fetchedAt: new Date() })))
+          .onConflictDoUpdate({
+            target: [fundQuotaCoverage.cnpj, fundQuotaCoverage.month],
+            set: { fetchedAt: new Date() },
+          });
+        this.fundMonthSyncedOn.set(month, today);
+      } catch (error) {
+        if (!(error instanceof MarketUpstreamError)) throw error;
+        marketSyncTotal.inc({ kind: "fund_quotas", outcome: "upstream_error" });
+        // Transient failure: serve what is cached and retry on the next load.
+      }
+    }
+
+    const rows = await db
+      .select()
+      .from(fundQuotas)
+      .where(
+        and(inArray(fundQuotas.cnpj, wanted), gte(fundQuotas.date, fromDate)),
+      )
+      .orderBy(asc(fundQuotas.date));
+
+    for (const row of rows) {
+      const list = result.get(row.cnpj);
+      if (list) list.push({ date: row.date, close: row.quota });
+      else result.set(row.cnpj, [{ date: row.date, close: row.quota }]);
     }
 
     return result;

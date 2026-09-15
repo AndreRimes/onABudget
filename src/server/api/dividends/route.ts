@@ -9,7 +9,7 @@ export const dividendsRouter = createTRPCRouter({
     .input(
       z.object({
         investmentAccountId: z.number(),
-        assetName: z.string().min(1),
+        assetName: z.string().max(200).min(1),
         type: z.enum(["DIVIDEND", "JCP", "RENDIMENTO"]).default("RENDIMENTO"),
         amount: z.number().min(0.01),
         paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -42,7 +42,7 @@ export const dividendsRouter = createTRPCRouter({
   }),
 
   getByAssetName: protectedProcedure
-    .input(z.object({ assetName: z.string() }))
+    .input(z.object({ assetName: z.string().max(200) }))
     .query(async ({ ctx, input }) => {
       return await dividendRepository.findByAssetName(
         ctx.session.user.id,

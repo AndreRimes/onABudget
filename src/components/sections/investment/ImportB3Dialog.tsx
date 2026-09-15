@@ -37,6 +37,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { api, type RouterOutputs } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 import { parseB3Workbook, type ParsedB3Row } from "./b3-parser";
 import { formatCurrency } from "./format";
 
@@ -93,7 +94,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   const { mutate: importRows, isPending: isImporting } =
     api.investments.importB3.useMutation({
       onSuccess: (result) => {
-        void utils.investments.getPortfolioSnapshot.invalidate();
+        void invalidatePortfolio(utils);
         void utils.investments.getAllFromUser.invalidate();
         void utils.dividends.getAllFromUser.invalidate();
         toast.success(
@@ -116,7 +117,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   const handleFile = async (file: File) => {
     setFileName(file.name);
     try {
-      const parsed = parseB3Workbook(await file.arrayBuffer());
+      const parsed = await parseB3Workbook(await file.arrayBuffer());
       if (parsed.rows.length === 0) {
         toast.error(
           parsed.reportType === "movimentacao"
@@ -134,6 +135,12 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
 
   const newRows = useMemo(
     () => preview?.rows.filter((entry) => entry.status === "new") ?? [],
+    [preview],
+  );
+  // Duplicates that this file never produced: the movement is already in the
+  // ledger because the bank connection imported it.
+  const syncedRows = useMemo(
+    () => preview?.rows.filter((entry) => entry.importedElsewhere).length ?? 0,
     [preview],
   );
   const unknownTickers = useMemo(() => {
@@ -174,7 +181,10 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
       accountByInstitution: Object.fromEntries(
         Object.entries(accountByInstitution)
           .filter(([, accountId]) => accountId)
-          .map(([institution, accountId]) => [institution, parseInt(accountId)]),
+          .map(([institution, accountId]) => [
+            institution,
+            parseInt(accountId),
+          ]),
       ),
       assetTypeByTicker: Object.fromEntries(
         Object.entries(assetTypeByTicker).map(([ticker, typeId]) => [
@@ -202,7 +212,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="sm:max-w-3xl lg:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Importar relatório da B3</DialogTitle>
           <DialogDescription>
@@ -226,24 +236,28 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
           </div>
 
           {isPreviewing && (
-            <p className="text-sm text-muted-foreground">Analisando arquivo...</p>
+            <p className="text-muted-foreground text-sm">
+              Analisando arquivo...
+            </p>
           )}
 
           {preview && (
             <>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-muted-foreground text-sm">
                 {newRows.length} registro{newRows.length !== 1 ? "s" : ""} novo
                 {newRows.length !== 1 ? "s" : ""},{" "}
                 {preview.rows.length - newRows.length} duplicado
                 {preview.rows.length - newRows.length !== 1 ? "s" : ""}
+                {syncedRows > 0 &&
+                  ` (${syncedRows} já ${syncedRows === 1 ? "veio" : "vieram"} do Open Finance)`}
                 {ignoredRows > 0 && `, ${ignoredRows} linhas ignoradas`}
               </p>
 
               {institutionsToAssign.length > 0 && (
-                <div className="grid gap-2 rounded-lg border p-3">
+                <div className="grid gap-2 border-2 p-3">
                   <p className="text-sm font-medium">
                     Conta por instituição{" "}
-                    <span className="font-normal text-muted-foreground">
+                    <span className="text-muted-foreground font-normal">
                       (atribuída automaticamente — ajuste se necessário)
                     </span>
                   </p>
@@ -286,10 +300,10 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
               )}
 
               {unknownTickers.length > 0 && (
-                <div className="grid gap-2 rounded-lg border p-3">
+                <div className="grid gap-2 border-2 p-3">
                   <p className="text-sm font-medium">
                     Tipo de ativo para novos códigos{" "}
-                    <span className="font-normal text-muted-foreground">
+                    <span className="text-muted-foreground font-normal">
                       (defina o tipo de cada código novo)
                     </span>
                   </p>
@@ -297,7 +311,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
                     {unknownTickers.map((ticker) => (
                       <div
                         key={ticker}
-                        className="grid gap-1.5 rounded-md border bg-muted/30 p-2"
+                        className="bg-muted/30 grid gap-1.5 border-2 p-2"
                       >
                         <span
                           className="truncate text-sm font-medium"
@@ -318,7 +332,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
                             className={cn(
                               "w-full",
                               !assetTypeByTicker[ticker] &&
-                                "border-amber-500/60",
+                                "border-foreground bg-highlight/60",
                             )}
                           >
                             <SelectValue placeholder="Selecione o tipo" />
@@ -340,7 +354,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
                 </div>
               )}
 
-              <div className="max-h-72 overflow-y-auto rounded-lg border">
+              <div className="max-h-72 overflow-y-auto border-2">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -373,7 +387,11 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
                             }
                             className="text-xs"
                           >
-                            {entry.status === "new" ? "Novo" : "Duplicado"}
+                            {entry.status === "new"
+                              ? "Novo"
+                              : entry.importedElsewhere
+                                ? "Já sincronizado"
+                                : "Duplicado"}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -386,7 +404,11 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
             Cancelar
           </Button>
           <Button

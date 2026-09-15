@@ -34,8 +34,8 @@ export function FileDropzone({
 
   if (fileName) {
     return (
-      <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
-        <FileSpreadsheet className="h-5 w-5 shrink-0 text-primary" />
+      <div className="border-foreground bg-muted flex items-center gap-3 border-2 p-3">
+        <FileSpreadsheet className="text-primary h-5 w-5 shrink-0" />
         <span className="flex-1 truncate text-sm font-medium">{fileName}</span>
         <Button type="button" variant="ghost" size="sm" onClick={onClear}>
           <X className="mr-1 h-4 w-4" />
@@ -75,20 +75,22 @@ export function FileDropzone({
           if (file) onFile(file);
         }}
         className={cn(
-          "flex w-full flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors",
+          "flex w-full flex-col items-center justify-center gap-2 border-2 border-dashed p-8 text-center font-mono text-xs uppercase transition-colors",
           isDragging
             ? "border-primary bg-primary/5"
-            : "border-muted-foreground/25 hover:border-muted-foreground/50 hover:bg-muted/30",
+            : "border-foreground hover:bg-muted",
         )}
       >
-        <UploadCloud className="h-8 w-8 text-muted-foreground" />
+        <UploadCloud className="text-muted-foreground h-8 w-8" />
         <p className="text-sm">
-          <span className="font-medium text-foreground">
+          <span className="text-foreground font-medium">
             Clique para selecionar
           </span>{" "}
-          <span className="text-muted-foreground">ou arraste o arquivo aqui</span>
+          <span className="text-muted-foreground">
+            ou arraste o arquivo aqui
+          </span>
         </p>
-        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+        {hint && <p className="text-muted-foreground text-xs">{hint}</p>}
       </button>
     </>
   );

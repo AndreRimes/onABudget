@@ -1,13 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import {
-    Sheet,
-    SheetContent,
-    SheetTrigger,
-} from "@/components/ui/sheet";
-import { ChartLineIcon, DollarSign, Home, Menu, Wallet } from "lucide-react";
+import { ChartLineIcon, DollarSign, Home, LogOut, Wallet } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -17,7 +11,29 @@ interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const SidebarContent = () => {
+const navItems = [
+  { href: "/dashboard", label: "início", icon: Home, swatch: "bg-primary" },
+  {
+    href: "/dashboard/accounts",
+    label: "contas",
+    icon: Wallet,
+    swatch: "bg-chart-1",
+  },
+  {
+    href: "/dashboard/investments",
+    label: "investimentos",
+    icon: ChartLineIcon,
+    swatch: "bg-chart-3",
+  },
+  {
+    href: "/dashboard/checking",
+    label: "conta corrente",
+    icon: DollarSign,
+    swatch: "bg-highlight",
+  },
+];
+
+export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
 
@@ -27,80 +43,51 @@ const SidebarContent = () => {
     router.refresh();
   };
 
-  const navItems = [
-    { href: "/dashboard", label: "Início", icon: Home },
-    { href: "/dashboard/accounts", label: "Contas", icon: Wallet },
-    {
-      href: "/dashboard/investments",
-      label: "Investimentos",
-      icon: ChartLineIcon,
-    },
-    { href: "/dashboard/checking", label: "Conta Corrente", icon: DollarSign },
-  ];
-
   return (
-    <div className="flex h-full flex-col">
-      <div className="p-6">
-        <h2 className="text-2xl font-bold">OnABudget</h2>
-      </div>
-      <Separator />
-      <nav className="flex-1 space-y-1 p-4">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground ${
-                pathname === item.href
-                  ? "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground"
-                  : ""
-              }`}
-            >
-              <Icon className="h-5 w-5" />
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-      <Separator />
-      <div className="p-4">
-        <Button onClick={handleLogout} variant="outline" className="w-full">
-          Logout
-        </Button>
-      </div>
-    </div>
-  );
-};
-
-export default function DashboardLayout({ children }: DashboardLayoutProps) {
-  return (
-    <div className="flex h-screen">
-      <aside className="hidden w-64 border-r bg-background md:block">
-        <SidebarContent />
-      </aside>
-
-      <div className="flex flex-1 flex-col">
-        <header className="sticky top-0 z-10 border-b bg-background">
-          <div className="flex h-16 items-center gap-4 px-4 md:hidden">
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <Menu className="h-5 w-5" />
-                  <span className="sr-only">Toggle menu</span>
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-64 p-0">
-                <SidebarContent />
-              </SheetContent>
-            </Sheet>
-            <h1 className="text-xl font-semibold">OnABudget</h1>
+    <div className="min-h-screen">
+      <div className="mx-auto max-w-7xl px-4 py-6 md:px-8">
+        {/* Header record */}
+        <header className="border-foreground bg-card border-2 p-5 shadow-[6px_6px_0_0_var(--hard)] md:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="display text-3xl md:text-4xl">ON A BUDGET</h1>
+              <p className="form-label mt-2">
+                CONTROLE FINANCEIRO · CARTEIRA PESSOAL
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleLogout}>
+              <LogOut />
+              sair
+            </Button>
           </div>
+
+          <nav className="mt-5 flex flex-wrap gap-2">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`border-foreground inline-flex items-center gap-2 border-2 px-3 py-1.5 font-mono text-xs font-bold tracking-wider uppercase shadow-[3px_3px_0_0_var(--hard)] transition-all hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[2px_2px_0_0_var(--hard)] ${
+                    active
+                      ? "bg-hard text-highlight"
+                      : "bg-card text-foreground"
+                  }`}
+                >
+                  <span
+                    className={`border-foreground size-3 border-2 ${item.swatch}`}
+                  />
+                  <Icon className="size-3.5" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
-            {children}
-        </main>
+        <main className="mt-6">{children}</main>
       </div>
     </div>
   );

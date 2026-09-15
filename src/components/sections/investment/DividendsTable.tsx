@@ -31,6 +31,7 @@ import {
   TableRow,
 } from "~/components/ui/table";
 import { api, type RouterOutputs } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 import { toDisplayDate } from "./date-input";
 import { formatCurrency } from "./format";
 
@@ -58,7 +59,7 @@ export function DividendsTable({ assetName }: { assetName: string }) {
       onSuccess: () => {
         void utils.dividends.getByAssetName.invalidate();
         void utils.dividends.getAllFromUser.invalidate();
-        void utils.investments.getPortfolioSnapshot.invalidate();
+        void invalidatePortfolio(utils);
         toast.success("Provento excluído");
         setDeleting(null);
       },
@@ -90,7 +91,7 @@ export function DividendsTable({ assetName }: { assetName: string }) {
             ))}
           </div>
         ) : !dividends?.length ? (
-          <p className="py-6 text-center text-muted-foreground">
+          <p className="text-muted-foreground py-6 text-center">
             Nenhum provento registrado
           </p>
         ) : (

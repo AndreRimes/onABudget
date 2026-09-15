@@ -44,7 +44,6 @@ import type { StatementParseResult } from "./statement-row";
 
 /** Held while the user maps columns of a spreadsheet we couldn't auto-read. */
 interface PendingMapping {
-
   buffer: ArrayBuffer;
   headers: string[];
   sampleRows: string[][];
@@ -87,7 +86,7 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
         accept(parseOfx(buffer), "Nenhuma transação encontrada.");
         return;
       }
-      const result = parseStatementSpreadsheet(buffer);
+      const result = await parseStatementSpreadsheet(buffer);
       if (result.status === "needs-mapping") {
         setPendingMapping({
           buffer,
@@ -102,7 +101,7 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
     }
   };
 
-  const applyMapping = () => {
+  const applyMapping = async () => {
     if (
       !pendingMapping ||
       !mapping.date ||
@@ -113,7 +112,7 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
       return;
     }
     try {
-      const result = parseStatementSpreadsheet(pendingMapping.buffer, {
+      const result = await parseStatementSpreadsheet(pendingMapping.buffer, {
         date: mapping.date,
         amount: mapping.amount,
         description: mapping.description,
@@ -145,14 +144,14 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
           </Button>
         </DialogTrigger>
       )}
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+      <DialogContent className="sm:max-w-4xl lg:max-w-6xl">
         <DialogHeader>
           <DialogTitle>Importar extrato bancário</DialogTitle>
           <DialogDescription>
-            No Banco Inter: Internet Banking &gt; Conta Digital &gt; Extrato &gt;
-            escolha o período &gt; Exportar &gt; OFX. Planilhas .csv e .xlsx de
-            outros bancos também funcionam. Só as saídas viram despesas — as
-            entradas são ignoradas.
+            No Banco Inter: Internet Banking &gt; Conta Digital &gt; Extrato
+            &gt; escolha o período &gt; Exportar &gt; OFX. Planilhas .csv e
+            .xlsx de outros bancos também funcionam. Só as saídas viram despesas
+            — as entradas são ignoradas.
           </DialogDescription>
         </DialogHeader>
 
@@ -170,10 +169,10 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
           </div>
 
           {pendingMapping && (
-            <div className="grid gap-3 rounded-lg border p-3">
+            <div className="grid gap-3 border-2 p-3">
               <p className="text-sm font-medium">
                 Não reconhecemos as colunas{" "}
-                <span className="font-normal text-muted-foreground">
+                <span className="text-muted-foreground font-normal">
                   (indique quais usar)
                 </span>
               </p>
@@ -190,13 +189,17 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
                     <Select
                       value={mapping[field] ?? ""}
                       onValueChange={(value) =>
-                        setMapping((current) => ({ ...current, [field]: value }))
+                        setMapping((current) => ({
+                          ...current,
+                          [field]: value,
+                        }))
                       }
                     >
                       <SelectTrigger
                         className={cn(
                           "w-full",
-                          !mapping[field] && "border-amber-500/60",
+                          !mapping[field] &&
+                            "border-foreground bg-highlight/60",
                         )}
                       >
                         <SelectValue placeholder="Selecione a coluna" />
@@ -212,7 +215,7 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
                   </div>
                 ))}
               </div>
-              <div className="max-h-40 overflow-auto rounded-md border">
+              <div className="max-h-40 overflow-auto border-2">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -232,7 +235,11 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
                   </TableBody>
                 </Table>
               </div>
-              <Button type="button" onClick={applyMapping} className="justify-self-start">
+              <Button
+                type="button"
+                onClick={() => void applyMapping()}
+                className="justify-self-start"
+              >
                 Usar estas colunas
               </Button>
             </div>
@@ -252,7 +259,6 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
             />
           )}
         </div>
-
       </DialogContent>
     </Dialog>
   );

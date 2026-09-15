@@ -59,4 +59,9 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 
-CMD ["node", "server.js"]
+# Migrations run before the server accepts traffic. Drizzle's journal makes
+# this idempotent, so a restart with nothing pending is a no-op — and a schema
+# change can never reach a container that is already serving requests against
+# the old tables. A failed migration fails the start, on purpose: booting on an
+# unmigrated database corrupts data instead of merely being down.
+CMD ["sh", "-c", "node scripts/migrate.mjs && exec node server.js"]

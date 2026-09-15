@@ -30,7 +30,10 @@ export class DividendRepository {
       .orderBy(desc(dividends.paymentDate));
   }
 
-  async findByAssetName(userId: string, assetName: string): Promise<Dividend[]> {
+  async findByAssetName(
+    userId: string,
+    assetName: string,
+  ): Promise<Dividend[]> {
     return await db
       .select({
         id: dividends.id,
@@ -45,7 +48,9 @@ export class DividendRepository {
       })
       .from(dividends)
       .innerJoin(accounts, eq(dividends.investmentAccountId, accounts.id))
-      .where(and(eq(accounts.userId, userId), eq(dividends.assetName, assetName)))
+      .where(
+        and(eq(accounts.userId, userId), eq(dividends.assetName, assetName)),
+      )
       .orderBy(desc(dividends.paymentDate));
   }
 

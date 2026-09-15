@@ -90,7 +90,7 @@ export function AllocationDonut({
                   | undefined;
                 if (!entry) return null;
                 return (
-                  <div className="rounded-lg border bg-background p-2 text-sm shadow-md">
+                  <div className="bg-background border-2 p-2 text-sm shadow-md">
                     <p className="font-medium">{entry.name}</p>
                     <p>
                       {formatCurrency(entry.value)}
@@ -124,12 +124,12 @@ export function AllocationDonut({
             >
               <span className="flex min-w-0 items-center gap-2">
                 <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  className="border-foreground size-2.5 shrink-0 border"
                   style={{ backgroundColor: entry.color }}
                 />
                 <span className="truncate">{entry.name}</span>
               </span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">
+              <span className="text-muted-foreground shrink-0 tabular-nums">
                 {totalValue > 0
                   ? formatPercent((entry.value / totalValue) * 100)
                   : "—"}

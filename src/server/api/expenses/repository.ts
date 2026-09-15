@@ -27,6 +27,28 @@ export async function getExpenseMonths(userId: string, accountId?: number) {
   return rows.map((row) => row.month);
 }
 
+/**
+ * The columns the pages actually render, in the nested shape a bare joined
+ * select used to produce. The join through `accounts` is only there to scope
+ * by owner; its columns were shipped to the browser with every row and never
+ * read, which for a whole period of spending was most of the payload.
+ */
+const expenseListColumns = {
+  expenses: {
+    id: expenses.id,
+    amount: expenses.amount,
+    categoryId: expenses.categoryId,
+    description: expenses.description,
+    expenseDate: expenses.expenseDate,
+    checkingAccountId: expenses.checkingAccountId,
+  },
+  expense_categories: {
+    id: expenseCategories.id,
+    name: expenseCategories.name,
+    color: expenseCategories.color,
+  },
+};
+
 export function getAllExpensesByUser(
   userId: string,
   dateRange?: { startDate: string; endDate: string },
@@ -39,12 +61,75 @@ export function getAllExpensesByUser(
   }
 
   return db
-    .select()
+    .select(expenseListColumns)
     .from(expenses)
     .innerJoin(accounts, eq(expenses.checkingAccountId, accounts.id))
     .innerJoin(expenseCategories, eq(expenses.categoryId, expenseCategories.id))
     .where(and(...conditions))
     .orderBy(desc(expenses.expenseDate));
+}
+
+/**
+ * Per-month, per-category spending totals for a window.
+ *
+ * The dashboard used to answer this by fetching every expense row of three
+ * overlapping windows (this month, last month, six months) and summing them in
+ * the browser. This is one grouped scan instead, and it returns a grid of at
+ * most `months × categories` rows rather than the whole ledger — the category
+ * name and colour ride along so the page needs no second lookup.
+ */
+export async function getMonthlyExpenseSummary(
+  userId: string,
+  dateRange: { startDate: string; endDate: string },
+) {
+  // `expense_date` is stored as `YYYY-MM-DD` text, so the month is a prefix.
+  const month = sql<string>`substr(${expenses.expenseDate}, 1, 7)`;
+
+  return await db
+    .select({
+      month,
+      categoryId: expenseCategories.id,
+      categoryName: expenseCategories.name,
+      categoryColor: expenseCategories.color,
+      total: sql<number>`sum(${expenses.amount})`,
+    })
+    .from(expenses)
+    .innerJoin(accounts, eq(expenses.checkingAccountId, accounts.id))
+    .innerJoin(expenseCategories, eq(expenses.categoryId, expenseCategories.id))
+    .where(
+      and(
+        eq(accounts.userId, userId),
+        gte(expenses.expenseDate, dateRange.startDate),
+        lte(expenses.expenseDate, dateRange.endDate),
+      ),
+    )
+    .groupBy(month, expenseCategories.id)
+    .orderBy(month);
+}
+
+/**
+ * The newest `limit` expenses in a window. Ordering and slicing here rather
+ * than in the browser keeps the payload to what is actually rendered.
+ */
+export async function getRecentExpenses(
+  userId: string,
+  dateRange: { startDate: string; endDate: string },
+  limit: number,
+) {
+  return await db
+    .select()
+    .from(expenses)
+    .innerJoin(accounts, eq(expenses.checkingAccountId, accounts.id))
+    .innerJoin(expenseCategories, eq(expenses.categoryId, expenseCategories.id))
+    .where(
+      and(
+        eq(accounts.userId, userId),
+        gte(expenses.expenseDate, dateRange.startDate),
+        lte(expenses.expenseDate, dateRange.endDate),
+      ),
+    )
+    .orderBy(desc(expenses.expenseDate), desc(expenses.id))
+    .limit(limit);
 }
 
 export function getAllExpensesByAccount(
@@ -63,7 +148,7 @@ export function getAllExpensesByAccount(
   }
 
   return db
-    .select()
+    .select(expenseListColumns)
     .from(expenses)
     .innerJoin(accounts, eq(expenses.checkingAccountId, accounts.id))
     .innerJoin(expenseCategories, eq(expenses.categoryId, expenseCategories.id))

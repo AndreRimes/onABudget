@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 
 type YieldType = "CDI_PERCENTAGE" | "PREFIXED";
 
@@ -34,7 +35,7 @@ function formatDateInput(input: string): string {
 }
 
 function parseDisplayDate(displayDate: string): string {
-  if (!displayDate || displayDate.length !== 10) return "";
+  if (displayDate?.length !== 10) return "";
   const [day, month, year] = displayDate.split("/");
   if (!day || !month || !year) return "";
   return `${year}-${month}-${day}`;
@@ -80,19 +81,21 @@ export function EditFixedIncomeDialog({
   }, [open, yieldType, rate, maturityDate]);
 
   const utils = api.useUtils();
-  const { mutate, isPending } = api.investments.setFixedIncomeYield.useMutation({
-    onSuccess: (count) => {
-      void utils.investments.getPortfolioSnapshot.invalidate();
-      void utils.investments.getAllFromUser.invalidate();
-      toast.success(
-        `Taxa de ${assetName} atualizada (${count} transaç${count === 1 ? "ão" : "ões"})`,
-      );
-      setOpen(false);
+  const { mutate, isPending } = api.investments.setFixedIncomeYield.useMutation(
+    {
+      onSuccess: (count) => {
+        void invalidatePortfolio(utils);
+        void utils.investments.getAllFromUser.invalidate();
+        toast.success(
+          `Taxa de ${assetName} atualizada (${count} transaç${count === 1 ? "ão" : "ões"})`,
+        );
+        setOpen(false);
+      },
+      onError: (error) => {
+        toast.error("Erro ao atualizar taxa: " + error.message);
+      },
     },
-    onError: (error) => {
-      toast.error("Erro ao atualizar taxa: " + error.message);
-    },
-  });
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,7 +166,9 @@ export function EditFixedIncomeDialog({
                   id="editRate"
                   type="number"
                   placeholder={
-                    fixedIncomeYieldType === "CDI_PERCENTAGE" ? "Ex: 100" : "Ex: 15"
+                    fixedIncomeYieldType === "CDI_PERCENTAGE"
+                      ? "Ex: 100"
+                      : "Ex: 15"
                   }
                   value={fixedIncomeRate}
                   onChange={(e) => setFixedIncomeRate(e.target.value)}
@@ -186,7 +191,7 @@ export function EditFixedIncomeDialog({
                 }
                 maxLength={10}
               />
-              <p className="text-xs text-muted-foreground">Opcional</p>
+              <p className="text-muted-foreground text-xs">Opcional</p>
             </div>
           </div>
           <DialogFooter>

@@ -18,7 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { FixedIncomeBadges, PriceStatusBadge, type Holding } from "./AssetBadges";
+import {
+  AssetTitle,
+  FixedIncomeBadges,
+  PriceStatusBadge,
+  type Holding,
+} from "./AssetBadges";
 import { assetDetailHref } from "./asset-href";
 import {
   formatCurrency,
@@ -39,16 +44,16 @@ function HoldingCard({
   return (
     <Link
       href={assetDetailHref(holding.assetName)}
-      className="block rounded-lg border p-3 transition-colors hover:bg-accent/50"
+      className="hover:bg-accent/50 block border-2 p-3 transition-colors"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <span className="flex flex-wrap items-center gap-2 font-medium">
-            {holding.assetName}
+            <AssetTitle holding={holding} />
             <PriceStatusBadge holding={holding} />
           </span>
           <FixedIncomeBadges holding={holding} />
-          <p className="text-xs text-muted-foreground tabular-nums">
+          <p className="text-muted-foreground text-xs tabular-nums">
             {holding.quantity.toLocaleString("pt-BR", {
               maximumFractionDigits: 6,
             })}{" "}
@@ -66,7 +71,7 @@ function HoldingCard({
           >
             {formatSignedCurrency(holding.periodGain)}
           </p>
-          <p className="text-xs text-muted-foreground tabular-nums">
+          <p className="text-muted-foreground text-xs tabular-nums">
             {formatSignedPercent(holding.periodGainPercent)}
             {totalValue > 0 &&
               ` · ${formatPercent((holding.currentValue / totalValue) * 100)} da carteira`}
@@ -101,7 +106,7 @@ export function HoldingsSection({
     return (
       <Card>
         <CardContent className="py-8">
-          <p className="text-center text-muted-foreground">
+          <p className="text-muted-foreground text-center">
             Nenhum investimento encontrado
           </p>
         </CardContent>
@@ -186,7 +191,7 @@ export function HoldingsSection({
                             className="flex flex-col gap-1 hover:underline"
                           >
                             <span className="flex items-center gap-2">
-                              {holding.assetName}
+                              <AssetTitle holding={holding} />
                               <PriceStatusBadge holding={holding} />
                             </span>
                             <FixedIncomeBadges holding={holding} />
@@ -221,7 +226,7 @@ export function HoldingsSection({
                                 {formatCurrency(holding.dividendsTotal)}
                               </span>
                               {holding.dividends12m > 0 && (
-                                <span className="text-xs text-muted-foreground">
+                                <span className="text-muted-foreground text-xs">
                                   12m: {formatCurrency(holding.dividends12m)}
                                 </span>
                               )}

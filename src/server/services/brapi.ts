@@ -85,6 +85,19 @@ export type BrapiRange =
 const BRAPI_BASE_URL = "https://brapi.dev/api";
 const FETCH_TIMEOUT_MS = 12_000;
 
+/**
+ * What a ticker may look like before it is put in a request path. Asset names
+ * are typed by users, and an unencoded `../` or `?` in the path would let one
+ * steer the server — and its API token — at any other brapi endpoint. Anything
+ * outside this shape is reported as not found without a request being made,
+ * which is also what the provider would have answered.
+ */
+const SYMBOL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$/;
+
+export function isFetchableSymbol(symbol: string): boolean {
+  return SYMBOL_SHAPE.test(symbol);
+}
+
 function brapiUrl(path: string, params: Record<string, string> = {}): URL {
   const url = new URL(`${BRAPI_BASE_URL}${path}`);
   for (const [key, value] of Object.entries(params)) {
@@ -199,10 +212,13 @@ export async function fetchQuotes(symbols: string[]): Promise<{
     symbols,
     REQUEST_CONCURRENCY,
     async (symbol) => {
+      if (!isFetchableSymbol(symbol)) {
+        return { symbol, quote: null, transient: false };
+      }
       let response: Response;
       try {
         response = await fetchWithTimeout(
-          brapiUrl(`/quote/${symbol}`).toString(),
+          brapiUrl(`/quote/${encodeURIComponent(symbol)}`).toString(),
           "brapi",
           "quote",
         );
@@ -243,10 +259,15 @@ export async function fetchCandles(
   symbol: string,
   range: BrapiRange,
 ): Promise<CandlePoint[]> {
+  if (!isFetchableSymbol(symbol)) throw new SymbolNotFoundError(symbol);
+
   let response: Response;
   try {
     response = await fetchWithTimeout(
-      brapiUrl(`/quote/${symbol}`, { range, interval: "1d" }).toString(),
+      brapiUrl(`/quote/${encodeURIComponent(symbol)}`, {
+        range,
+        interval: "1d",
+      }).toString(),
       "brapi",
       "candles",
     );
@@ -374,7 +395,7 @@ async function fetchBcbSeries(
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(url.toString());
+    response = await fetchWithTimeout(url.toString(), "bcb", "benchmark");
   } catch (error) {
     throw new MarketUpstreamError(`BCB request failed: ${String(error)}`);
   }
@@ -462,7 +483,9 @@ export async function fetchYahooDailyCloses(
   symbol: string,
   fromDate: string,
 ): Promise<CandlePoint[]> {
-  const period1 = Math.floor(new Date(`${fromDate}T00:00:00Z`).getTime() / 1000);
+  const period1 = Math.floor(
+    new Date(`${fromDate}T00:00:00Z`).getTime() / 1000,
+  );
   const period2 = Math.floor(Date.now() / 1000);
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
@@ -549,16 +572,18 @@ export async function fetchTesouroPrices(
     );
   }
 
-  const text = await response.text();
-  const lines = text.split(/\r?\n/);
   const out: TesouroDailyPrice[] = [];
+  let header = true;
 
-  // Skip the header row (index 0).
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
+  const consume = (line: string) => {
+    // The first line is the header.
+    if (header) {
+      header = false;
+      return;
+    }
+    if (!line) return;
     const cols = line.split(";");
-    if (cols.length < 7) continue;
+    if (cols.length < 7) return;
 
     const tipo = cols[0]!.trim();
     const vencimento = cols[1]!.trim(); // DD/MM/YYYY
@@ -567,18 +592,39 @@ export async function fetchTesouroPrices(
 
     const year = vencimento.slice(6, 10);
     const titleKey = tesouroTitleKeyFromParts(tipo, year);
-    if (!titleKeys.has(titleKey)) continue;
+    if (!titleKeys.has(titleKey)) return;
 
     const isoDate = `${dataBase.slice(6, 10)}-${dataBase.slice(3, 5)}-${dataBase.slice(0, 2)}`;
-    if (isoDate < fromDate) continue;
+    if (isoDate < fromDate) return;
 
     // Brazilian number format: "1.002,94" → 1002.94
-    const sellPrice = parseFloat(
-      puVenda.replace(/\./g, "").replace(",", "."),
-    );
-    if (!Number.isFinite(sellPrice) || sellPrice <= 0) continue;
+    const sellPrice = parseFloat(puVenda.replace(/\./g, "").replace(",", "."));
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) return;
 
     out.push({ titleKey, date: isoDate, sellPrice });
+  };
+
+  // Genuinely streamed: this used to be `await response.text()` followed by a
+  // split into an array of every line, which held the whole tens-of-MB file
+  // *and* millions of line strings in memory at once — the opposite of what
+  // the doc comment promised. Chunks are decoded as they arrive and only the
+  // tail of an unfinished line is carried between them.
+  if (!response.body) {
+    for (const line of (await response.text()).split(/\r?\n/)) consume(line);
+    return out;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let carry = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    const text = carry + decoder.decode(value, { stream: !done });
+    const lines = text.split(/\r?\n/);
+    // The last piece may be an incomplete line; it is completed by the next
+    // chunk. On the final chunk it is the last line and is consumed.
+    carry = done ? "" : (lines.pop() ?? "");
+    for (const line of lines) consume(line);
+    if (done) break;
   }
 
   return out;

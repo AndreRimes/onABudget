@@ -18,8 +18,21 @@ const createContext = async (req: NextRequest) => {
   });
 };
 
-const handler = (req: NextRequest) =>
-  fetchRequestHandler({
+/**
+ * The largest legitimate body is a 5000-row statement or B3 preview, well
+ * under 2 MB; anything bigger is a mistake or an attempt to make the server
+ * parse it. The fetch adapter has no size option of its own, so the declared
+ * length is checked before the body is read (a chunked upload without one
+ * still ends at the 5000-row cap in the input schemas).
+ */
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+const handler = (req: NextRequest) => {
+  const length = Number(req.headers.get("content-length") ?? 0);
+  if (length > MAX_BODY_BYTES) {
+    return new Response("Payload Too Large", { status: 413 });
+  }
+  return fetchRequestHandler({
     endpoint: "/api/trpc",
     req,
     router: appRouter,
@@ -33,6 +46,7 @@ const handler = (req: NextRequest) =>
           }
         : undefined,
   });
+};
 
 /**
  * Note: tRPC batches several procedures into one HTTP request, and server

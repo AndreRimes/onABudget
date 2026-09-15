@@ -8,11 +8,15 @@
 // category learner so the next statement arrives pre-categorized, and rows can
 // be marked "not an expense" so transfers and card-bill payments never land as
 // spending.
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { nextCategoryColor } from "~/lib/category-colors";
+import { chunk } from "~/lib/chunk";
 import { isCardBillPayment, normalizeMerchant } from "~/lib/merchant";
 import { db } from "~/server/db";
-import { expenses } from "~/server/db/schema";
+import { expenseCategories, expenses } from "~/server/db/schema";
+import { computeHashes } from "./statement-hash";
 import { matchAccountId } from "../accounts/match";
 import { accountRepository } from "../accounts/repository";
 import {
@@ -27,65 +31,22 @@ export const statementRowSchema = z.object({
   kind: z.enum(["debit", "credit"]),
   date: isoDate,
   amount: z.number().positive(),
-  description: z.string().default(""),
-  fitId: z.string().nullish(),
-  acctId: z.string().nullish(),
+  description: z.string().max(500).default(""),
+  fitId: z.string().max(200).nullish(),
+  acctId: z.string().max(200).nullish(),
+  providerCategory: z.string().max(200).nullish(),
 });
 
 export type StatementRow = z.infer<typeof statementRowSchema>;
 
-/**
- * The instalment marker of a card purchase ("(Parcela 02 de 04)", "03/12"), as
- * a hash fragment. A fatura repeats the *original purchase date* on every
- * instalment, so without this every later instalment of the same purchase
- * would hash identically to the first and be skipped as a duplicate — the
- * charge would be recorded once instead of four times.
- */
-function installmentTag(description: string): string {
-  const named = /parcela\s*(\d{1,2})\s*(?:de|\/)\s*(\d{1,2})/i.exec(description);
-  if (named) return `|p${Number(named[1])}/${Number(named[2])}`;
-  const bare = /\b(\d{1,2})\/(\d{1,2})\b/.exec(description);
-  if (bare && Number(bare[2]) > 1 && Number(bare[1]) <= Number(bare[2])) {
-    return `|p${Number(bare[1])}/${Number(bare[2])}`;
-  }
-  return "";
+function nonBlank(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  if (text) return text;
+  return null;
 }
 
-/**
- * Dedup key. An OFX `<FITID>` is the bank's own unique id for the transaction,
- * so when present it is exact — but it is only unique *within* an account,
- * hence the `acctId` namespace. Files without one (spreadsheets, faturas) fall
- * back to the content of the row.
- *
- * The normalized merchant (rather than the raw description) is used in the
- * fallback so that a bank rewording its own statement lines between exports
- * does not resurrect rows the user already imported.
- */
-function baseSourceHash(row: StatementRow): string {
-  if (row.fitId) return `ofx:${row.acctId ?? ""}:${row.fitId}`;
-  return `stmt:${row.date}|${row.amount.toFixed(2)}|${normalizeMerchant(row.description)}${installmentTag(row.description)}`;
-}
-
-/**
- * Hashes for a whole file, in order. Rows that collide on the base hash get an
- * occurrence suffix rather than being treated as duplicates of each other: two
- * coffees at the same shop for the same price on the same day are two real
- * expenses, and silently dropping the second would understate spending. The
- * suffix follows file order, so re-importing the same file still produces the
- * same hashes and still dedups perfectly.
- *
- * Credits get no hash — they are never written.
- */
-function computeHashes(rows: StatementRow[]): Array<string | null> {
-  const seen = new Map<string, number>();
-  return rows.map((row) => {
-    if (row.kind !== "debit") return null;
-    const base = baseSourceHash(row);
-    const occurrence = seen.get(base) ?? 0;
-    seen.set(base, occurrence + 1);
-    return occurrence === 0 ? base : `${base}#${occurrence}`;
-  });
-}
+/** Rows per INSERT statement — see the note in `chunk`. */
+const INSERT_CHUNK_SIZE = 200;
 
 export type PreviewStatus = "new" | "duplicate" | "credit" | "ignored";
 type IgnoreReason = "rule" | "card-bill" | null;
@@ -95,19 +56,31 @@ export async function previewStatementRows(
   rows: StatementRow[],
   institution: string,
 ) {
-  const hashes = computeHashes(rows);
+  const hashes = computeHashes(userId, rows);
   const realHashes = hashes.filter((hash): hash is string => hash !== null);
 
-  const [existing, spendingAccounts, categorizer] = await Promise.all([
-    realHashes.length > 0
-      ? db
-          .select({ sourceHash: expenses.sourceHash })
-          .from(expenses)
-          .where(inArray(expenses.sourceHash, realHashes))
-      : Promise.resolve([]),
-    accountRepository.findSpendingAccounts(userId),
-    loadCategorizer(userId),
-  ]);
+  const [existing, spendingAccounts, categorizer, categories] =
+    await Promise.all([
+      realHashes.length > 0
+        ? db
+            .select({ sourceHash: expenses.sourceHash })
+            .from(expenses)
+            .where(inArray(expenses.sourceHash, realHashes))
+        : Promise.resolve([]),
+      accountRepository.findSpendingAccounts(userId),
+      loadCategorizer(userId),
+      db
+        .select({ id: expenseCategories.id, name: expenseCategories.name })
+        .from(expenseCategories)
+        .where(eq(expenseCategories.userId, userId)),
+    ]);
+
+  const categoryByNormalizedName = new Map(
+    categories.map((category) => [
+      normalizeMerchant(category.name),
+      category.id,
+    ]),
+  );
 
   const known = new Set(
     existing
@@ -146,14 +119,22 @@ export async function previewStatementRows(
       };
     }
 
+    const providerCategory = nonBlank(row.providerCategory);
+    const providerCategoryId = providerCategory
+      ? (categoryByNormalizedName.get(normalizeMerchant(providerCategory)) ??
+        null)
+      : null;
     const suggestion = categorizer.suggest(row.description);
     return {
       row,
       hash,
       status: (known.has(hash) ? "duplicate" : "new") as PreviewStatus,
       ignoreReason: null as IgnoreReason,
-      suggestedCategoryId: suggestion.categoryId,
-      suggestionSource: suggestion.source as string | null,
+      providerCategory,
+      suggestedCategoryId: providerCategoryId ?? suggestion.categoryId,
+      suggestionSource: providerCategoryId
+        ? "pluggy"
+        : (suggestion.source as string | null),
     };
   });
 
@@ -168,23 +149,34 @@ export async function importStatementRows(input: {
   accountId: number;
   /** categoryId per row, keyed by that row's source hash. */
   categoryByHash: Record<string, number>;
+  /** Rows where the user accepted Pluggy's suggested category label. */
+  pluggyCategoryHashes: string[];
   /** Hashes the user marked as "not an expense". */
   ignoredHashes: string[];
   rows: StatementRow[];
 }) {
-  const { userId, accountId, categoryByHash, ignoredHashes, rows } = input;
+  const {
+    userId,
+    accountId,
+    categoryByHash,
+    pluggyCategoryHashes,
+    ignoredHashes,
+    rows,
+  } = input;
 
   // The target account must belong to the caller and be able to hold expenses.
   if (!(await accountRepository.ownsSpendingAccount(userId, accountId))) {
-    throw new Error("Conta inválida");
+    throw new TRPCError({ code: "FORBIDDEN", message: "Conta inválida" });
   }
 
-  const hashes = computeHashes(rows);
+  const hashes = computeHashes(userId, rows);
   const ignored = new Set(ignoredHashes);
+  const acceptedPluggy = new Set(pluggyCategoryHashes);
 
-  const toInsert: Array<{
+  const candidates: Array<{
     hash: string;
-    categoryId: number;
+    categoryId: number | null;
+    providerCategory: string | null;
     row: StatementRow;
   }> = [];
   const toIgnore: Array<string | null> = [];
@@ -204,44 +196,127 @@ export async function importStatementRows(input: {
       return;
     }
     const categoryId = categoryByHash[hash];
-    if (categoryId === undefined) {
+    const providerCategory = nonBlank(row.providerCategory);
+    if (
+      categoryId === undefined &&
+      !(acceptedPluggy.has(hash) && providerCategory)
+    ) {
       skipped++;
       return;
     }
-    toInsert.push({ hash, categoryId, row });
+    candidates.push({
+      hash,
+      categoryId: categoryId ?? null,
+      providerCategory: acceptedPluggy.has(hash) ? providerCategory : null,
+      row,
+    });
   });
 
   let inserted = 0;
-  if (toInsert.length > 0) {
+  const imported: Array<{ description: string; categoryId: number }> = [];
+  if (candidates.length > 0) {
     await db.transaction(async (tx) => {
-      for (const entry of toInsert) {
-        const result = await tx
-          .insert(expenses)
-          .values({
-            checkingAccountId: accountId,
-            categoryId: entry.categoryId,
-            description: entry.row.description || null,
-            amount: entry.row.amount,
-            expenseDate: entry.row.date,
-            source: "IMPORT",
-            sourceHash: entry.hash,
+      const providerCategoryIds = new Map<string, number>();
+      // Colours already spoken for, so each category the import creates gets
+      // a hue of its own instead of every one of them sharing a default.
+      const usedColors = (
+        await tx
+          .select({ color: expenseCategories.color })
+          .from(expenseCategories)
+          .where(eq(expenseCategories.userId, userId))
+      ).map((row) => row.color);
+      for (const name of new Set(
+        candidates
+          .map((candidate) => candidate.providerCategory)
+          .filter((name): name is string => !!name),
+      )) {
+        // Categories are per-owner, so both the conflict target and the
+        // read-back are keyed by (userId, name) — the same name under another
+        // account is a different category, not a conflict.
+        const color = nextCategoryColor(usedColors);
+        const inserted = await tx
+          .insert(expenseCategories)
+          .values({ userId, name, color })
+          .onConflictDoNothing({
+            target: [expenseCategories.userId, expenseCategories.name],
           })
+          .returning({ id: expenseCategories.id });
+        // Only a row that was actually written claims the colour; on a
+        // conflict the existing category keeps whatever colour it has.
+        if (inserted.length > 0) usedColors.push(color);
+        const [category] = await tx
+          .select({ id: expenseCategories.id })
+          .from(expenseCategories)
+          .where(
+            and(
+              eq(expenseCategories.userId, userId),
+              eq(expenseCategories.name, name),
+            ),
+          );
+        if (category) providerCategoryIds.set(name, category.id);
+      }
+
+      // Shape every row first, then write them in batches: one awaited
+      // INSERT per row turned a 5000-line statement into 5000 sequential
+      // round trips inside a single transaction.
+      const pending: Array<{
+        values: typeof expenses.$inferInsert;
+        description: string;
+        categoryId: number;
+      }> = [];
+
+      for (const candidate of candidates) {
+        const categoryId =
+          candidate.categoryId ??
+          (candidate.providerCategory
+            ? providerCategoryIds.get(candidate.providerCategory)
+            : undefined);
+        if (categoryId === undefined) {
+          skipped++;
+          continue;
+        }
+        pending.push({
+          values: {
+            checkingAccountId: accountId,
+            categoryId,
+            description: candidate.row.description || null,
+            amount: candidate.row.amount,
+            expenseDate: candidate.row.date,
+            source: "IMPORT",
+            sourceHash: candidate.hash,
+          },
+          description: candidate.row.description,
+          categoryId,
+        });
+      }
+
+      // Returning the source hash rather than the id keeps the counters exact:
+      // `onConflictDoNothing` drops rows already imported, so the hashes that
+      // come back are precisely the ones written — and only those are learned
+      // from, so a duplicate never re-teaches the categorizer.
+      for (const batch of chunk(pending, INSERT_CHUNK_SIZE)) {
+        const written = await tx
+          .insert(expenses)
+          .values(batch.map((entry) => entry.values))
           .onConflictDoNothing({ target: expenses.sourceHash })
-          .returning({ id: expenses.id });
-        if (result.length > 0) inserted++;
-        else skipped++;
+          .returning({ sourceHash: expenses.sourceHash });
+        const writtenHashes = new Set(written.map((entry) => entry.sourceHash));
+
+        for (const entry of batch) {
+          if (writtenHashes.has(entry.values.sourceHash!)) {
+            inserted++;
+            imported.push({
+              description: entry.description,
+              categoryId: entry.categoryId,
+            });
+          } else skipped++;
+        }
       }
     });
   }
 
   // Learn from what the user confirmed, so the next import is pre-filled.
-  await rememberCategories(
-    userId,
-    toInsert.map((entry) => ({
-      description: entry.row.description,
-      categoryId: entry.categoryId,
-    })),
-  );
+  await rememberCategories(userId, imported);
   if (toIgnore.length > 0) await rememberIgnored(userId, toIgnore);
 
   return { inserted, skipped };

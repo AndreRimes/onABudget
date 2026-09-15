@@ -4,10 +4,14 @@
 // Materialization is idempotent — each occurrence gets the source hash
 // `recurring:{ruleId}:{YYYY-MM}`, which is UNIQUE on `expenses` — so it is safe
 // to run on every page load without tracking what was already posted.
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { chunk } from "~/lib/chunk";
 import { db } from "~/server/db";
 import { expenses, recurringExpenses } from "~/server/db/schema";
 import { dueOccurrences } from "./recurring-schedule";
+
+/** Rows per statement — see the note in `chunk`. */
+const INSERT_CHUNK_SIZE = 200;
 
 export type RecurringInput = {
   checkingAccountId: number;
@@ -95,23 +99,48 @@ export async function materializeRecurring(
 
   if (pending.length === 0) return { created: 0 };
 
+  // This runs on every visit to Conta Corrente, and `dueOccurrences` emits
+  // every month since each rule started — so nearly all of `pending` already
+  // exists. One read finds the ones that do, and only the rest are written,
+  // in batches, instead of one no-op INSERT per rule per month per visit.
+  const existing = new Set<string>();
+  for (const batch of chunk(
+    pending.map(({ occurrence }) => occurrence.hash),
+    INSERT_CHUNK_SIZE,
+  )) {
+    const rows = await db
+      .select({ sourceHash: expenses.sourceHash })
+      .from(expenses)
+      .where(inArray(expenses.sourceHash, batch));
+    for (const row of rows) if (row.sourceHash) existing.add(row.sourceHash);
+  }
+
+  const missing = pending.filter(
+    ({ occurrence }) => !existing.has(occurrence.hash),
+  );
+  if (missing.length === 0) return { created: 0 };
+
   let created = 0;
   await db.transaction(async (tx) => {
-    for (const { rule, occurrence } of pending) {
+    for (const batch of chunk(missing, INSERT_CHUNK_SIZE)) {
       const result = await tx
         .insert(expenses)
-        .values({
-          checkingAccountId: rule.checkingAccountId,
-          categoryId: rule.categoryId,
-          description: rule.description,
-          amount: rule.amount,
-          expenseDate: occurrence.date,
-          source: "RECURRING",
-          sourceHash: occurrence.hash,
-        })
+        .values(
+          batch.map(({ rule, occurrence }) => ({
+            checkingAccountId: rule.checkingAccountId,
+            categoryId: rule.categoryId,
+            description: rule.description,
+            amount: rule.amount,
+            expenseDate: occurrence.date,
+            source: "RECURRING" as const,
+            sourceHash: occurrence.hash,
+          })),
+        )
+        // Still guarded: a concurrent visit may have written the same month
+        // between the read above and this write.
         .onConflictDoNothing({ target: expenses.sourceHash })
         .returning({ id: expenses.id });
-      if (result.length > 0) created++;
+      created += result.length;
     }
   });
 

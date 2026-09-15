@@ -16,6 +16,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 
 export function RenameAssetDialog({
   assetName,
@@ -36,7 +37,7 @@ export function RenameAssetDialog({
   const utils = api.useUtils();
   const { mutate, isPending } = api.investments.renameAsset.useMutation({
     onSuccess: (result) => {
-      void utils.investments.getPortfolioSnapshot.invalidate();
+      void invalidatePortfolio(utils);
       void utils.investments.getAllFromUser.invalidate();
       void utils.dividends.getAllFromUser.invalidate();
       toast.success(

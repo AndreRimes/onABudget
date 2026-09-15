@@ -8,8 +8,8 @@ export const budgetRouter = createTRPCRouter({
     .input(
       z.object({
         amount: z.number().min(0.01, "O valor do orçamento deve ser positivo"),
-        startPeriod: z.string(),
-        endPeriod: z.string().optional(),
+        startPeriod: z.string().max(32),
+        endPeriod: z.string().max(32).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -30,7 +30,7 @@ export const budgetRouter = createTRPCRouter({
   }),
 
   getActiveForDate: protectedProcedure
-    .input(z.object({ date: z.string() }))
+    .input(z.object({ date: z.string().max(32) }))
     .query(async ({ ctx, input }) => {
       return await budgetRepository.findActiveForDate(
         ctx.session.user.id,
@@ -43,12 +43,15 @@ export const budgetRouter = createTRPCRouter({
       z.object({
         id: z.number(),
         amount: z.number().min(0.01).optional(),
-        startPeriod: z.string().optional(),
-        endPeriod: z.string().optional(),
+        startPeriod: z.string().max(32).optional(),
+        endPeriod: z.string().max(32).optional(),
       }),
     )
-    .mutation(async ({ input }) => {
-      const updated = await budgetRepository.update(input);
+    .mutation(async ({ ctx, input }) => {
+      const updated = await budgetRepository.update({
+        ...input,
+        userId: ctx.session.user.id,
+      });
 
       if (!updated) {
         throw new TRPCError({
@@ -62,8 +65,11 @@ export const budgetRouter = createTRPCRouter({
 
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      const deleted = await budgetRepository.delete(input.id);
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await budgetRepository.delete(
+        ctx.session.user.id,
+        input.id,
+      );
 
       if (!deleted) {
         throw new TRPCError({

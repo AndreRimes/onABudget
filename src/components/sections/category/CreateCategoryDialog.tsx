@@ -6,17 +6,18 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
+import { categoryColorFor } from "~/lib/category-colors";
 import {
   useControllableOpen,
   type ControllableOpenProps,
@@ -27,18 +28,23 @@ export function CreateCategoryDialog(props: ControllableOpenProps = {}) {
   const { isControlled, open, setOpen } = useControllableOpen(props);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [color, setColor] = useState("#FFFFFF");
+  // White on the cream page is an invisible badge, so the field opens on a
+  // palette colour instead — the same one an import would give this name —
+  // until the user picks their own.
+  const [pickedColor, setPickedColor] = useState<string | null>(null);
+  const color = pickedColor ?? categoryColorFor(name);
 
   const utils = api.useUtils();
 
   const { mutate, isPending } = api.category.create.useMutation({
     onSuccess: () => {
-      utils.category.getAll.invalidate();
+      void utils.category.getAll.invalidate();
       toast.success("Categoria criada com sucesso!");
       setOpen(false);
       // Reset form
       setName("");
       setDescription("");
+      setPickedColor(null);
     },
     onError: (error) => {
       toast.error("Erro ao criar categoria: " + error.message);
@@ -65,7 +71,7 @@ export function CreateCategoryDialog(props: ControllableOpenProps = {}) {
       {!isControlled && (
         <DialogTrigger asChild>
           <Button variant="outline">
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="mr-2 h-4 w-4" />
             Nova Categoria
           </Button>
         </DialogTrigger>
@@ -97,7 +103,7 @@ export function CreateCategoryDialog(props: ControllableOpenProps = {}) {
                 type="color"
                 placeholder="Ex: #FF0000, #00FF00, #0000FF..."
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
+                onChange={(e) => setPickedColor(e.target.value)}
                 required
               />
             </div>
@@ -114,7 +120,11 @@ export function CreateCategoryDialog(props: ControllableOpenProps = {}) {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
               Cancelar
             </Button>
             <Button type="submit" disabled={isPending}>

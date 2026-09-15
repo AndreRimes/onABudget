@@ -7,7 +7,7 @@
 //       • proventos  — Rendimento / Dividendo / Juros Sobre Capital Próprio;
 //       • aplicações de renda fixa / tesouro direto — Compra / Venda /
 //         "Compra / Venda" rows, imported as fixed-income trades.
-import * as XLSX from "xlsx";
+import type * as XLSX from "xlsx";
 import {
   asString,
   normalizeHeader,
@@ -104,15 +104,20 @@ function movimentacaoAssetName(product: string): string {
   return normalizeTicker(chosen.replace(/\s+/g, " ").trim());
 }
 
-export function parseB3Workbook(buffer: ArrayBuffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+export async function parseB3Workbook(
+  buffer: ArrayBuffer,
+): Promise<ParseResult> {
+  // SheetJS is ~1 MB; it loads on the first file picked, not with the page.
+  const xlsx: typeof XLSX = await import("xlsx");
+  const workbook = xlsx.read(buffer, { type: "array", cellDates: true });
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error("Planilha vazia");
   const sheet = workbook.Sheets[sheetName]!;
-  const records = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+  const records = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, {
     defval: null,
   });
-  if (records.length === 0) throw new Error("Nenhuma linha encontrada na planilha");
+  if (records.length === 0)
+    throw new Error("Nenhuma linha encontrada na planilha");
 
   // Normalized header -> original key of the first record
   const headerMap = new Map<string, string>();
@@ -142,7 +147,13 @@ export function parseB3Workbook(buffer: ArrayBuffer): ParseResult {
           ? "SELL"
           : null;
 
-      if (!date || !side || typeof ticker !== "string" || !quantity || !amount) {
+      if (
+        !date ||
+        !side ||
+        typeof ticker !== "string" ||
+        !quantity ||
+        !amount
+      ) {
         ignoredRows++;
         continue;
       }

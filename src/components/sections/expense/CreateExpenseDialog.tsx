@@ -7,22 +7,22 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "~/components/ui/button";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 import { isSpendingAccount } from "~/lib/account-type";
@@ -36,7 +36,7 @@ function formatDateInput(input: string): string {
 }
 
 function parseDisplayDate(displayDate: string): string {
-  if (!displayDate || displayDate.length !== 10) return "";
+  if (displayDate?.length !== 10) return "";
   const parts = displayDate.split("/");
   if (parts.length !== 3) return "";
   const [day, month, year] = parts;
@@ -61,8 +61,8 @@ export function CreateExpenseDialog() {
 
   const { mutate, isPending } = api.expenses.create.useMutation({
     onSuccess: () => {
-      utils.expenses.getAllFromUser.invalidate();
-      utils.expenses.getAllFromAccount.invalidate();
+      void utils.expenses.getAllFromUser.invalidate();
+      void utils.expenses.getAllFromAccount.invalidate();
       toast.success("Despesa criada com sucesso!");
       setOpen(false);
       setAccountId("");
@@ -97,14 +97,16 @@ export function CreateExpenseDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button>
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="mr-2 h-4 w-4" />
           Nova Despesa
         </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Criar Nova Despesa</DialogTitle>
-          <DialogDescription>Adicione uma nova despesa à sua conta.</DialogDescription>
+          <DialogDescription>
+            Adicione uma nova despesa à sua conta.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="grid gap-4 py-4">
@@ -132,7 +134,10 @@ export function CreateExpenseDialog() {
                 </SelectTrigger>
                 <SelectContent>
                   {categories?.map((category) => (
-                    <SelectItem key={category.id} value={category.id.toString()}>
+                    <SelectItem
+                      key={category.id}
+                      value={category.id.toString()}
+                    >
                       {category.name}
                     </SelectItem>
                   ))}
@@ -159,7 +164,7 @@ export function CreateExpenseDialog() {
               <Input
                 id="date"
                 type="text"
-                placeholder="DD/MM/YYYY"
+                placeholder="DD/MM/AAAA"
                 value={date}
                 onChange={(e) => setDate(formatDateInput(e.target.value))}
                 maxLength={10}
@@ -179,7 +184,11 @@ export function CreateExpenseDialog() {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+            >
               Cancelar
             </Button>
             <Button type="submit" disabled={isPending}>

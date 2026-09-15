@@ -2,7 +2,8 @@
 // choices. No external service and no cost: the signal is entirely the
 // expenses they already categorized, plus the explicit corrections recorded in
 // `expense_category_rules` during previous imports.
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { chunk } from "~/lib/chunk";
 import { normalizeMerchant } from "~/lib/merchant";
 import { db } from "~/server/db";
 import {
@@ -130,6 +131,9 @@ export async function loadCategorizer(userId: string) {
   };
 }
 
+/** Rows per INSERT statement — see the note in `chunk`. */
+const INSERT_CHUNK_SIZE = 200;
+
 /**
  * Records the categories chosen during an import so the next one already knows
  * them. Called with whatever the user confirmed in the preview — including
@@ -146,22 +150,32 @@ export async function rememberCategories(
   }
   if (byPattern.size === 0) return;
 
-  for (const [pattern, categoryId] of byPattern) {
+  // Batched, not one statement per merchant: a big statement has hundreds of
+  // distinct merchants, and this used to be two round trips for each of them,
+  // serialized, after the user had already clicked "import".
+  const rules = [...byPattern].map(([pattern, categoryId]) => ({
+    userId,
+    pattern,
+    categoryId,
+  }));
+  for (const batch of chunk(rules, INSERT_CHUNK_SIZE)) {
     await db
       .insert(expenseCategoryRules)
-      .values({ userId, pattern, categoryId })
+      .values(batch)
       .onConflictDoUpdate({
         target: [expenseCategoryRules.userId, expenseCategoryRules.pattern],
-        set: { categoryId },
+        set: { categoryId: sql`excluded.category_id` },
       });
-    // A merchant can't be both a category and "not an expense"; the newer
-    // decision wins.
+  }
+  // A merchant can't be both a category and "not an expense"; the newer
+  // decision wins.
+  for (const batch of chunk([...byPattern.keys()], INSERT_CHUNK_SIZE)) {
     await db
       .delete(expenseIgnoreRules)
       .where(
         and(
           eq(expenseIgnoreRules.userId, userId),
-          eq(expenseIgnoreRules.pattern, pattern),
+          inArray(expenseIgnoreRules.pattern, batch),
         ),
       );
   }
@@ -175,13 +189,13 @@ export async function rememberIgnored(
   userId: string,
   descriptions: Array<string | null>,
 ) {
-  const patterns = new Set(
-    descriptions.map(normalizeMerchant).filter((key) => key !== ""),
-  );
-  for (const pattern of patterns) {
+  const patterns = [
+    ...new Set(descriptions.map(normalizeMerchant).filter((key) => key !== "")),
+  ];
+  for (const batch of chunk(patterns, INSERT_CHUNK_SIZE)) {
     await db
       .insert(expenseIgnoreRules)
-      .values({ userId, pattern })
+      .values(batch.map((pattern) => ({ userId, pattern })))
       .onConflictDoNothing({
         target: [expenseIgnoreRules.userId, expenseIgnoreRules.pattern],
       });

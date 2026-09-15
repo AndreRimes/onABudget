@@ -23,6 +23,9 @@ export interface EngineTransaction {
   // When set, the holding is marked to market from official Tesouro Direto PU
   // (fed in via `tesouroCandles`) instead of accruing a fixed-income yield.
   tesouroTitle: string | null;
+  // When set, the holding is a fund share and is marked to market from the
+  // CVM's daily quota series (fed in via `fundCandles`).
+  fundCnpj: string | null;
 }
 
 export interface EngineDividend {
@@ -33,6 +36,11 @@ export interface EngineDividend {
 
 export interface SnapshotHolding {
   assetName: string;
+  /**
+   * Readable name for an asset whose key is a code (a fund CNPJ, a CDB code).
+   * Null when the key already reads as a name — a ticker needs no translation.
+   */
+  label: string | null;
   assetTypeId: number;
   assetTypeName: string;
   quantity: number;
@@ -53,6 +61,7 @@ export interface SnapshotHolding {
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
   tesouroTitle: string | null;
+  fundCnpj: string | null;
 }
 
 export interface SnapshotPoint {
@@ -104,9 +113,17 @@ interface AssetState {
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
   tesouroTitle: string | null;
+  fundCnpj: string | null;
   // per-asset snapshot taken when the replay crosses the range start
   startGain: number;
   startValue: number;
+}
+
+/** `YYYY-MM-DD` of a UTC-midnight Date, without going through toISOString. */
+function isoDayOf(date: Date): string {
+  const month = date.getUTCMonth() + 1;
+  const day = date.getUTCDate();
+  return `${date.getUTCFullYear()}-${month < 10 ? "0" : ""}${month}-${day < 10 ? "0" : ""}${day}`;
 }
 
 function addDaysIso(iso: string, days: number): string {
@@ -121,7 +138,8 @@ function addMonthsIso(iso: string, months: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function periodStartIso(range: TimeRange, today: string): string | null {
+/** First day a range covers, or null for "max" — everything since the first trade. */
+export function periodStartIso(range: TimeRange, today: string): string | null {
   switch (range) {
     case "1d":
       return addDaysIso(today, -1);
@@ -147,6 +165,9 @@ export function computePortfolioSnapshot(input: {
   quotes: Map<string, QuoteResult>;
   candles: Map<string, CandlePoint[]>;
   tesouroCandles: Map<string, CandlePoint[]>; // assetName -> daily PU series
+  fundCandles: Map<string, CandlePoint[]>; // assetName -> daily quota series
+  /** assetName -> readable name, for assets whose key is a code. */
+  assetLabels: Map<string, string>;
   /** benchmark id -> (ISO date -> decimal daily return) */
   benchmarks: Map<string, Map<string, number>>;
   range: TimeRange;
@@ -159,6 +180,8 @@ export function computePortfolioSnapshot(input: {
     quotes,
     candles,
     tesouroCandles,
+    fundCandles,
+    assetLabels,
     benchmarks,
     range,
     today,
@@ -220,6 +243,7 @@ export function computePortfolioSnapshot(input: {
         fixedIncomeRate: tx.fixedIncomeRate,
         fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
         tesouroTitle: tx.tesouroTitle,
+        fundCnpj: tx.fundCnpj,
         startGain: 0,
         startValue: 0,
       };
@@ -257,7 +281,13 @@ export function computePortfolioSnapshot(input: {
   const assetTotalGain = (state: AssetState): number =>
     state.marketValue + state.dividendsAccumulated - state.netDeposits;
 
-  for (let day = replayStart; day <= today; day = addDaysIso(day, 1)) {
+  // One Date, stepped in place: building a fresh one per day and formatting
+  // it through toISOString was the single most expensive operation in this
+  // loop, on a loop that runs once per calendar day since the first trade.
+  const cursor = new Date(`${replayStart}T00:00:00Z`);
+  const last = new Date(`${today}T00:00:00Z`).getTime();
+  for (; cursor.getTime() <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const day = isoDayOf(cursor);
     // CDI still drives fixed-income accrual below, so it is read out by name
     // even though every benchmark compounds generically.
     const cdiRate = benchmarks.get("CDI")?.get(day) ?? 0;
@@ -337,14 +367,22 @@ export function computePortfolioSnapshot(input: {
 
     // 4) Mark market assets to the day's price (forward-filled candles;
     //    today's point prefers the live quote).
+    // The day's total is summed in the same pass, rather than in one more walk
+    // over every asset afterwards.
+    let totalValue = 0;
     for (const [assetName, state] of assets) {
       // Accrual fixed income keeps its compounded marketValue (step 1). Tesouro
       // and market assets are priced here — Tesouro from its official PU series,
       // everything else from brapi candles + today's live quote.
-      if (state.isFixedIncome && !state.tesouroTitle) continue;
+      if (state.isFixedIncome && !state.tesouroTitle) {
+        totalValue += state.marketValue;
+        continue;
+      }
       const assetCandles = state.tesouroTitle
         ? tesouroCandles.get(assetName)
-        : candles.get(assetName);
+        : state.fundCnpj
+          ? fundCandles.get(assetName)
+          : candles.get(assetName);
       if (assetCandles) {
         while (
           state.candleIndex < assetCandles.length &&
@@ -354,7 +392,9 @@ export function computePortfolioSnapshot(input: {
           state.candleIndex++;
         }
       }
-      if (day === today && !state.tesouroTitle) {
+      // Neither Tesouro nor funds have an intraday quote: their last published
+      // price *is* the price, and for a fund it is a few days old by design.
+      if (day === today && !state.tesouroTitle && !state.fundCnpj) {
         const quote = quotes.get(assetName);
         if (quote?.price != null) state.lastPrice = quote.price;
       }
@@ -362,10 +402,9 @@ export function computePortfolioSnapshot(input: {
         state.lastPrice ??
         (state.quantity > 0 ? state.costBasis / state.quantity : 0);
       state.marketValue = state.quantity * price;
+      totalValue += state.marketValue;
     }
 
-    let totalValue = 0;
-    for (const state of assets.values()) totalValue += state.marketValue;
     const totalGain = totalValue + dividendsAccumulated - netDeposits;
 
     if (day === yesterdayIso) yesterdayGain = totalGain;
@@ -432,14 +471,16 @@ export function computePortfolioSnapshot(input: {
 
     totalValue += state.marketValue;
 
-    const quote = state.isFixedIncome ? undefined : quotes.get(assetName);
-    const priceStatus: SnapshotHolding["priceStatus"] = state.tesouroTitle
-      ? state.lastPrice != null
-        ? "ok"
-        : "unavailable"
-      : state.isFixedIncome
-        ? "fixed_income"
-        : (quote?.status ?? "unavailable");
+    const quote =
+      state.isFixedIncome || state.fundCnpj ? undefined : quotes.get(assetName);
+    const priceStatus: SnapshotHolding["priceStatus"] =
+      state.tesouroTitle || state.fundCnpj
+        ? state.lastPrice != null
+          ? "ok"
+          : "unavailable"
+        : state.isFixedIncome
+          ? "fixed_income"
+          : (quote?.status ?? "unavailable");
 
     if (!state.isFixedIncome && quote && quote.status !== "ok") {
       issues.push({
@@ -462,10 +503,12 @@ export function computePortfolioSnapshot(input: {
       state.quantity > 0 ? state.marketValue / state.quantity : 0;
     const unrealizedGain = state.marketValue - state.costBasis;
     const periodGain = assetTotalGain(state) - state.startGain;
-    const periodBase = state.startValue > 0 ? state.startValue : state.costBasis;
+    const periodBase =
+      state.startValue > 0 ? state.startValue : state.costBasis;
 
     holdings.push({
       assetName,
+      label: assetLabels.get(assetName) ?? null,
       assetTypeId: state.assetTypeId,
       assetTypeName: assetTypeNames.get(state.assetTypeId) ?? "Outros",
       quantity: state.quantity,
@@ -487,6 +530,7 @@ export function computePortfolioSnapshot(input: {
       fixedIncomeRate: state.fixedIncomeRate,
       fixedIncomeMaturityDate: state.fixedIncomeMaturityDate,
       tesouroTitle: state.tesouroTitle,
+      fundCnpj: state.fundCnpj,
     });
   }
 

@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import z from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { accountRepository } from "../accounts/repository";
+import { assetTypeRepository } from "../asset-type/repository";
 import { investmentRepository } from "./repository";
 import { b3RowSchema, importB3Rows, previewB3Rows } from "./b3-import";
 import { searchStocks } from "~/server/services/brapi";
@@ -16,13 +17,46 @@ async function assertOwnsAccount(userId: string, accountId: number) {
   }
 }
 
+/** Rejects an `assetTypeId` the caller doesn't own — types are per user. */
+async function assertOwnsAssetTypes(userId: string, assetTypeIds: number[]) {
+  if (!(await assetTypeRepository.ownsAll(userId, assetTypeIds))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Tipo de ativo inválido",
+    });
+  }
+}
+
+/**
+ * Minimum gap between two forced quote refreshes by the same user. A forced
+ * refresh bypasses every cache and costs one metered provider request per
+ * held symbol, so without a floor one account clicking in a loop could spend
+ * the whole day's brapi quota. In-memory is enough: the app runs as a single
+ * process, and a restart merely forgives one extra refresh.
+ */
+const REFRESH_COOLDOWN_MS = 30_000;
+const lastForcedRefresh = new Map<string, number>();
+
+function assertRefreshAllowed(userId: string) {
+  const now = Date.now();
+  const last = lastForcedRefresh.get(userId) ?? 0;
+  const waitMs = last + REFRESH_COOLDOWN_MS - now;
+  if (waitMs > 0) {
+    throw new TRPCError({
+      code: "TOO_MANY_REQUESTS",
+      message: `Aguarde ${Math.ceil(waitMs / 1000)}s para atualizar de novo`,
+    });
+  }
+  lastForcedRefresh.set(userId, now);
+}
+
 export const investmentsRouter = createTRPCRouter({
   create: protectedProcedure
     .input(
       z.object({
         investmentAccountId: z.number(),
         assetTypeId: z.number(),
-        assetName: z.string().min(1),
+        assetName: z.string().max(200).min(1),
         transactionType: z.enum(["BUY", "SELL"]),
         quantity: z.number().min(0.00001),
         pricePerUnit: z.number().min(0.01),
@@ -31,11 +65,12 @@ export const investmentsRouter = createTRPCRouter({
         isFixedIncome: z.boolean().optional(),
         fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]).nullish(),
         fixedIncomeRate: z.number().nullish(),
-        fixedIncomeMaturityDate: z.string().nullish(),
+        fixedIncomeMaturityDate: z.string().max(32).nullish(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
       await assertOwnsAccount(ctx.session.user.id, input.investmentAccountId);
+      await assertOwnsAssetTypes(ctx.session.user.id, [input.assetTypeId]);
 
       return await investmentRepository.create({
         investmentAccountId: input.investmentAccountId,
@@ -59,8 +94,8 @@ export const investmentsRouter = createTRPCRouter({
         .object({
           dateRange: z
             .object({
-              startDate: z.string(),
-              endDate: z.string(),
+              startDate: z.string().max(32),
+              endDate: z.string().max(32),
             })
             .optional(),
         })
@@ -80,7 +115,7 @@ export const investmentsRouter = createTRPCRouter({
   getByAssetName: protectedProcedure
     .input(
       z.object({
-        assetName: z.string(),
+        assetName: z.string().max(200),
       }),
     )
     .query(async ({ ctx, input }) => {
@@ -96,7 +131,7 @@ export const investmentsRouter = createTRPCRouter({
         id: z.number(),
         investmentAccountId: z.number().optional(),
         assetTypeId: z.number().optional(),
-        assetName: z.string().min(1).optional(),
+        assetName: z.string().max(200).min(1).optional(),
         transactionType: z.enum(["BUY", "SELL"]).optional(),
         quantity: z.number().min(0.00001).optional(),
         pricePerUnit: z.number().min(0.01).optional(),
@@ -108,7 +143,7 @@ export const investmentsRouter = createTRPCRouter({
         isFixedIncome: z.boolean().optional(),
         fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]).nullish(),
         fixedIncomeRate: z.number().nullish(),
-        fixedIncomeMaturityDate: z.string().nullish(),
+        fixedIncomeMaturityDate: z.string().max(32).nullish(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -121,6 +156,11 @@ export const investmentsRouter = createTRPCRouter({
           ctx.session.user.id,
           updateData.investmentAccountId,
         );
+      }
+      if (updateData.assetTypeId !== undefined) {
+        await assertOwnsAssetTypes(ctx.session.user.id, [
+          updateData.assetTypeId,
+        ]);
       }
 
       const updated = await investmentRepository.update(
@@ -154,7 +194,7 @@ export const investmentsRouter = createTRPCRouter({
     }),
 
   deleteAsset: protectedProcedure
-    .input(z.object({ assetName: z.string().min(1) }))
+    .input(z.object({ assetName: z.string().max(200).min(1) }))
     .mutation(async ({ ctx, input }) => {
       return await investmentRepository.deleteByAssetName(
         ctx.session.user.id,
@@ -165,8 +205,8 @@ export const investmentsRouter = createTRPCRouter({
   renameAsset: protectedProcedure
     .input(
       z.object({
-        assetName: z.string().min(1),
-        newAssetName: z.string().min(1),
+        assetName: z.string().max(200).min(1),
+        newAssetName: z.string().max(200).min(1),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -180,7 +220,7 @@ export const investmentsRouter = createTRPCRouter({
   setFixedIncomeYield: protectedProcedure
     .input(
       z.object({
-        assetName: z.string().min(1),
+        assetName: z.string().max(200).min(1),
         fixedIncomeYieldType: z.enum(["CDI_PERCENTAGE", "PREFIXED"]),
         fixedIncomeRate: z.number().positive(),
         fixedIncomeMaturityDate: z
@@ -205,12 +245,10 @@ export const investmentsRouter = createTRPCRouter({
     .input(
       z
         .object({
-          range: z
-            .enum(["1d", "5d", "1mo", "6mo", "1y", "max"])
-            .default("max"),
+          range: z.enum(["1d", "5d", "1mo", "6mo", "1y", "max"]).default("max"),
           includeSeries: z.boolean().default(true),
           // Narrows the whole snapshot to a single asset (detail page).
-          assetName: z.string().min(1).optional(),
+          assetName: z.string().max(200).min(1).optional(),
         })
         .optional(),
     )
@@ -229,17 +267,20 @@ export const investmentsRouter = createTRPCRouter({
    */
   refreshQuotes: protectedProcedure
     .input(
-      z.object({ assetName: z.string().min(1).optional() }).optional(),
+      z.object({ assetName: z.string().max(200).min(1).optional() }).optional(),
     )
     .mutation(async ({ ctx, input }) => {
+      assertRefreshAllowed(ctx.session.user.id);
       return await investmentRepository.refreshQuotes(
         ctx.session.user.id,
         input?.assetName,
       );
     }),
 
+  // Every call is a metered upstream request; a query shorter than two
+  // characters cannot name a ticker and a longer one than thirty never does.
   searchStocks: protectedProcedure
-    .input(z.object({ query: z.string() }))
+    .input(z.object({ query: z.string().trim().min(2).max(30) }))
     .query(async ({ input }) => {
       return await searchStocks(input.query);
     }),
@@ -253,12 +294,16 @@ export const investmentsRouter = createTRPCRouter({
   importB3: protectedProcedure
     .input(
       z.object({
-        accountByInstitution: z.record(z.string(), z.number()),
-        assetTypeByTicker: z.record(z.string(), z.number()),
+        accountByInstitution: z.record(z.string().max(200), z.number()),
+        assetTypeByTicker: z.record(z.string().max(200), z.number()),
         rows: z.array(b3RowSchema).max(5000),
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      await assertOwnsAssetTypes(
+        ctx.session.user.id,
+        Object.values(input.assetTypeByTicker),
+      );
       return await importB3Rows({
         userId: ctx.session.user.id,
         accountByInstitution: input.accountByInstitution,

@@ -22,11 +22,11 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { api, type RouterOutputs } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
 import { formatDateInput, parseDisplayDate, toDisplayDate } from "./date-input";
 import { formatCurrency } from "./format";
 
-type Transaction =
-  RouterOutputs["investments"]["getByAssetName"][number];
+type Transaction = RouterOutputs["investments"]["getByAssetName"][number];
 
 export function EditTransactionDialog({
   transaction,
@@ -80,7 +80,7 @@ export function EditTransactionDialog({
     onSuccess: () => {
       void utils.investments.getByAssetName.invalidate();
       void utils.investments.getAllFromUser.invalidate();
-      void utils.investments.getPortfolioSnapshot.invalidate();
+      void invalidatePortfolio(utils);
       toast.success("Transação atualizada!");
       onOpenChange(false);
     },
@@ -232,9 +232,9 @@ export function EditTransactionDialog({
               </div>
             )}
 
-            <div className="rounded-lg border bg-muted/50 p-3">
+            <div className="bg-muted/50 border-2 p-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">
+                <span className="text-muted-foreground text-sm">
                   Valor Total:
                 </span>
                 <span className="text-lg font-bold">

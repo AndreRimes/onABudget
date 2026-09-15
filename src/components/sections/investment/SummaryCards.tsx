@@ -1,13 +1,11 @@
 "use client";
 
 import { TrendingDown, TrendingUp } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "~/components/ui/card";
-import { BENCHMARKS, BENCHMARK_ORDER } from "~/server/api/investments/benchmarks";
+  BENCHMARKS,
+  BENCHMARK_ORDER,
+} from "~/server/api/investments/benchmarks";
 import type { RouterOutputs } from "~/trpc/react";
 import {
   formatCurrency,
@@ -28,7 +26,7 @@ function StatCard({
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
+        <CardTitle className="text-muted-foreground text-sm font-medium">
           {label}
         </CardTitle>
       </CardHeader>
@@ -67,7 +65,7 @@ export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
           </p>
         )}
         {summary.quotesAsOf && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             Cotações de{" "}
             {new Date(summary.quotesAsOf).toLocaleTimeString("pt-BR", {
               hour: "2-digit",
@@ -82,7 +80,7 @@ export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
           {formatCurrency(summary.totalInvested)}
         </div>
         {summary.realizedGain !== 0 && (
-          <p className="text-xs text-muted-foreground tabular-nums">
+          <p className="text-muted-foreground text-xs tabular-nums">
             Ganho realizado: {formatCurrency(summary.realizedGain)}
           </p>
         )}
@@ -109,7 +107,7 @@ export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
           {formatSignedPercent(summary.periodGainPercent)} de rentabilidade
         </p>
         {summary.periodDividends > 0 && (
-          <p className="text-xs text-muted-foreground tabular-nums">
+          <p className="text-muted-foreground text-xs tabular-nums">
             {formatCurrency(valueGain)} valorização +{" "}
             {formatCurrency(summary.periodDividends)} proventos
           </p>
@@ -120,7 +118,7 @@ export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
         <div className="text-2xl font-bold tabular-nums">
           {formatCurrency(summary.dividends12m)}
         </div>
-        <p className="text-xs text-muted-foreground tabular-nums">
+        <p className="text-muted-foreground text-xs tabular-nums">
           Média mensal: {formatCurrency(summary.monthlyIncome)}
         </p>
       </StatCard>
@@ -146,9 +144,9 @@ export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
               </li>
             ))}
           </ul>
-          <p className="pt-1 text-xs text-muted-foreground">
-            Quanto a carteira rendeu a mais (ou a menos) que cada índice sobre os
-            mesmos aportes.
+          <p className="text-muted-foreground pt-1 text-xs">
+            Quanto a carteira rendeu a mais (ou a menos) que cada índice sobre
+            os mesmos aportes.
           </p>
         </StatCard>
       )}
