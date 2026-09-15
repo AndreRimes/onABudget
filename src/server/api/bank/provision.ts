@@ -112,6 +112,92 @@ function localType(providerAccount: PluggyAccount): AccountType {
   return providerAccount.type === "CREDIT" ? "CREDIT_CARD" : "CHECKING";
 }
 
+interface LocalAccount {
+  id: number;
+  name: string;
+  accountType: AccountType;
+}
+
+/** Everything the matching/creation of one account needs to know. */
+interface ProvisionContext {
+  userId: string;
+  userAccounts: LocalAccount[];
+  /** Local accounts already fed by some provider account — off limits. */
+  takenAccountIds: Set<number>;
+  takenNames: Set<string>;
+}
+
+/**
+ * Reuse the local account the fuzzy matcher is confident about, or create a
+ * new one. Either way the account is marked taken so the next provider
+ * account of the same connection cannot claim it too.
+ */
+async function matchOrCreateAccount(
+  ctx: ProvisionContext,
+  input: {
+    /** What the linking panel would match on. */
+    hint: string;
+    accountType: AccountType;
+    /** Name for a created account, before de-duplication. */
+    name: string;
+    number: string | null;
+    balance: number;
+  },
+): Promise<ProvisionedAccount> {
+  const matched = matchAccountId(
+    input.hint,
+    ctx.userAccounts.filter(
+      (account) =>
+        account.accountType === input.accountType &&
+        !ctx.takenAccountIds.has(account.id),
+    ),
+  );
+  if (matched !== null) {
+    ctx.takenAccountIds.add(matched);
+    return {
+      accountId: matched,
+      name: ctx.userAccounts.find((account) => account.id === matched)!.name,
+      created: false,
+    };
+  }
+
+  const [created] = await db
+    .insert(accounts)
+    .values({
+      userId: ctx.userId,
+      name: uniqueName(input.name, input.number, ctx.takenNames),
+      accountType: input.accountType,
+      balance: input.balance,
+    })
+    .returning({ id: accounts.id, name: accounts.name });
+  ctx.takenNames.add(nameKey(created!.name));
+  ctx.userAccounts.push({ ...created!, accountType: input.accountType });
+  ctx.takenAccountIds.add(created!.id);
+  return { accountId: created!.id, name: created!.name, created: true };
+}
+
+async function linkProviderAccount(
+  connectionId: number,
+  providerAccount: PluggyAccount,
+  accountId: number,
+): Promise<void> {
+  const link = {
+    connectionId,
+    accountId,
+    providerType: providerAccount.type,
+    providerSubtype: providerAccount.subtype,
+    providerName: providerAccount.name,
+    lastBalance: providerAccount.balance,
+  };
+  await db
+    .insert(bankAccountLinks)
+    .values({ ...link, providerAccountId: providerAccount.id })
+    .onConflictDoUpdate({
+      target: bankAccountLinks.providerAccountId,
+      set: link,
+    });
+}
+
 /**
  * Create (or adopt) one local account per provider account of a connection,
  * link them, and give the connection an investment account when it holds
@@ -169,15 +255,17 @@ export async function provisionConnectionAccounts(
   // A local account already fed by some provider account is off limits: two
   // provider accounts pointing at one ledger account would merge two banks'
   // statements into a single balance.
-  const takenAccountIds = new Set<number>([
-    ...liveLinks.map((link) => link.accountId),
-    ...connections
-      .map((item) => item.investmentAccountId)
-      .filter((id): id is number => id !== null && localAccountIds.has(id)),
-  ]);
-  const takenNames = new Set(
-    userAccounts.map((account) => nameKey(account.name)),
-  );
+  const ctx: ProvisionContext = {
+    userId,
+    userAccounts,
+    takenAccountIds: new Set<number>([
+      ...liveLinks.map((link) => link.accountId),
+      ...connections
+        .map((item) => item.investmentAccountId)
+        .filter((id): id is number => id !== null && localAccountIds.has(id)),
+    ]),
+    takenNames: new Set(userAccounts.map((account) => nameKey(account.name))),
+  };
 
   const result: ProvisionResult = {
     created: [],
@@ -188,80 +276,25 @@ export async function provisionConnectionAccounts(
   for (const providerAccount of providerAccounts) {
     if (linkedProviderAccounts.has(providerAccount.id)) continue;
 
-    const accountType = localType(providerAccount);
-    const name = providerAccountName(providerAccount);
-    // Same string the linking panel matches on, so the button links exactly
-    // where the panel's suggestion said it would.
-    const matched = matchAccountId(
-      `${connection.connectorName} ${providerAccount.name}`,
-      userAccounts.filter(
-        (account) =>
-          account.accountType === accountType &&
-          !takenAccountIds.has(account.id),
-      ),
-    );
-
-    let entry: ProvisionedAccount;
-    if (matched !== null) {
-      entry = {
-        accountId: matched,
-        name: userAccounts.find((account) => account.id === matched)!.name,
-        created: false,
-      };
-    } else {
-      const accountName = uniqueName(name, providerAccount.number, takenNames);
-      const [created] = await db
-        .insert(accounts)
-        .values({
-          userId,
-          name: accountName,
-          accountType,
-          // A credit card's provider balance is the open invoice, not money
-          // held — the same reason refreshLinkedBalances skips CREDIT.
-          balance:
-            providerAccount.type === "BANK" ? providerAccount.balance : 0,
-        })
-        .returning({ id: accounts.id, name: accounts.name });
-      takenNames.add(nameKey(created!.name));
-      userAccounts.push({
-        id: created!.id,
-        name: created!.name,
-        accountType,
-      });
-      entry = { accountId: created!.id, name: created!.name, created: true };
-    }
-
-    await db
-      .insert(bankAccountLinks)
-      .values({
-        connectionId: connection.id,
-        providerAccountId: providerAccount.id,
-        accountId: entry.accountId,
-        providerType: providerAccount.type,
-        providerSubtype: providerAccount.subtype,
-        providerName: providerAccount.name,
-        lastBalance: providerAccount.balance,
-      })
-      .onConflictDoUpdate({
-        target: bankAccountLinks.providerAccountId,
-        set: {
-          connectionId: connection.id,
-          accountId: entry.accountId,
-          providerType: providerAccount.type,
-          providerSubtype: providerAccount.subtype,
-          providerName: providerAccount.name,
-          lastBalance: providerAccount.balance,
-        },
-      });
-
-    takenAccountIds.add(entry.accountId);
+    const entry = await matchOrCreateAccount(ctx, {
+      // Same string the linking panel matches on, so the button links exactly
+      // where the panel's suggestion said it would.
+      hint: `${connection.connectorName} ${providerAccount.name}`,
+      accountType: localType(providerAccount),
+      name: providerAccountName(providerAccount),
+      number: providerAccount.number,
+      // A credit card's provider balance is the open invoice, not money
+      // held — the same reason refreshLinkedBalances skips CREDIT.
+      balance: providerAccount.type === "BANK" ? providerAccount.balance : 0,
+    });
+    await linkProviderAccount(connection.id, providerAccount, entry.accountId);
     (entry.created ? result.created : result.linked).push(entry);
   }
 
-  if (
-    connection.investmentAccountId === null ||
-    !localAccountIds.has(connection.investmentAccountId)
-  ) {
+  const hasInvestmentAccount =
+    connection.investmentAccountId !== null &&
+    localAccountIds.has(connection.investmentAccountId);
+  if (!hasInvestmentAccount) {
     // Only asked once the accounts are settled, and only when it can still
     // change something — it is a second round trip to the provider.
     const holdings = await listInvestments(connection.itemId);
@@ -270,43 +303,13 @@ export async function provisionConnectionAccounts(
         providerAccounts,
         connection.connectorName,
       );
-      const matched = matchAccountId(
-        `${connection.connectorName} ${institution}`,
-        userAccounts.filter(
-          (account) =>
-            account.accountType === "INVESTMENT" &&
-            !takenAccountIds.has(account.id),
-        ),
-      );
-
-      if (matched !== null) {
-        result.investmentAccount = {
-          accountId: matched,
-          name: userAccounts.find((account) => account.id === matched)!.name,
-          created: false,
-        };
-      } else {
-        const [created] = await db
-          .insert(accounts)
-          .values({
-            userId,
-            name: uniqueName(
-              `${institution} - Investimentos`,
-              null,
-              takenNames,
-            ),
-            accountType: "INVESTMENT",
-            balance: 0,
-          })
-          .returning({ id: accounts.id, name: accounts.name });
-        takenNames.add(nameKey(created!.name));
-        result.investmentAccount = {
-          accountId: created!.id,
-          name: created!.name,
-          created: true,
-        };
-      }
-
+      result.investmentAccount = await matchOrCreateAccount(ctx, {
+        hint: `${connection.connectorName} ${institution}`,
+        accountType: "INVESTMENT",
+        name: `${institution} - Investimentos`,
+        number: null,
+        balance: 0,
+      });
       await db
         .update(bankConnections)
         .set({ investmentAccountId: result.investmentAccount.accountId })

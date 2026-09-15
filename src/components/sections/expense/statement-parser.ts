@@ -168,6 +168,21 @@ function previewCell(value: unknown): string {
   return "";
 }
 
+/**
+ * Direction of a row: an explicit type column wins; otherwise the sign does,
+ * but only when the file uses signs at all.
+ */
+function rowKind(
+  type: string,
+  amount: number,
+  hasNegatives: boolean,
+): "debit" | "credit" {
+  if (type.startsWith("credito") || type.startsWith("entrada")) return "credit";
+  if (type.startsWith("debito") || type.startsWith("saida")) return "debit";
+  if (!hasNegatives) return "debit";
+  return amount < 0 ? "debit" : "credit";
+}
+
 export async function parseStatementSpreadsheet(
   buffer: ArrayBuffer,
   mapping?: ColumnMapping,
@@ -218,14 +233,7 @@ export async function parseStatementSpreadsheet(
       continue;
     }
 
-    let kind: "debit" | "credit";
-    if (row.type.startsWith("credito") || row.type.startsWith("entrada")) {
-      kind = "credit";
-    } else if (row.type.startsWith("debito") || row.type.startsWith("saida")) {
-      kind = "debit";
-    } else {
-      kind = hasNegatives ? (row.amount < 0 ? "debit" : "credit") : "debit";
-    }
+    const kind = rowKind(row.type, row.amount, hasNegatives);
 
     rows.push({
       kind,

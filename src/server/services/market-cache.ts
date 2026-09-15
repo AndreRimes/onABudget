@@ -144,6 +144,209 @@ function rangeForDays(days: number): BrapiRange {
   return "3mo";
 }
 
+type MarketSymbolMeta = typeof marketSymbols.$inferSelect;
+
+const NOT_FOUND_QUOTE: QuoteResult = {
+  price: null,
+  previousClose: null,
+  status: "not_found",
+  asOf: null,
+};
+
+/**
+ * The cached answer for a symbol, or null when it has to be fetched: a fresh
+ * price, or a "not found" verdict still within its negative-cache window.
+ */
+function cachedQuote(
+  meta: MarketSymbolMeta | undefined,
+  now: number,
+): QuoteResult | null {
+  if (
+    meta?.status === "NOT_FOUND" &&
+    meta.updatedAt &&
+    now - meta.updatedAt.getTime() < NOT_FOUND_TTL_MS
+  ) {
+    marketCacheLookups.inc({ kind: "quote", result: "negative_hit" });
+    return NOT_FOUND_QUOTE;
+  }
+  if (
+    meta?.lastPrice != null &&
+    meta.lastPriceAt &&
+    now - meta.lastPriceAt.getTime() < QUOTE_TTL_MS
+  ) {
+    marketCacheLookups.inc({ kind: "quote", result: "hit" });
+    return {
+      price: meta.lastPrice,
+      previousClose: meta.previousClose,
+      status: "ok",
+      asOf: meta.lastPriceAt,
+    };
+  }
+  marketCacheLookups.inc({ kind: "quote", result: "miss" });
+  return null;
+}
+
+/** Last known price served as "stale", or "unavailable" when there is none. */
+function lastKnownQuote(meta: MarketSymbolMeta | undefined): QuoteResult {
+  if (meta?.lastPrice != null) {
+    return {
+      price: meta.lastPrice,
+      previousClose: meta.previousClose,
+      status: "stale",
+      asOf: meta.lastPriceAt,
+    };
+  }
+  return {
+    price: null,
+    previousClose: null,
+    status: "unavailable",
+    asOf: null,
+  };
+}
+
+/**
+ * fetchQuotes, with a provider outage reported as "every symbol failed
+ * transiently" instead of an exception. Anything else still throws.
+ */
+async function fetchQuotesTolerant(symbols: string[]): Promise<{
+  quoteBySymbol: Map<string, BrapiQuote>;
+  failedSymbols: Set<string>;
+}> {
+  try {
+    const { quotes, failed } = await fetchQuotes(symbols);
+    // Already keyed by the requested symbol — see fetchQuotes.
+    return { quoteBySymbol: quotes, failedSymbols: new Set(failed) };
+  } catch (error) {
+    if (!(error instanceof MarketUpstreamError)) throw error;
+    return { quoteBySymbol: new Map(), failedSymbols: new Set(symbols) };
+  }
+}
+
+async function persistQuoteRows(
+  found: Array<typeof marketSymbols.$inferInsert>,
+  notFound: Array<typeof marketSymbols.$inferInsert>,
+  fetchedAt: Date,
+): Promise<void> {
+  if (found.length > 0) {
+    await db
+      .insert(marketSymbols)
+      .values(found)
+      .onConflictDoUpdate({
+        target: marketSymbols.symbol,
+        set: {
+          status: "OK",
+          lastPrice: sql`excluded.last_price`,
+          previousClose: sql`excluded.previous_close`,
+          lastPriceAt: sql`excluded.last_price_at`,
+          updatedAt: sql`excluded.updated_at`,
+        },
+      });
+  }
+  // A symbol that stopped existing keeps its last known price on the row;
+  // only the status and the timestamp move, as before.
+  if (notFound.length > 0) {
+    await db
+      .insert(marketSymbols)
+      .values(notFound)
+      .onConflictDoUpdate({
+        target: marketSymbols.symbol,
+        set: { status: "NOT_FOUND", updatedAt: fetchedAt },
+      });
+  }
+}
+
+/** Store fetched candles and widen the symbol's recorded coverage window. */
+async function persistCandles(
+  symbol: string,
+  candles: CandlePoint[],
+  meta: MarketSymbolMeta | undefined,
+): Promise<void> {
+  await db
+    .insert(marketCandles)
+    .values(
+      candles.map((candle) => ({
+        symbol,
+        date: candle.date,
+        close: candle.close,
+      })),
+    )
+    .onConflictDoNothing();
+
+  const coverageFrom = meta?.candlesFrom ?? null;
+  const coverageTo = meta?.candlesTo ?? null;
+  const fetchedFrom = candles[0]!.date;
+  const fetchedTo = candles[candles.length - 1]!.date;
+  const newFrom =
+    !coverageFrom || fetchedFrom < coverageFrom ? fetchedFrom : coverageFrom;
+  const newTo = !coverageTo || fetchedTo > coverageTo ? fetchedTo : coverageTo;
+  await db
+    .insert(marketSymbols)
+    .values({
+      symbol,
+      status: "OK",
+      candlesFrom: newFrom,
+      candlesTo: newTo,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: marketSymbols.symbol,
+      set: {
+        candlesFrom: newFrom,
+        candlesTo: newTo,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+async function markSymbolNotFound(symbol: string): Promise<void> {
+  await db
+    .insert(marketSymbols)
+    .values({ symbol, status: "NOT_FOUND", updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: marketSymbols.symbol,
+      set: { status: "NOT_FOUND", updatedAt: new Date() },
+    });
+}
+
+/** Group date-ordered rows into one CandlePoint series per key. */
+function groupSeries<T extends { date: string }>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  closeOf: (row: T) => number,
+): Map<string, CandlePoint[]> {
+  const result = new Map<string, CandlePoint[]>();
+  for (const row of rows) {
+    const point = { date: row.date, close: closeOf(row) };
+    const list = result.get(keyOf(row));
+    if (list) list.push(point);
+    else result.set(keyOf(row), [point]);
+  }
+  return result;
+}
+
+/** Fetch and store one range of daily CDI rates. Never throws transiently. */
+async function syncCdiRange(start: string, end: string): Promise<void> {
+  try {
+    const rates = await fetchCdiDailyRates(start, end);
+    marketSyncTotal.inc({
+      kind: "cdi",
+      outcome: rates.length > 0 ? "success" : "empty",
+    });
+    if (rates.length > 0) {
+      await db
+        .insert(cdiRates)
+        .values(
+          rates.map((rate) => ({ date: rate.date, dailyRate: rate.dailyRate })),
+        )
+        .onConflictDoNothing();
+    }
+  } catch (error) {
+    if (!(error instanceof MarketUpstreamError)) throw error;
+    marketSyncTotal.inc({ kind: "cdi", outcome: "upstream_error" });
+    // Transient BCB failure: serve what is cached.
+  }
+}
+
 export class MarketCacheService {
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
   private candlesSyncedOn = new Map<string, string>();
@@ -187,39 +390,11 @@ export class MarketCacheService {
 
     const toFetch: string[] = [];
     for (const symbol of symbols) {
-      const meta = metaBySymbol.get(symbol);
-      if (force) {
-        // Still keep `meta` around: a forced fetch that fails transiently falls
-        // back to the last known price below, same as a normal one.
-        toFetch.push(symbol);
-      } else if (
-        meta?.status === "NOT_FOUND" &&
-        meta.updatedAt &&
-        now - meta.updatedAt.getTime() < NOT_FOUND_TTL_MS
-      ) {
-        marketCacheLookups.inc({ kind: "quote", result: "negative_hit" });
-        results.set(symbol, {
-          price: null,
-          previousClose: null,
-          status: "not_found",
-          asOf: null,
-        });
-      } else if (
-        meta?.lastPrice != null &&
-        meta.lastPriceAt &&
-        now - meta.lastPriceAt.getTime() < QUOTE_TTL_MS
-      ) {
-        marketCacheLookups.inc({ kind: "quote", result: "hit" });
-        results.set(symbol, {
-          price: meta.lastPrice,
-          previousClose: meta.previousClose,
-          status: "ok",
-          asOf: meta.lastPriceAt,
-        });
-      } else {
-        marketCacheLookups.inc({ kind: "quote", result: "miss" });
-        toFetch.push(symbol);
-      }
+      // On a forced fetch `meta` is still kept around: a fetch that fails
+      // transiently falls back to the last known price, same as a normal one.
+      const cached = force ? null : cachedQuote(metaBySymbol.get(symbol), now);
+      if (cached) results.set(symbol, cached);
+      else toFetch.push(symbol);
     }
 
     if (toFetch.length === 0) {
@@ -228,19 +403,7 @@ export class MarketCacheService {
     }
 
     const fetchedAt = new Date();
-    let quoteBySymbol = new Map<string, BrapiQuote>();
-    let failedSymbols = new Set<string>();
-
-    try {
-      const { quotes, failed } = await fetchQuotes(toFetch);
-      // Already keyed by the requested symbol — see fetchQuotes.
-      quoteBySymbol = quotes;
-      failedSymbols = new Set(failed);
-    } catch (error) {
-      if (!(error instanceof MarketUpstreamError)) throw error;
-      // Every symbol failed transiently (provider unreachable).
-      failedSymbols = new Set(toFetch);
-    }
+    const { quoteBySymbol, failedSymbols } = await fetchQuotesTolerant(toFetch);
 
     // Rows to write are collected and upserted in one statement at the end:
     // a cold portfolio of forty tickers used to cost forty serialized writes
@@ -268,60 +431,15 @@ export class MarketCacheService {
       } else if (failedSymbols.has(symbol)) {
         // Transient failure for this symbol specifically: do NOT negative
         // cache — serve the last known price as "stale" if we have one.
-        const meta = metaBySymbol.get(symbol);
-        if (meta?.lastPrice != null) {
-          results.set(symbol, {
-            price: meta.lastPrice,
-            previousClose: meta.previousClose,
-            status: "stale",
-            asOf: meta.lastPriceAt,
-          });
-        } else {
-          results.set(symbol, {
-            price: null,
-            previousClose: null,
-            status: "unavailable",
-            asOf: null,
-          });
-        }
+        results.set(symbol, lastKnownQuote(metaBySymbol.get(symbol)));
       } else {
         // brapi answered but the symbol is not in its results → it does not exist.
         notFound.push({ symbol, status: "NOT_FOUND", updatedAt: fetchedAt });
-        results.set(symbol, {
-          price: null,
-          previousClose: null,
-          status: "not_found",
-          asOf: null,
-        });
+        results.set(symbol, NOT_FOUND_QUOTE);
       }
     }
 
-    if (found.length > 0) {
-      await db
-        .insert(marketSymbols)
-        .values(found)
-        .onConflictDoUpdate({
-          target: marketSymbols.symbol,
-          set: {
-            status: "OK",
-            lastPrice: sql`excluded.last_price`,
-            previousClose: sql`excluded.previous_close`,
-            lastPriceAt: sql`excluded.last_price_at`,
-            updatedAt: sql`excluded.updated_at`,
-          },
-        });
-    }
-    // A symbol that stopped existing keeps its last known price on the row;
-    // only the status and the timestamp move, as before.
-    if (notFound.length > 0) {
-      await db
-        .insert(marketSymbols)
-        .values(notFound)
-        .onConflictDoUpdate({
-          target: marketSymbols.symbol,
-          set: { status: "NOT_FOUND", updatedAt: fetchedAt },
-        });
-    }
+    await persistQuoteRows(found, notFound, fetchedAt);
 
     this.recordQuoteResults(results);
     return results;
@@ -379,29 +497,11 @@ export class MarketCacheService {
     symbol: string,
     fromDate: string,
     today: string,
-    meta: typeof marketSymbols.$inferSelect | undefined,
+    meta: MarketSymbolMeta | undefined,
   ): Promise<void> {
-    if (meta?.status === "NOT_FOUND") {
-      marketCacheLookups.inc({ kind: "candles", result: "negative_hit" });
-      return;
-    }
-
-    const coverageFrom = meta?.candlesFrom ?? null;
-    const coverageTo = meta?.candlesTo ?? null;
-    if (this.candlesSyncedOn.get(symbol) === today) {
-      marketCacheLookups.inc({ kind: "candles", result: "daily_guard_hit" });
-      return;
-    }
-
-    const needsBackfill =
-      !coverageFrom || !coverageTo || fromDate < coverageFrom;
-    const needsTailSync = !!coverageTo && coverageTo < today;
-    if (!needsBackfill && !needsTailSync) {
-      marketCacheLookups.inc({ kind: "candles", result: "hit" });
-      return;
-    }
-
-    marketCacheLookups.inc({ kind: "candles", result: "miss" });
+    const result = this.candleCacheResult(symbol, fromDate, today, meta);
+    marketCacheLookups.inc({ kind: "candles", result });
+    if (result !== "miss") return;
 
     // Note: a backfill that doesn't reach `fromDate` is not necessarily a bug —
     // brapi's free plan only ever returns the last ~3 months of candles no
@@ -417,53 +517,11 @@ export class MarketCacheService {
         outcome: candles.length === 0 ? "empty" : "success",
       });
       if (candles.length === 0) return;
-
-      await db
-        .insert(marketCandles)
-        .values(
-          candles.map((candle) => ({
-            symbol,
-            date: candle.date,
-            close: candle.close,
-          })),
-        )
-        .onConflictDoNothing();
-
-      const fetchedFrom = candles[0]!.date;
-      const fetchedTo = candles[candles.length - 1]!.date;
-      const newFrom =
-        !coverageFrom || fetchedFrom < coverageFrom
-          ? fetchedFrom
-          : coverageFrom;
-      const newTo =
-        !coverageTo || fetchedTo > coverageTo ? fetchedTo : coverageTo;
-      await db
-        .insert(marketSymbols)
-        .values({
-          symbol,
-          status: "OK",
-          candlesFrom: newFrom,
-          candlesTo: newTo,
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: marketSymbols.symbol,
-          set: {
-            candlesFrom: newFrom,
-            candlesTo: newTo,
-            updatedAt: new Date(),
-          },
-        });
+      await persistCandles(symbol, candles, meta);
     } catch (error) {
       if (error instanceof SymbolNotFoundError) {
         marketSyncTotal.inc({ kind: "candles", outcome: "not_found" });
-        await db
-          .insert(marketSymbols)
-          .values({ symbol, status: "NOT_FOUND", updatedAt: new Date() })
-          .onConflictDoUpdate({
-            target: marketSymbols.symbol,
-            set: { status: "NOT_FOUND", updatedAt: new Date() },
-          });
+        await markSymbolNotFound(symbol);
         return;
       }
       if (!(error instanceof MarketUpstreamError)) throw error;
@@ -471,6 +529,23 @@ export class MarketCacheService {
       // Transient failure: don't hammer it again today; serve cached data.
       this.candlesSyncedOn.set(symbol, today);
     }
+  }
+
+  /** Whether the candle cache already answers `[fromDate, today]` for `symbol`. */
+  private candleCacheResult(
+    symbol: string,
+    fromDate: string,
+    today: string,
+    meta: MarketSymbolMeta | undefined,
+  ): "negative_hit" | "daily_guard_hit" | "hit" | "miss" {
+    if (meta?.status === "NOT_FOUND") return "negative_hit";
+    if (this.candlesSyncedOn.get(symbol) === today) return "daily_guard_hit";
+    const coverageFrom = meta?.candlesFrom ?? null;
+    const coverageTo = meta?.candlesTo ?? null;
+    const needsBackfill =
+      !coverageFrom || !coverageTo || fromDate < coverageFrom;
+    const needsTailSync = !!coverageTo && coverageTo < today;
+    return needsBackfill || needsTailSync ? "miss" : "hit";
   }
 
   /**
@@ -487,52 +562,14 @@ export class MarketCacheService {
       })
       .from(cdiRates);
 
-    const missing: Array<[string, string]> = [];
-    if (!bounds?.min || !bounds.max) {
-      missing.push([fromDate, today]);
-    } else {
-      if (fromDate < bounds.min) missing.push([fromDate, bounds.min]);
-      if (bounds.max < today) {
-        if (this.cdiSyncedOn === today) {
-          // Tail is stale but already checked today — the guard that keeps the
-          // BCB request count down.
-          marketCacheLookups.inc({ kind: "cdi", result: "daily_guard_hit" });
-        } else {
-          missing.push([bounds.max, today]);
-        }
-      }
-    }
-
+    const missing = this.missingCdiRanges(bounds, fromDate, today);
     if (missing.length === 0) {
       marketCacheLookups.inc({ kind: "cdi", result: "hit" });
     } else {
       marketCacheLookups.inc({ kind: "cdi", result: "miss" }, missing.length);
     }
 
-    for (const [start, end] of missing) {
-      try {
-        const rates = await fetchCdiDailyRates(start, end);
-        marketSyncTotal.inc({
-          kind: "cdi",
-          outcome: rates.length > 0 ? "success" : "empty",
-        });
-        if (rates.length > 0) {
-          await db
-            .insert(cdiRates)
-            .values(
-              rates.map((rate) => ({
-                date: rate.date,
-                dailyRate: rate.dailyRate,
-              })),
-            )
-            .onConflictDoNothing();
-        }
-      } catch (error) {
-        if (!(error instanceof MarketUpstreamError)) throw error;
-        marketSyncTotal.inc({ kind: "cdi", outcome: "upstream_error" });
-        // Transient BCB failure: serve what is cached.
-      }
-    }
+    for (const [start, end] of missing) await syncCdiRange(start, end);
     this.cdiSyncedOn = today;
 
     const rows = await db
@@ -541,6 +578,27 @@ export class MarketCacheService {
       .where(gte(cdiRates.date, fromDate));
 
     return new Map(rows.map((row) => [row.date, row.dailyRate]));
+  }
+
+  /** Date ranges of `[fromDate, today]` the CDI table does not cover yet. */
+  private missingCdiRanges(
+    bounds: { min: string | null; max: string | null } | undefined,
+    fromDate: string,
+    today: string,
+  ): Array<[string, string]> {
+    if (!bounds?.min || !bounds.max) return [[fromDate, today]];
+    const missing: Array<[string, string]> = [];
+    if (fromDate < bounds.min) missing.push([fromDate, bounds.min]);
+    if (bounds.max < today) {
+      if (this.cdiSyncedOn === today) {
+        // Tail is stale but already checked today — the guard that keeps the
+        // BCB request count down.
+        marketCacheLookups.inc({ kind: "cdi", result: "daily_guard_hit" });
+      } else {
+        missing.push([bounds.max, today]);
+      }
+    }
+    return missing;
   }
 
   /**
@@ -706,28 +764,14 @@ export class MarketCacheService {
     fromDate: string,
     { force = false }: RefreshOptions = {},
   ): Promise<Map<string, CandlePoint[]>> {
-    const result = new Map<string, CandlePoint[]>();
     const keys = [...new Set(titleKeys)];
-    if (keys.length === 0) return result;
+    if (keys.length === 0) return new Map();
 
     const today = todayIso();
     const stale = force
       ? keys
       : keys.filter((key) => this.tesouroSyncedOn.get(key) !== today);
-    if (stale.length > 0) {
-      try {
-        const prices = await fetchTesouroPrices(new Set(stale), fromDate);
-        if (prices.length > 0) {
-          await db.insert(tesouroPrices).values(prices).onConflictDoNothing();
-        }
-        // Mark all requested-and-stale keys as synced even if some matched no
-        // rows, so an unmatched title doesn't re-download the CSV every load.
-        for (const key of stale) this.tesouroSyncedOn.set(key, today);
-      } catch (error) {
-        if (!(error instanceof MarketUpstreamError)) throw error;
-        // Transient failure: serve whatever is cached and retry next time.
-      }
-    }
+    if (stale.length > 0) await this.syncTesouroPrices(stale, fromDate, today);
 
     const rows = await db
       .select()
@@ -740,16 +784,31 @@ export class MarketCacheService {
       )
       .orderBy(asc(tesouroPrices.date));
 
-    for (const row of rows) {
-      const list = result.get(row.titleKey);
-      if (list) {
-        list.push({ date: row.date, close: row.sellPrice });
-      } else {
-        result.set(row.titleKey, [{ date: row.date, close: row.sellPrice }]);
-      }
-    }
+    return groupSeries(
+      rows,
+      (row) => row.titleKey,
+      (row) => row.sellPrice,
+    );
+  }
 
-    return result;
+  /** Download and store the PU series for `keys`. Never throws transiently. */
+  private async syncTesouroPrices(
+    keys: string[],
+    fromDate: string,
+    today: string,
+  ): Promise<void> {
+    try {
+      const prices = await fetchTesouroPrices(new Set(keys), fromDate);
+      if (prices.length > 0) {
+        await db.insert(tesouroPrices).values(prices).onConflictDoNothing();
+      }
+      // Mark all requested-and-stale keys as synced even if some matched no
+      // rows, so an unmatched title doesn't re-download the CSV every load.
+      for (const key of keys) this.tesouroSyncedOn.set(key, today);
+    } catch (error) {
+      if (!(error instanceof MarketUpstreamError)) throw error;
+      // Transient failure: serve whatever is cached and retry next time.
+    }
   }
 
   /**
@@ -780,15 +839,55 @@ export class MarketCacheService {
       budgetMs?: number;
     } = {},
   ): Promise<Map<string, CandlePoint[]>> {
-    const result = new Map<string, CandlePoint[]>();
     const wanted = [...new Set(cnpjs)].filter((cnpj) => cnpj.length === 14);
-    if (wanted.length === 0) return result;
+    if (wanted.length === 0) return new Map();
 
     const today = todayIso();
+    const pending = await this.pendingFundMonths(
+      wanted,
+      fromDate,
+      today,
+      force,
+    );
+
+    const deadline = Date.now() + budgetMs;
+    // Newest month first: the most recent quotas matter most under a budget.
+    for (const month of [...pending.keys()].sort((a, b) =>
+      b.localeCompare(a),
+    )) {
+      if (Date.now() > deadline) break;
+      await this.syncFundMonth(pending.get(month)!, month, {
+        fromDate,
+        today,
+        referenceQuotas,
+      });
+    }
+
+    const rows = await db
+      .select()
+      .from(fundQuotas)
+      .where(
+        and(inArray(fundQuotas.cnpj, wanted), gte(fundQuotas.date, fromDate)),
+      )
+      .orderBy(asc(fundQuotas.date));
+
+    return groupSeries(
+      rows,
+      (row) => row.cnpj,
+      (row) => row.quota,
+    );
+  }
+
+  /** month -> CNPJs whose quotas for that month still have to be read. */
+  private async pendingFundMonths(
+    wanted: string[],
+    fromDate: string,
+    today: string,
+    force: boolean,
+  ): Promise<Map<string, string[]>> {
     const currentMonth = today.slice(0, 7);
     const months = monthsBetween(fromDate.slice(0, 7), currentMonth);
 
-    // (fund, month) pairs still to read, newest month first.
     const covered = new Set(
       (
         await db
@@ -801,7 +900,7 @@ export class MarketCacheService {
       ).map((row) => `${row.cnpj}:${row.month}`),
     );
 
-    const pending = new Map<string, string[]>(); // month -> cnpjs
+    const pending = new Map<string, string[]>();
     for (const month of months) {
       // The running month is never "done": it grows by a row per business day.
       const alwaysStale =
@@ -811,69 +910,62 @@ export class MarketCacheService {
       );
       if (missing.length > 0) pending.set(month, missing);
     }
+    return pending;
+  }
 
-    const deadline = Date.now() + budgetMs;
-    for (const month of [...pending.keys()].sort().reverse()) {
-      if (Date.now() > deadline) break;
-      const funds = pending.get(month)!;
-      try {
-        const points = await fetchFundQuotas({
-          cnpjs: new Set(funds),
-          month,
-          fromDate,
-          referenceQuotas,
-        });
-        marketSyncTotal.inc({
-          kind: "fund_quotas",
-          outcome: points.length > 0 ? "success" : "empty",
-        });
-        if (points.length > 0) {
-          for (const batch of chunk(points, FUND_QUOTA_CHUNK_SIZE)) {
-            await db
-              .insert(fundQuotas)
-              .values(
-                batch.map((point) => ({
-                  cnpj: point.cnpj,
-                  date: point.date,
-                  quota: point.quota,
-                })),
-              )
-              .onConflictDoNothing();
-          }
-        }
-        // Mark every requested fund, including ones this month said nothing
-        // about: a fund that did not exist yet must not re-download the file
-        // on every page load looking for itself.
+  /** Download one CVM monthly file and store the quotas of `funds`. */
+  private async syncFundMonth(
+    funds: string[],
+    month: string,
+    {
+      fromDate,
+      today,
+      referenceQuotas,
+    }: {
+      fromDate: string;
+      today: string;
+      referenceQuotas?: Map<string, number>;
+    },
+  ): Promise<void> {
+    try {
+      const points = await fetchFundQuotas({
+        cnpjs: new Set(funds),
+        month,
+        fromDate,
+        referenceQuotas,
+      });
+      marketSyncTotal.inc({
+        kind: "fund_quotas",
+        outcome: points.length > 0 ? "success" : "empty",
+      });
+      for (const batch of chunk(points, FUND_QUOTA_CHUNK_SIZE)) {
         await db
-          .insert(fundQuotaCoverage)
-          .values(funds.map((cnpj) => ({ cnpj, month, fetchedAt: new Date() })))
-          .onConflictDoUpdate({
-            target: [fundQuotaCoverage.cnpj, fundQuotaCoverage.month],
-            set: { fetchedAt: new Date() },
-          });
-        this.fundMonthSyncedOn.set(month, today);
-      } catch (error) {
-        if (!(error instanceof MarketUpstreamError)) throw error;
-        marketSyncTotal.inc({ kind: "fund_quotas", outcome: "upstream_error" });
-        // Transient failure: serve what is cached and retry on the next load.
+          .insert(fundQuotas)
+          .values(
+            batch.map((point) => ({
+              cnpj: point.cnpj,
+              date: point.date,
+              quota: point.quota,
+            })),
+          )
+          .onConflictDoNothing();
       }
+      // Mark every requested fund, including ones this month said nothing
+      // about: a fund that did not exist yet must not re-download the file
+      // on every page load looking for itself.
+      await db
+        .insert(fundQuotaCoverage)
+        .values(funds.map((cnpj) => ({ cnpj, month, fetchedAt: new Date() })))
+        .onConflictDoUpdate({
+          target: [fundQuotaCoverage.cnpj, fundQuotaCoverage.month],
+          set: { fetchedAt: new Date() },
+        });
+      this.fundMonthSyncedOn.set(month, today);
+    } catch (error) {
+      if (!(error instanceof MarketUpstreamError)) throw error;
+      marketSyncTotal.inc({ kind: "fund_quotas", outcome: "upstream_error" });
+      // Transient failure: serve what is cached and retry on the next load.
     }
-
-    const rows = await db
-      .select()
-      .from(fundQuotas)
-      .where(
-        and(inArray(fundQuotas.cnpj, wanted), gte(fundQuotas.date, fromDate)),
-      )
-      .orderBy(asc(fundQuotas.date));
-
-    for (const row of rows) {
-      const list = result.get(row.cnpj);
-      if (list) list.push({ date: row.date, close: row.quota });
-      else result.set(row.cnpj, [{ date: row.date, close: row.quota }]);
-    }
-
-    return result;
   }
 }
 

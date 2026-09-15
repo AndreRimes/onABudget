@@ -9,6 +9,13 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Env validation is skipped and the URL is a throwaway: nothing here
+    # touches a database, but `~/env` is imported transitively (lint loads
+    # next.config.js, typecheck follows imports) and would otherwise refuse
+    # to load without the real deployment's variables.
+    env:
+      SKIP_ENV_VALIDATION: "1"
+      DATABASE_URL: "file::memory:"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,14 +35,8 @@ jobs:
       - name: Lint
         run: pnpm lint
 
-      # Env validation is skipped and the URL is a throwaway: nothing here
-      # touches a database, but `~/env` is imported transitively and would
-      # otherwise refuse to load without the real deployment's variables.
       - name: Typecheck
         run: pnpm typecheck
-        env:
-          SKIP_ENV_VALIDATION: "1"
-          DATABASE_URL: "file::memory:"
 
       - name: Test
         run: pnpm test

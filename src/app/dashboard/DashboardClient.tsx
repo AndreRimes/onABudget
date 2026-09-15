@@ -45,7 +45,8 @@ import {
   DashboardExpenseCharts,
   NetWorthChart,
 } from "~/components/lazy-charts";
-import { api } from "~/trpc/react";
+import { BudgetStatus } from "~/components/sections/budget/BudgetStatus";
+import { api, type RouterOutputs } from "~/trpc/react";
 import { toast } from "sonner";
 
 const formatCurrency = (value: number) =>
@@ -60,6 +61,127 @@ const formatPercent = (value: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value / 100);
+
+type DashboardAccount = RouterOutputs["account"]["getAll"][number];
+type RecentExpense = RouterOutputs["expenses"]["getRecent"][number];
+
+function AccountIcon({ type }: { type: DashboardAccount["accountType"] }) {
+  if (type === "INVESTMENT")
+    return <PiggyBank className="text-muted-foreground h-5 w-5" />;
+  if (type === "CREDIT_CARD")
+    return <CreditCard className="text-muted-foreground h-5 w-5" />;
+  return <DollarSign className="text-muted-foreground h-5 w-5" />;
+}
+
+function AccountBalancesCard({
+  accounts,
+}: {
+  accounts: DashboardAccount[] | undefined;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Saldo das Contas</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!accounts || accounts.length === 0 ? (
+          <div className="text-muted-foreground flex items-center justify-center p-8">
+            Nenhuma conta cadastrada
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {accounts.map((acc) => (
+              <div
+                key={acc.id}
+                className="border-foreground flex items-center justify-between border-2 p-3"
+              >
+                <div className="flex items-center gap-3">
+                  <AccountIcon type={acc.accountType} />
+                  <div>
+                    <p className="font-medium">{acc.name}</p>
+                    <Badge variant="outline" className="text-xs">
+                      {ACCOUNT_TYPE_LABELS[acc.accountType]}
+                    </Badge>
+                  </div>
+                </div>
+                <span className="font-mono font-semibold">
+                  {formatCurrency(acc.balance)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecentExpensesCard({
+  expenses,
+  monthLabel,
+}: {
+  expenses: RecentExpense[];
+  monthLabel: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Últimas Transações</CardTitle>
+        <CardDescription>{monthLabel}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {expenses.length === 0 ? (
+          <div className="text-muted-foreground flex items-center justify-center p-8">
+            Sem transações este mês
+          </div>
+        ) : (
+          <div className="border-foreground border-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Data</TableHead>
+                  <TableHead>Descrição</TableHead>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead className="text-right">Valor</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {expenses.map((expense) => (
+                  <TableRow key={expense.expenses.id}>
+                    <TableCell className="text-sm">
+                      {format(new Date(expense.expenses.expenseDate), "dd/MM", {
+                        locale: ptBR,
+                      })}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {expense.expenses.description || "-"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        style={{
+                          borderColor:
+                            expense.expense_categories.color || "var(--muted)",
+                          color:
+                            expense.expense_categories.color || "var(--muted)",
+                        }}
+                      >
+                        {expense.expense_categories.name}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm font-medium">
+                      {formatCurrency(expense.expenses.amount)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export function DashboardClient() {
   const now = new Date();
@@ -154,10 +276,6 @@ export function DashboardClient() {
 
   // Budget status
   const budgetAmount = currentBudget?.amount ?? 0;
-  const budgetUsedPercent =
-    budgetAmount > 0 ? (monthlySpend / budgetAmount) * 100 : 0;
-  const isOverBudget = budgetAmount > 0 && monthlySpend > budgetAmount;
-  const budgetRemaining = budgetAmount - monthlySpend;
 
   // Monthly spend chart data (last 12 months). Months with no spending are not
   // returned by the query at all, so the axis is built from the calendar and
@@ -370,45 +488,7 @@ export function DashboardClient() {
             </Dialog>
           </CardHeader>
           <CardContent>
-            {budgetAmount > 0 ? (
-              <div className="space-y-2">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-2xl font-bold">
-                    {budgetUsedPercent.toFixed(0)}%
-                  </span>
-                  <span
-                    className={`stamp ${
-                      isOverBudget
-                        ? "border-destructive text-destructive"
-                        : "border-profit text-profit"
-                    }`}
-                  >
-                    {isOverBudget ? "Acima" : "Dentro"}
-                  </span>
-                </div>
-                {/* Progress bar */}
-                <div className="border-foreground bg-muted h-3 w-full overflow-hidden border-2">
-                  <div
-                    className={`h-full transition-all ${
-                      isOverBudget ? "bg-loss" : "bg-profit"
-                    }`}
-                    style={{
-                      width: `${Math.min(budgetUsedPercent, 100)}%`,
-                    }}
-                  />
-                </div>
-                <p className="text-muted-foreground text-xs">
-                  {isOverBudget
-                    ? `${formatCurrency(Math.abs(budgetRemaining))} acima do orçamento`
-                    : `${formatCurrency(budgetRemaining)} restantes de ${formatCurrency(budgetAmount)}`}
-                </p>
-              </div>
-            ) : (
-              <div className="text-muted-foreground space-y-1">
-                <p className="text-sm">Nenhum orçamento definido</p>
-                <p className="text-xs">Clique no ícone acima para definir</p>
-              </div>
-            )}
+            <BudgetStatus budgetAmount={budgetAmount} spent={monthlySpend} />
           </CardContent>
         </Card>
       </div>
@@ -424,111 +504,12 @@ export function DashboardClient() {
 
       {/* Account Balances + Recent Transactions */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* Account Balances */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Saldo das Contas</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!accounts || accounts.length === 0 ? (
-              <div className="text-muted-foreground flex items-center justify-center p-8">
-                Nenhuma conta cadastrada
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {accounts.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="border-foreground flex items-center justify-between border-2 p-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      {acc.accountType === "INVESTMENT" ? (
-                        <PiggyBank className="text-muted-foreground h-5 w-5" />
-                      ) : acc.accountType === "CREDIT_CARD" ? (
-                        <CreditCard className="text-muted-foreground h-5 w-5" />
-                      ) : (
-                        <DollarSign className="text-muted-foreground h-5 w-5" />
-                      )}
-                      <div>
-                        <p className="font-medium">{acc.name}</p>
-                        <Badge variant="outline" className="text-xs">
-                          {ACCOUNT_TYPE_LABELS[acc.accountType]}
-                        </Badge>
-                      </div>
-                    </div>
-                    <span className="font-mono font-semibold">
-                      {formatCurrency(acc.balance)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <AccountBalancesCard accounts={accounts} />
 
-        {/* Recent Transactions */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Últimas Transações</CardTitle>
-            <CardDescription>
-              {format(now, "MMMM yyyy", { locale: ptBR })}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentExpenses.length === 0 ? (
-              <div className="text-muted-foreground flex items-center justify-center p-8">
-                Sem transações este mês
-              </div>
-            ) : (
-              <div className="border-foreground border-2">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Data</TableHead>
-                      <TableHead>Descrição</TableHead>
-                      <TableHead>Categoria</TableHead>
-                      <TableHead className="text-right">Valor</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {recentExpenses.map((expense) => (
-                      <TableRow key={expense.expenses.id}>
-                        <TableCell className="text-sm">
-                          {format(
-                            new Date(expense.expenses.expenseDate),
-                            "dd/MM",
-                            { locale: ptBR },
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {expense.expenses.description || "-"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            style={{
-                              borderColor:
-                                expense.expense_categories.color ||
-                                "var(--muted)",
-                              color:
-                                expense.expense_categories.color ||
-                                "var(--muted)",
-                            }}
-                          >
-                            {expense.expense_categories.name}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-sm font-medium">
-                          {formatCurrency(expense.expenses.amount)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <RecentExpensesCard
+          expenses={recentExpenses}
+          monthLabel={format(now, "MMMM yyyy", { locale: ptBR })}
+        />
       </div>
     </div>
   );

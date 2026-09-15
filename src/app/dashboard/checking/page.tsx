@@ -30,6 +30,7 @@ import {
 import { ImportFaturaDialog } from "~/components/sections/expense/ImportFaturaDialog";
 import { ImportStatementDialog } from "~/components/sections/expense/ImportStatementDialog";
 import { RecurringExpensesDialog } from "~/components/sections/expense/RecurringExpensesDialog";
+import { BudgetStatus } from "~/components/sections/budget/BudgetStatus";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -68,8 +69,290 @@ import { isSpendingAccount } from "~/lib/account-type";
 import { formatCurrency } from "~/lib/format";
 import { stripAccents } from "~/lib/parse";
 import { useDebouncedValue } from "~/lib/use-debounced-value";
-import { api } from "~/trpc/react";
+import { api, type RouterOutputs } from "~/trpc/react";
 import { ExpenseCharts } from "~/components/lazy-charts";
+
+type ExpenseRow = RouterOutputs["expenses"]["getAllFromUser"][number];
+type CategoryMap = Map<number, { name: string; color: string }>;
+type ChartPoint = {
+  date: string;
+  amount: number;
+  formattedDate: string;
+  cumulative: number;
+};
+
+// Category and text filters are applied here rather than server-side: the
+// period query has already narrowed the rows to something small, and doing it
+// in the client keeps typing in the search box instant.
+function filterExpenses(
+  rows: ExpenseRow[],
+  selectedCategoryIds: number[],
+  search: string,
+): ExpenseRow[] {
+  const categoryIds = new Set(selectedCategoryIds);
+  // Accent-insensitive, so "acai" finds "AÇAÍ".
+  const term = stripAccents(search).trim().toLowerCase();
+
+  if (categoryIds.size === 0 && term === "") return rows;
+
+  return rows.filter((row) => {
+    if (categoryIds.size > 0 && !categoryIds.has(row.expenses.categoryId)) {
+      return false;
+    }
+    if (term === "") return true;
+    const haystack = stripAccents(
+      `${row.expenses.description ?? ""} ${row.expense_categories.name}`,
+    ).toLowerCase();
+    return haystack.includes(term);
+  });
+}
+
+function sortExpenses(
+  rows: ExpenseRow[],
+  sort: ExpenseFilterState["sort"],
+): ExpenseRow[] {
+  return [...rows].sort((a, b) => {
+    switch (sort) {
+      case "date-asc":
+        return a.expenses.expenseDate.localeCompare(b.expenses.expenseDate);
+      case "amount-desc":
+        return b.expenses.amount - a.expenses.amount;
+      case "amount-asc":
+        return a.expenses.amount - b.expenses.amount;
+      default:
+        return b.expenses.expenseDate.localeCompare(a.expenses.expenseDate);
+    }
+  });
+}
+
+/** Total per month, oldest first, with a running total. */
+function monthlyChart(expensesByMonth: Record<string, number>): ChartPoint[] {
+  const data = Object.entries(expensesByMonth)
+    .map(([groupKey, amount]) => ({
+      date: groupKey,
+      amount: Number(amount.toFixed(2)),
+      formattedDate: format(parseISO(`${groupKey}-01`), "MMM/yy", {
+        locale: ptBR,
+      }),
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  let cumulative = 0;
+  return data.map((item) => {
+    cumulative += item.amount;
+    return { ...item, cumulative: Number(cumulative.toFixed(2)) };
+  });
+}
+
+/**
+ * Every day of the month, not only the ones that had a transaction. The
+ * axis is categorical, so plotting just the spending days squeezes the
+ * gaps shut: the running total then climbs on a timeline that is not the
+ * month's, and the line stops at the last purchase instead of reaching
+ * month end. Days with no spending hold the previous total, flat.
+ */
+function dailyChart(
+  expensesByDay: Record<string, number>,
+  month: string,
+): ChartPoint[] {
+  const monthStart = startOfMonth(parseISO(`${month}-01`));
+  const monthEnd = endOfMonth(monthStart);
+  const today = startOfDay(new Date());
+  // Only truncate a month still in progress — a future month has no "today"
+  // inside it and would leave an empty interval.
+  const lastDay =
+    isBefore(today, monthEnd) && !isBefore(today, monthStart)
+      ? today
+      : monthEnd;
+
+  let cumulative = 0;
+  return eachDayOfInterval({ start: monthStart, end: lastDay }).map((day) => {
+    const groupKey = format(day, "yyyy-MM-dd");
+    const amount = Number((expensesByDay[groupKey] ?? 0).toFixed(2));
+    cumulative += amount;
+    return {
+      date: groupKey,
+      amount,
+      formattedDate: format(day, "dd/MM", { locale: ptBR }),
+      cumulative: Number(cumulative.toFixed(2)),
+    };
+  });
+}
+
+// Within a single month, running-total-against-budget is the useful shape.
+// Across several months it is not: the line only ever climbs, so it says
+// nothing about whether any given month was good or bad. Multi-month periods
+// therefore plot the total *per month* instead.
+function buildChartData(
+  expenses: ExpenseRow[],
+  isDailyChart: boolean,
+  month: string,
+): ChartPoint[] {
+  const expensesByPeriod: Record<string, number> = {};
+  for (const expense of expenses) {
+    const date = parseISO(expense.expenses.expenseDate);
+    const groupKey = format(date, isDailyChart ? "yyyy-MM-dd" : "yyyy-MM");
+    expensesByPeriod[groupKey] =
+      (expensesByPeriod[groupKey] ?? 0) + expense.expenses.amount;
+  }
+  if (Object.keys(expensesByPeriod).length === 0) return [];
+  return isDailyChart
+    ? dailyChart(expensesByPeriod, month)
+    : monthlyChart(expensesByPeriod);
+}
+
+function buildCategoryChart(expenses: ExpenseRow[], categoryMap: CategoryMap) {
+  const expensesByCategory: Record<number, number> = {};
+  for (const expense of expenses) {
+    const categoryId = expense.expense_categories.id;
+    expensesByCategory[categoryId] =
+      (expensesByCategory[categoryId] ?? 0) + expense.expenses.amount;
+  }
+  return Object.entries(expensesByCategory)
+    .map(([categoryId, amount]) => {
+      const categoryInfo = categoryMap.get(Number(categoryId));
+      return {
+        category: categoryInfo?.name || "Sem categoria",
+        amount: Number(amount.toFixed(2)),
+        fill: categoryInfo?.color || "var(--muted)",
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+}
+
+function ExpensesTable({
+  expenses,
+  isLoading,
+  filters,
+  categoryMap,
+  onEdit,
+  onDelete,
+}: {
+  expenses: ExpenseRow[];
+  isLoading: boolean;
+  filters: ExpenseFilterState;
+  categoryMap: CategoryMap;
+  onEdit: (expense: EditableExpense) => void;
+  onDelete: (id: number) => void;
+}) {
+  let body;
+  if (isLoading) {
+    body = (
+      <div className="flex items-center justify-center p-8">Carregando...</div>
+    );
+  } else if (expenses.length === 0) {
+    body = (
+      <div className="text-muted-foreground flex items-center justify-center p-8">
+        {hasNarrowingFilters(filters)
+          ? "Nenhuma despesa corresponde aos filtros"
+          : `Nenhuma despesa em ${periodLabel(filters)}`}
+      </div>
+    );
+  } else {
+    body = (
+      <div className="border-2">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Data</TableHead>
+              <TableHead>Descrição</TableHead>
+              <TableHead>Categoria</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead className="w-12"></TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {expenses.map((expense) => (
+              <ExpenseTableRow
+                key={expense.expenses.id}
+                expense={expense}
+                categoryName={
+                  categoryMap.get(expense.expense_categories.id)?.name ||
+                  "Sem categoria"
+                }
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Transações</CardTitle>
+        <CardDescription>
+          {expenses.length} lançamento
+          {expenses.length === 1 ? "" : "s"} · {periodLabel(filters)}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>{body}</CardContent>
+    </Card>
+  );
+}
+
+function ExpenseTableRow({
+  expense,
+  categoryName,
+  onEdit,
+  onDelete,
+}: {
+  expense: ExpenseRow;
+  categoryName: string;
+  onEdit: (expense: EditableExpense) => void;
+  onDelete: (id: number) => void;
+}) {
+  const color = expense.expense_categories.color || "var(--muted)";
+  return (
+    <TableRow>
+      <TableCell>
+        {format(parseISO(expense.expenses.expenseDate), "dd/MM/yyyy", {
+          locale: ptBR,
+        })}
+      </TableCell>
+      <TableCell>{expense.expenses.description || "-"}</TableCell>
+      <TableCell>
+        <Badge variant="outline" style={{ borderColor: color, color }}>
+          {categoryName}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-right font-medium">
+        {formatCurrency(expense.expenses.amount)}
+      </TableCell>
+      <TableCell>
+        <div className="flex justify-end gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-foreground h-8 w-8"
+            onClick={() =>
+              onEdit({
+                id: expense.expenses.id,
+                categoryId: expense.expenses.categoryId,
+                description: expense.expenses.description,
+                amount: expense.expenses.amount,
+                expenseDate: expense.expenses.expenseDate,
+              })
+            }
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-destructive h-8 w-8"
+            onClick={() => onDelete(expense.expenses.id)}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+}
 
 export default function CheckingPage() {
   const [filters, setFilters] = useState<ExpenseFilterState>(
@@ -115,35 +398,23 @@ export default function CheckingPage() {
   // per character typed. A short pause is not noticeable; the stutter was.
   const searchTerm = useDebouncedValue(filters.search, 200);
 
-  const allExpenses = useMemo(() => {
-    const rows =
-      selectedAccount === "all"
-        ? (expensesFromUser ?? [])
-        : (expensesFromAccount ?? []);
-
-    const categoryIds = new Set(filters.categoryIds);
-    // Accent-insensitive, so "acai" finds "AÇAÍ".
-    const term = stripAccents(searchTerm).trim().toLowerCase();
-
-    if (categoryIds.size === 0 && term === "") return rows;
-
-    return rows.filter((row) => {
-      if (categoryIds.size > 0 && !categoryIds.has(row.expenses.categoryId)) {
-        return false;
-      }
-      if (term === "") return true;
-      const haystack = stripAccents(
-        `${row.expenses.description ?? ""} ${row.expense_categories.name}`,
-      ).toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [
-    selectedAccount,
-    expensesFromUser,
-    expensesFromAccount,
-    filters.categoryIds,
-    searchTerm,
-  ]);
+  const allExpenses = useMemo(
+    () =>
+      filterExpenses(
+        selectedAccount === "all"
+          ? (expensesFromUser ?? [])
+          : (expensesFromAccount ?? []),
+        filters.categoryIds,
+        searchTerm,
+      ),
+    [
+      selectedAccount,
+      expensesFromUser,
+      expensesFromAccount,
+      filters.categoryIds,
+      searchTerm,
+    ],
+  );
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -165,65 +436,10 @@ export default function CheckingPage() {
   // therefore plot the total *per month* instead.
   const isDailyChart = filters.mode === "month";
 
-  const chartData = useMemo(() => {
-    const expensesByPeriod = allExpenses.reduce(
-      (acc, expense) => {
-        const date = parseISO(expense.expenses.expenseDate);
-        const groupKey = format(date, isDailyChart ? "yyyy-MM-dd" : "yyyy-MM");
-        acc[groupKey] = (acc[groupKey] ?? 0) + expense.expenses.amount;
-        return acc;
-      },
-      {} as Record<string, number>,
-    );
-
-    if (Object.keys(expensesByPeriod).length === 0) return [];
-
-    if (!isDailyChart) {
-      const data = Object.entries(expensesByPeriod)
-        .map(([groupKey, amount]) => ({
-          date: groupKey,
-          amount: Number(amount.toFixed(2)),
-          formattedDate: format(parseISO(`${groupKey}-01`), "MMM/yy", {
-            locale: ptBR,
-          }),
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      let cumulative = 0;
-      return data.map((item) => {
-        cumulative += item.amount;
-        return { ...item, cumulative: Number(cumulative.toFixed(2)) };
-      });
-    }
-
-    // Every day of the month, not only the ones that had a transaction. The
-    // axis is categorical, so plotting just the spending days squeezes the
-    // gaps shut: the running total then climbs on a timeline that is not the
-    // month's, and the line stops at the last purchase instead of reaching
-    // month end. Days with no spending hold the previous total, flat.
-    const monthStart = startOfMonth(parseISO(`${filters.month}-01`));
-    const monthEnd = endOfMonth(monthStart);
-    const today = startOfDay(new Date());
-    // Only truncate a month still in progress — a future month has no "today"
-    // inside it and would leave an empty interval.
-    const lastDay =
-      isBefore(today, monthEnd) && !isBefore(today, monthStart)
-        ? today
-        : monthEnd;
-
-    let cumulative = 0;
-    return eachDayOfInterval({ start: monthStart, end: lastDay }).map((day) => {
-      const groupKey = format(day, "yyyy-MM-dd");
-      const amount = Number((expensesByPeriod[groupKey] ?? 0).toFixed(2));
-      cumulative += amount;
-      return {
-        date: groupKey,
-        amount,
-        formattedDate: format(day, "dd/MM", { locale: ptBR }),
-        cumulative: Number(cumulative.toFixed(2)),
-      };
-    });
-  }, [allExpenses, isDailyChart, filters.month]);
+  const chartData = useMemo(
+    () => buildChartData(allExpenses, isDailyChart, filters.month),
+    [allExpenses, isDailyChart, filters.month],
+  );
 
   // Distinct months present, used to scale a monthly budget over "Tudo".
   const distinctMonths = useMemo(
@@ -232,20 +448,10 @@ export default function CheckingPage() {
     [allExpenses],
   );
 
-  const sortedExpenses = useMemo(() => {
-    return [...allExpenses].sort((a, b) => {
-      switch (filters.sort) {
-        case "date-asc":
-          return a.expenses.expenseDate.localeCompare(b.expenses.expenseDate);
-        case "amount-desc":
-          return b.expenses.amount - a.expenses.amount;
-        case "amount-asc":
-          return a.expenses.amount - b.expenses.amount;
-        default:
-          return b.expenses.expenseDate.localeCompare(a.expenses.expenseDate);
-      }
-    });
-  }, [allExpenses, filters.sort]);
+  const sortedExpenses = useMemo(
+    () => sortExpenses(allExpenses, filters.sort),
+    [allExpenses, filters.sort],
+  );
 
   // Budget data
   const { data: currentBudget } = api.budget.getLatest.useQuery();
@@ -320,10 +526,6 @@ export default function CheckingPage() {
   const monthlyBudget = currentBudget?.amount ?? 0;
   const periodMonths = monthsInPeriod(filters, distinctMonths);
   const budgetAmount = monthlyBudget * periodMonths;
-  const budgetUsedPercent =
-    budgetAmount > 0 ? (stats.total / budgetAmount) * 100 : 0;
-  const isOverBudget = budgetAmount > 0 && stats.total > budgetAmount;
-  const budgetRemaining = budgetAmount - stats.total;
 
   const { data: categories } = api.category.getAll.useQuery();
   const [deletingExpenseId, setDeletingExpenseId] = useState<number | null>(
@@ -349,30 +551,10 @@ export default function CheckingPage() {
     return map;
   }, [categories]);
 
-  const categoryChartData = useMemo(() => {
-    if (!allExpenses || !categories) return [];
-
-    const expensesByCategory = allExpenses.reduce(
-      (acc, expense) => {
-        const categoryId = expense.expense_categories.id;
-        acc[categoryId] ??= 0;
-        acc[categoryId] += expense.expenses.amount;
-        return acc;
-      },
-      {} as Record<number, number>,
-    );
-
-    return Object.entries(expensesByCategory)
-      .map(([categoryId, amount]) => {
-        const categoryInfo = categoryMap.get(Number(categoryId));
-        return {
-          category: categoryInfo?.name || "Sem categoria",
-          amount: Number(amount.toFixed(2)),
-          fill: categoryInfo?.color || "var(--muted)",
-        };
-      })
-      .sort((a, b) => b.amount - a.amount);
-  }, [allExpenses, categories, categoryMap]);
+  const categoryChartData = useMemo(
+    () => (categories ? buildCategoryChart(allExpenses, categoryMap) : []),
+    [allExpenses, categories, categoryMap],
+  );
 
   const totalExpenses = useMemo(() => {
     return categoryChartData.reduce((sum, item) => sum + item.amount, 0);
@@ -543,44 +725,7 @@ export default function CheckingPage() {
             </Dialog>
           </CardHeader>
           <CardContent>
-            {budgetAmount > 0 ? (
-              <div className="space-y-2">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-2xl font-bold">
-                    {budgetUsedPercent.toFixed(0)}%
-                  </span>
-                  <span
-                    className={`stamp ${
-                      isOverBudget
-                        ? "border-destructive text-destructive"
-                        : "border-profit text-profit"
-                    }`}
-                  >
-                    {isOverBudget ? "Acima" : "Dentro"}
-                  </span>
-                </div>
-                <div className="border-foreground bg-muted h-3 w-full overflow-hidden border-2">
-                  <div
-                    className={`h-full transition-all ${
-                      isOverBudget ? "bg-loss" : "bg-profit"
-                    }`}
-                    style={{
-                      width: `${Math.min(budgetUsedPercent, 100)}%`,
-                    }}
-                  />
-                </div>
-                <p className="text-muted-foreground text-xs">
-                  {isOverBudget
-                    ? `${formatCurrency(Math.abs(budgetRemaining))} acima do orçamento`
-                    : `${formatCurrency(budgetRemaining)} restantes de ${formatCurrency(budgetAmount)}`}
-                </p>
-              </div>
-            ) : (
-              <div className="text-muted-foreground space-y-1">
-                <p className="text-sm">Nenhum orçamento definido</p>
-                <p className="text-xs">Clique no ícone acima para definir</p>
-              </div>
-            )}
+            <BudgetStatus budgetAmount={budgetAmount} spent={stats.total} />
           </CardContent>
         </Card>
       </div>
@@ -593,107 +738,14 @@ export default function CheckingPage() {
         totalExpenses={totalExpenses}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Transações</CardTitle>
-          <CardDescription>
-            {sortedExpenses.length} lançamento
-            {sortedExpenses.length === 1 ? "" : "s"} · {periodLabel(filters)}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center justify-center p-8">
-              Carregando...
-            </div>
-          ) : sortedExpenses.length === 0 ? (
-            <div className="text-muted-foreground flex items-center justify-center p-8">
-              {hasNarrowingFilters(filters)
-                ? "Nenhuma despesa corresponde aos filtros"
-                : `Nenhuma despesa em ${periodLabel(filters)}`}
-            </div>
-          ) : (
-            <div className="border-2">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Descrição</TableHead>
-                    <TableHead>Categoria</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="w-12"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedExpenses.map((expense) => (
-                    <TableRow key={expense.expenses.id}>
-                      <TableCell>
-                        {format(
-                          parseISO(expense.expenses.expenseDate),
-                          "dd/MM/yyyy",
-                          { locale: ptBR },
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {expense.expenses.description || "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          style={{
-                            borderColor:
-                              expense.expense_categories.color ||
-                              "var(--muted)",
-                            color:
-                              expense.expense_categories.color ||
-                              "var(--muted)",
-                          }}
-                        >
-                          {categoryMap.get(expense.expense_categories.id)
-                            ?.name || "Sem categoria"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(expense.expenses.amount)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground hover:text-foreground h-8 w-8"
-                            onClick={() =>
-                              setEditingExpense({
-                                id: expense.expenses.id,
-                                categoryId: expense.expenses.categoryId,
-                                description: expense.expenses.description,
-                                amount: expense.expenses.amount,
-                                expenseDate: expense.expenses.expenseDate,
-                              })
-                            }
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground hover:text-destructive h-8 w-8"
-                            onClick={() =>
-                              setDeletingExpenseId(expense.expenses.id)
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <ExpensesTable
+        expenses={sortedExpenses}
+        isLoading={isLoading}
+        filters={filters}
+        categoryMap={categoryMap}
+        onEdit={setEditingExpense}
+        onDelete={setDeletingExpenseId}
+      />
 
       <Dialog
         open={deletingExpenseId !== null}

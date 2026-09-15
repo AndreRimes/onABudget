@@ -50,6 +50,200 @@ interface StatementPreviewPanelProps {
   onCancel: () => void;
 }
 
+type PreviewEntry = PreviewResult["rows"][number];
+type Category = RouterOutputs["category"]["getAll"][number];
+
+function plural(count: number, suffix = "s"): string {
+  return count !== 1 ? suffix : "";
+}
+
+function statusLabel(entry: PreviewEntry, isIgnored: boolean): string {
+  if (isIgnored) return "Ignorado";
+  if (entry.status === "new") return "Novo";
+  if (entry.status === "duplicate") return "Duplicado";
+  if (entry.status === "ignored") {
+    return entry.ignoreReason === "card-bill"
+      ? "Fatura do cartão"
+      : "Não é despesa";
+  }
+  return "Entrada";
+}
+
+function PreviewError({
+  message,
+  onRetry,
+  onCancel,
+}: {
+  message: string;
+  onRetry: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="border-destructive/50 grid gap-2 border-2 p-3">
+      <p className="text-destructive text-sm font-medium">
+        Não consegui analisar os lançamentos
+      </p>
+      <p className="text-muted-foreground font-mono text-xs break-words">
+        {message}
+      </p>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Tentar novamente
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Fechar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PreviewPending({
+  rowCount,
+  isPreviewing,
+  isSlow,
+  onRetry,
+}: {
+  rowCount: number;
+  isPreviewing: boolean;
+  isSlow: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <p className="text-muted-foreground text-sm">
+        {isPreviewing
+          ? `Analisando ${rowCount} lançamentos...`
+          : `${rowCount} lançamentos lidos do arquivo.`}
+      </p>
+      {(isSlow || !isPreviewing) && (
+        <div className="border-foreground bg-highlight/50 grid gap-2 border-2 p-3">
+          <p className="text-sm font-bold">
+            {isSlow
+              ? "Está demorando mais que o normal. O servidor pode não ter respondido."
+              : "A análise não foi iniciada."}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="justify-self-start"
+            onClick={onRetry}
+          >
+            Analisar novamente
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PreviewSummary({
+  newCount,
+  counts,
+  parserIgnoredCount,
+}: {
+  newCount: number;
+  counts: { duplicate: number; credit: number; autoIgnored: number };
+  parserIgnoredCount: number;
+}) {
+  return (
+    <p className="text-muted-foreground text-sm">
+      {newCount} lançamento{plural(newCount)} novo{plural(newCount)},{" "}
+      {counts.duplicate} duplicado{plural(counts.duplicate)}
+      {counts.credit > 0 &&
+        `, ${counts.credit} entrada${plural(counts.credit)} ignorada${plural(counts.credit)}`}
+      {counts.autoIgnored > 0 && `, ${counts.autoIgnored} não é despesa`}
+      {parserIgnoredCount > 0 &&
+        `, ${parserIgnoredCount} linha${plural(parserIgnoredCount)} não reconhecida${plural(parserIgnoredCount)}`}
+    </p>
+  );
+}
+
+function PreviewRow({
+  entry,
+  categoryValue,
+  isIgnored,
+  categories,
+  onChoose,
+}: {
+  entry: PreviewEntry;
+  /** Category chosen for this row's hash, "" or undefined when none yet. */
+  categoryValue: string | undefined;
+  isIgnored: boolean;
+  categories: Category[];
+  onChoose: (description: string, value: string) => void;
+}) {
+  const isNew = entry.status === "new";
+  let selectValue = categoryValue ?? "";
+  if (isIgnored) selectValue = IGNORE_VALUE;
+  return (
+    <TableRow className={cn((!isNew || isIgnored) && "text-muted-foreground")}>
+      <TableCell className="whitespace-nowrap">
+        {formatIsoDateBr(entry.row.date)}
+      </TableCell>
+      <TableCell
+        className="max-w-[18rem] truncate font-medium"
+        title={entry.row.description}
+      >
+        {entry.row.description}
+      </TableCell>
+      <TableCell className="text-right whitespace-nowrap">
+        {formatCurrency(entry.row.amount)}
+      </TableCell>
+      <TableCell>
+        {isNew && entry.hash ? (
+          <div className="grid gap-1">
+            {entry.providerCategory && (
+              <span className="text-muted-foreground text-xs">
+                Pluggy: {entry.providerCategory}
+              </span>
+            )}
+            <Select
+              value={selectValue}
+              onValueChange={(value) => onChoose(entry.row.description, value)}
+            >
+              <SelectTrigger
+                className={cn(
+                  "w-44",
+                  !categoryValue &&
+                    !isIgnored &&
+                    "border-foreground bg-highlight/60",
+                )}
+              >
+                <SelectValue placeholder="Categoria" />
+              </SelectTrigger>
+              <SelectContent>
+                {entry.providerCategory && (
+                  <SelectItem value={PLUGGY_CATEGORY_VALUE}>
+                    Usar categoria Pluggy
+                  </SelectItem>
+                )}
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id.toString()}>
+                    {category.name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={IGNORE_VALUE}>— Não é despesa —</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : (
+          <span className="text-xs">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right">
+        <Badge
+          variant={isNew && !isIgnored ? "default" : "secondary"}
+          className="text-xs"
+        >
+          {statusLabel(entry, isIgnored)}
+        </Badge>
+      </TableCell>
+    </TableRow>
+  );
+}
+
 /**
  * Everything from "the file has been parsed" to "the rows are in the database":
  * dedup preview, account selection, per-row categorization and the import
@@ -235,87 +429,32 @@ export function StatementPreviewPanel({
 
   if (previewError) {
     return (
-      <div className="border-destructive/50 grid gap-2 border-2 p-3">
-        <p className="text-destructive text-sm font-medium">
-          Não consegui analisar os lançamentos
-        </p>
-        <p className="text-muted-foreground font-mono text-xs break-words">
-          {previewError}
-        </p>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={retryPreview}
-          >
-            Tentar novamente
-          </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            Fechar
-          </Button>
-        </div>
-      </div>
+      <PreviewError
+        message={previewError}
+        onRetry={retryPreview}
+        onCancel={onCancel}
+      />
     );
   }
 
   if (isPreviewing || !preview) {
     return (
-      <div className="grid gap-2">
-        <p className="text-muted-foreground text-sm">
-          {isPreviewing
-            ? `Analisando ${rows.length} lançamentos...`
-            : `${rows.length} lançamentos lidos do arquivo.`}
-        </p>
-        {(isSlow || !isPreviewing) && (
-          <div className="border-foreground bg-highlight/50 grid gap-2 border-2 p-3">
-            <p className="text-sm font-bold">
-              {isSlow
-                ? "Está demorando mais que o normal. O servidor pode não ter respondido."
-                : "A análise não foi iniciada."}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="justify-self-start"
-              onClick={retryPreview}
-            >
-              Analisar novamente
-            </Button>
-          </div>
-        )}
-      </div>
+      <PreviewPending
+        rowCount={rows.length}
+        isPreviewing={isPreviewing}
+        isSlow={isSlow}
+        onRetry={retryPreview}
+      />
     );
   }
 
-  const statusLabel = (
-    entry: PreviewResult["rows"][number],
-    isIgnored: boolean,
-  ) => {
-    if (isIgnored) return "Ignorado";
-    if (entry.status === "new") return "Novo";
-    if (entry.status === "duplicate") return "Duplicado";
-    if (entry.status === "ignored") {
-      return entry.ignoreReason === "card-bill"
-        ? "Fatura do cartão"
-        : "Não é despesa";
-    }
-    return "Entrada";
-  };
-
   return (
     <>
-      <p className="text-muted-foreground text-sm">
-        {newRows.length} lançamento{newRows.length !== 1 ? "s" : ""} novo
-        {newRows.length !== 1 ? "s" : ""}, {counts.duplicate} duplicado
-        {counts.duplicate !== 1 ? "s" : ""}
-        {counts.credit > 0 &&
-          `, ${counts.credit} entrada${counts.credit !== 1 ? "s" : ""} ignorada${counts.credit !== 1 ? "s" : ""}`}
-        {counts.autoIgnored > 0 && `, ${counts.autoIgnored} não é despesa`}
-        {parserIgnoredCount > 0 &&
-          `, ${parserIgnoredCount} linha${parserIgnoredCount !== 1 ? "s" : ""} não reconhecida${parserIgnoredCount !== 1 ? "s" : ""}`}
-      </p>
+      <PreviewSummary
+        newCount={newRows.length}
+        counts={counts}
+        parserIgnoredCount={parserIgnoredCount}
+      />
 
       <div className="grid gap-2">
         <Label htmlFor="previewAccount">Conta *</Label>
@@ -364,91 +503,18 @@ export function StatementPreviewPanel({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {preview.rows.map((entry, index) => {
-              const isNew = entry.status === "new";
-              const isIgnored = !!entry.hash && ignoredHashes.has(entry.hash);
-              return (
-                <TableRow
-                  key={index}
-                  className={cn(
-                    (!isNew || isIgnored) && "text-muted-foreground",
-                  )}
-                >
-                  <TableCell className="whitespace-nowrap">
-                    {formatIsoDateBr(entry.row.date)}
-                  </TableCell>
-                  <TableCell
-                    className="max-w-[18rem] truncate font-medium"
-                    title={entry.row.description}
-                  >
-                    {entry.row.description}
-                  </TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    {formatCurrency(entry.row.amount)}
-                  </TableCell>
-                  <TableCell>
-                    {isNew && entry.hash ? (
-                      <div className="grid gap-1">
-                        {entry.providerCategory && (
-                          <span className="text-muted-foreground text-xs">
-                            Pluggy: {entry.providerCategory}
-                          </span>
-                        )}
-                        <Select
-                          value={
-                            isIgnored
-                              ? IGNORE_VALUE
-                              : (categoryByHash[entry.hash] ?? "")
-                          }
-                          onValueChange={(value) =>
-                            applyToSameDescription(entry.row.description, value)
-                          }
-                        >
-                          <SelectTrigger
-                            className={cn(
-                              "w-44",
-                              !categoryByHash[entry.hash] &&
-                                !isIgnored &&
-                                "border-foreground bg-highlight/60",
-                            )}
-                          >
-                            <SelectValue placeholder="Categoria" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {entry.providerCategory && (
-                              <SelectItem value={PLUGGY_CATEGORY_VALUE}>
-                                Usar categoria Pluggy
-                              </SelectItem>
-                            )}
-                            {categories?.map((category) => (
-                              <SelectItem
-                                key={category.id}
-                                value={category.id.toString()}
-                              >
-                                {category.name}
-                              </SelectItem>
-                            ))}
-                            <SelectItem value={IGNORE_VALUE}>
-                              — Não é despesa —
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : (
-                      <span className="text-xs">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Badge
-                      variant={isNew && !isIgnored ? "default" : "secondary"}
-                      className="text-xs"
-                    >
-                      {statusLabel(entry, isIgnored)}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {preview.rows.map((entry, index) => (
+              <PreviewRow
+                key={index}
+                entry={entry}
+                categoryValue={
+                  entry.hash ? categoryByHash[entry.hash] : undefined
+                }
+                isIgnored={!!entry.hash && ignoredHashes.has(entry.hash)}
+                categories={categories ?? []}
+                onChoose={applyToSameDescription}
+              />
+            ))}
           </TableBody>
         </Table>
       </div>

@@ -435,6 +435,25 @@ export function normalizeShortfallPosition(
   };
 }
 
+/**
+ * Quantity and unit price of a trade. The app requires a quantity. When the
+ * provider omits it but reports what one unit was worth, the quantity is
+ * arithmetic on two numbers it did report — the same derivation `price` has
+ * always made in reverse, and the only alternative is dropping a real
+ * application on the floor. With neither number there is nothing to compute
+ * and the movement is left out (null) rather than fabricated.
+ */
+function tradeFigures(
+  movement: PluggyInvestmentTransaction,
+  amount: number,
+): { quantity: number; price: number } | null {
+  const unitValue = positive(movement.value);
+  const quantity = positive(movement.quantity);
+  if (quantity) return { quantity, price: unitValue ?? amount / quantity };
+  if (unitValue) return { quantity: amount / unitValue, price: unitValue };
+  return null;
+}
+
 export function normalizeInvestmentMovements(
   investment: PluggyInvestment,
   movements: PluggyInvestmentTransaction[],
@@ -450,74 +469,46 @@ export function normalizeInvestmentMovements(
     unusable: 0,
   };
   const name = assetName(investment);
+  // A holding with no usable name has nothing its movements could attach to.
+  if (!name) return { rows, unsupported, dropped };
   const label = assetLabel(investment);
   const cnpj = fundCnpj(investment);
-  const {
-    isFixedIncome,
-    fixedIncomeYieldType,
-    fixedIncomeRate,
-    fixedIncomeMaturityDate: maturity,
-  } = fixedIncomeTerms(investment);
+  const terms = fixedIncomeTerms(investment);
 
   for (const movement of movements) {
     const date = day(movement.tradeDate) ?? day(movement.date);
-    const id = movementId(investment, movement);
-    if (!date || !name || !movement.amount || movement.amount < 0) {
-      if (name) dropped.unusable++;
+    const amount = positive(movement.amount);
+    if (!date || amount === null) {
+      dropped.unusable++;
       continue;
     }
+    const base = {
+      investmentId: investment.id,
+      movementId: movementId(investment, movement),
+      assetName: name,
+      assetLabel: label,
+      fundCnpj: cnpj,
+      providerType: investment.type,
+      providerSubtype: investment.subtype,
+      date,
+    };
 
     if (movement.type === "BUY" || movement.type === "SELL") {
-      const unitValue =
-        movement.value && movement.value > 0 ? Math.abs(movement.value) : null;
-      // The app requires a quantity. When the provider omits it but reports
-      // what one unit was worth, the quantity is arithmetic on two numbers it
-      // did report — the same derivation `price` has always made in reverse,
-      // and the only alternative is dropping a real application on the floor.
-      // With neither number there is nothing to compute and the movement is
-      // left out rather than fabricated.
-      const quantity =
-        movement.quantity && movement.quantity > 0
-          ? movement.quantity
-          : unitValue
-            ? Math.abs(movement.amount) / unitValue
-            : null;
-      if (quantity === null) {
+      const figures = tradeFigures(movement, amount);
+      if (!figures) {
         dropped.withoutQuantity++;
         continue;
       }
       rows.push({
         kind: "trade",
-        investmentId: investment.id,
-        movementId: id,
-        assetName: name,
-        assetLabel: label,
-        fundCnpj: cnpj,
-        providerType: investment.type,
-        providerSubtype: investment.subtype,
-        date,
+        ...base,
         side: movement.type,
-        quantity,
-        price: unitValue ?? Math.abs(movement.amount) / quantity,
-        amount: Math.abs(movement.amount),
-        isFixedIncome,
-        fixedIncomeYieldType,
-        fixedIncomeRate,
-        fixedIncomeMaturityDate: maturity,
+        ...figures,
+        amount,
+        ...terms,
       });
     } else if (movement.type === "INTEREST") {
-      rows.push({
-        kind: "income",
-        investmentId: investment.id,
-        movementId: id,
-        assetName: name,
-        assetLabel: label,
-        fundCnpj: cnpj,
-        providerType: investment.type,
-        providerSubtype: investment.subtype,
-        date,
-        amount: Math.abs(movement.amount),
-      });
+      rows.push({ kind: "income", ...base, amount });
     } else {
       unsupported.push({
         investmentId: investment.id,
@@ -774,6 +765,51 @@ export async function previewPluggyInvestmentRows(
 }
 
 /**
+ * Asset name → Pluggy type label, for the assets in `accepted` that need a
+ * type. First row per asset wins.
+ */
+function acceptedTypeLabels(
+  rows: PluggyInvestmentRow[],
+  accepted: Set<string>,
+): Map<string, string> {
+  const labelByAsset = new Map<string, string>();
+  for (const row of rows) {
+    if (!needsAssetType(row)) continue;
+    if (!accepted.has(row.assetName) || labelByAsset.has(row.assetName))
+      continue;
+    const label = pluggyAssetTypeLabel(row.providerType, row.providerSubtype);
+    if (label) labelByAsset.set(row.assetName, label);
+  }
+  return labelByAsset;
+}
+
+/** Create the asset type `label` for the user and return its id. */
+async function createAssetType(
+  userId: string,
+  label: string,
+): Promise<number | undefined> {
+  const [created] = await db
+    .insert(assetTypes)
+    .values({
+      userId,
+      name: label,
+      description: "Criado na sincronização Pluggy",
+    })
+    .onConflictDoNothing({
+      target: [assetTypes.userId, assetTypes.name],
+    })
+    .returning({ id: assetTypes.id });
+  if (created) return created.id;
+  // onConflictDoNothing returns nothing when the name was taken between
+  // the caller's read and this insert; re-read rather than dropping the row.
+  const [existing] = await db
+    .select({ id: assetTypes.id })
+    .from(assetTypes)
+    .where(and(eq(assetTypes.userId, userId), eq(assetTypes.name, label)));
+  return existing?.id;
+}
+
+/**
  * Asset name → local asset type id, for the assets whose type the user took
  * from Pluggy. Types that do not exist yet are created here, once per name,
  * exactly as the statement importer creates a category the user accepted from
@@ -784,16 +820,7 @@ async function resolveAcceptedPluggyTypes(
   rows: PluggyInvestmentRow[],
   acceptedAssets: string[],
 ): Promise<Map<string, number>> {
-  const accepted = new Set(acceptedAssets);
-  const labelByAsset = new Map<string, string>();
-  for (const row of rows) {
-    if (!needsAssetType(row)) continue;
-    if (!accepted.has(row.assetName) || labelByAsset.has(row.assetName))
-      continue;
-    const label = pluggyAssetTypeLabel(row.providerType, row.providerSubtype);
-    if (label) labelByAsset.set(row.assetName, label);
-  }
-
+  const labelByAsset = acceptedTypeLabels(rows, new Set(acceptedAssets));
   const resolved = new Map<string, number>();
   if (labelByAsset.size === 0) return resolved;
 
@@ -810,29 +837,7 @@ async function resolveAcceptedPluggyTypes(
     const key = assetTypeKey(label);
     let id = typeIdByKey.get(key);
     if (id === undefined) {
-      const [created] = await db
-        .insert(assetTypes)
-        .values({
-          userId,
-          name: label,
-          description: "Criado na sincronização Pluggy",
-        })
-        .onConflictDoNothing({
-          target: [assetTypes.userId, assetTypes.name],
-        })
-        .returning({ id: assetTypes.id });
-      // onConflictDoNothing returns nothing when the name was taken between
-      // the read above and this insert; re-read rather than dropping the row.
-      id =
-        created?.id ??
-        (
-          await db
-            .select({ id: assetTypes.id })
-            .from(assetTypes)
-            .where(
-              and(eq(assetTypes.userId, userId), eq(assetTypes.name, label)),
-            )
-        )[0]?.id;
+      id = await createAssetType(userId, label);
       if (id !== undefined) typeIdByKey.set(key, id);
     }
     if (id !== undefined) resolved.set(asset, id);

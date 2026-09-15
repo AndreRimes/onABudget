@@ -99,9 +99,122 @@ function movimentacaoAssetName(product: string): string {
     .split(" - ")
     .map((part) => part.trim())
     .filter(Boolean);
-  const chosen =
-    parts.length >= 3 ? parts[1]! : parts.length === 2 ? parts[0]! : product;
+  let chosen = product;
+  if (parts.length >= 3) chosen = parts[1]!;
+  else if (parts.length === 2) chosen = parts[0]!;
   return normalizeTicker(chosen.replace(/\s+/g, " ").trim());
+}
+
+type SheetRecord = Record<string, unknown>;
+/** Normalized header name -> original column key, or undefined when absent. */
+type ColumnLookup = (name: string) => string | undefined;
+
+function negociacaoSide(rawSide: string): "BUY" | "SELL" | null {
+  if (/compra/i.test(rawSide)) return "BUY";
+  if (/venda/i.test(rawSide)) return "SELL";
+  return null;
+}
+
+function institutionOf(record: SheetRecord, col: ColumnLookup): string {
+  const key = col("instituicao");
+  return key ? asString(record[key]).trim() : "";
+}
+
+/** One Negociação-report row, or null when it is not a usable trade. */
+function parseNegociacaoRow(
+  record: SheetRecord,
+  col: ColumnLookup,
+): ParsedB3Row | null {
+  const date = parseBrDate(record[col("data do negocio")!]);
+  const side = negociacaoSide(asString(record[col("tipo de movimentacao")!]));
+  const ticker = record[col("codigo de negociacao")!];
+  const quantity = parseBrNumber(record[col("quantidade")!]);
+  const price = parseBrNumber(record[col("preco")!]);
+  const amount = parseBrNumber(record[col("valor")!]);
+
+  if (!date || !side || typeof ticker !== "string" || !quantity || !amount) {
+    return null;
+  }
+  return {
+    kind: "trade",
+    date,
+    ticker: normalizeTicker(ticker),
+    side,
+    quantity,
+    price: price ?? amount / quantity,
+    amount,
+    institution: institutionOf(record, col),
+    isFixedIncome: false,
+    tesouroTitle: null,
+  };
+}
+
+/** One Movimentação-report row: a provento, a fixed-income trade, or null. */
+function parseMovimentacaoRow(
+  record: SheetRecord,
+  col: ColumnLookup,
+): ParsedB3Row | null {
+  const movementLabel = normalizeHeader(asString(record[col("movimentacao")!]));
+  const date = parseBrDate(record[col("data")!]);
+  const product = record[col("produto")!];
+  const amount = parseBrNumber(record[col("valor da operacao")!]);
+  if (!date || typeof product !== "string" || !amount) return null;
+  const institution = institutionOf(record, col);
+
+  // Proventos (rendimento / dividendo / JCP) → dividend rows.
+  const incomeType = incomeTypeByLabel[movementLabel];
+  if (incomeType) {
+    return {
+      kind: "income",
+      date,
+      ticker: movimentacaoAssetName(product),
+      type: incomeType,
+      amount,
+      institution,
+    };
+  }
+
+  // Renda fixa / tesouro direto buys and sells → fixed-income trade rows.
+  const entradaCol = col("entrada/saida");
+  const side = tradeSide(
+    movementLabel,
+    entradaCol ? asString(record[entradaCol]) : "",
+  );
+  if (!side) return null;
+  const quantidadeCol = col("quantidade");
+  const precoCol = col("preco unitario");
+  const quantity = quantidadeCol ? parseBrNumber(record[quantidadeCol]) : null;
+  const price = precoCol ? parseBrNumber(record[precoCol]) : null;
+  if (!quantity) return null;
+  return {
+    kind: "trade",
+    date,
+    ticker: movimentacaoAssetName(product),
+    side,
+    quantity,
+    price: price ?? amount / quantity,
+    amount,
+    institution,
+    isFixedIncome: true,
+    tesouroTitle: isTesouroProduct(product)
+      ? normalizeTesouroTitleKey(product)
+      : null,
+  };
+}
+
+function collectRows(
+  reportType: ParseResult["reportType"],
+  records: SheetRecord[],
+  parseRow: (record: SheetRecord) => ParsedB3Row | null,
+): ParseResult {
+  const rows: ParsedB3Row[] = [];
+  let ignoredRows = 0;
+  for (const record of records) {
+    const row = parseRow(record);
+    if (row) rows.push(row);
+    else ignoredRows++;
+  }
+  return { reportType, rows, ignoredRows };
 }
 
 export async function parseB3Workbook(
@@ -113,7 +226,7 @@ export async function parseB3Workbook(
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) throw new Error("Planilha vazia");
   const sheet = workbook.Sheets[sheetName]!;
-  const records = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+  const records = xlsx.utils.sheet_to_json<SheetRecord>(sheet, {
     defval: null,
   });
   if (records.length === 0)
@@ -124,127 +237,18 @@ export async function parseB3Workbook(
   for (const key of Object.keys(records[0]!)) {
     headerMap.set(normalizeHeader(key), key);
   }
-  const col = (name: string): string | undefined => headerMap.get(name);
+  const col: ColumnLookup = (name) => headerMap.get(name);
 
   if (col("codigo de negociacao")) {
-    // ---- Negociação report ------------------------------------------------
-    const rows: ParsedB3Row[] = [];
-    let ignoredRows = 0;
-    for (const record of records) {
-      const date = parseBrDate(record[col("data do negocio")!]);
-      const rawSide = asString(record[col("tipo de movimentacao")!]);
-      const ticker = record[col("codigo de negociacao")!];
-      const quantity = parseBrNumber(record[col("quantidade")!]);
-      const price = parseBrNumber(record[col("preco")!]);
-      const amount = parseBrNumber(record[col("valor")!]);
-      const institution = col("instituicao")
-        ? asString(record[col("instituicao")!]).trim()
-        : "";
-
-      const side = /compra/i.test(rawSide)
-        ? "BUY"
-        : /venda/i.test(rawSide)
-          ? "SELL"
-          : null;
-
-      if (
-        !date ||
-        !side ||
-        typeof ticker !== "string" ||
-        !quantity ||
-        !amount
-      ) {
-        ignoredRows++;
-        continue;
-      }
-      rows.push({
-        kind: "trade",
-        date,
-        ticker: normalizeTicker(ticker),
-        side,
-        quantity,
-        price: price ?? amount / quantity,
-        amount,
-        institution,
-        isFixedIncome: false,
-        tesouroTitle: null,
-      });
-    }
-    return { reportType: "negociacao", rows, ignoredRows };
+    return collectRows("negociacao", records, (record) =>
+      parseNegociacaoRow(record, col),
+    );
   }
-
   if (col("movimentacao") && col("produto")) {
-    // ---- Movimentação report ---------------------------------------------
-    const entradaCol = col("entrada/saida");
-    const quantidadeCol = col("quantidade");
-    const precoCol = col("preco unitario");
-    const rows: ParsedB3Row[] = [];
-    let ignoredRows = 0;
-    for (const record of records) {
-      const movementLabel = normalizeHeader(
-        asString(record[col("movimentacao")!]),
-      );
-      const date = parseBrDate(record[col("data")!]);
-      const product = record[col("produto")!];
-      const amount = parseBrNumber(record[col("valor da operacao")!]);
-      const institution = col("instituicao")
-        ? asString(record[col("instituicao")!]).trim()
-        : "";
-
-      // Proventos (rendimento / dividendo / JCP) → dividend rows.
-      const incomeType = incomeTypeByLabel[movementLabel];
-      if (incomeType) {
-        if (!date || typeof product !== "string" || !amount) {
-          ignoredRows++;
-          continue;
-        }
-        rows.push({
-          kind: "income",
-          date,
-          ticker: movimentacaoAssetName(product),
-          type: incomeType,
-          amount,
-          institution,
-        });
-        continue;
-      }
-
-      // Renda fixa / tesouro direto buys and sells → fixed-income trade rows.
-      const side = tradeSide(
-        movementLabel,
-        entradaCol ? asString(record[entradaCol]) : "",
-      );
-      if (side) {
-        const quantity = quantidadeCol
-          ? parseBrNumber(record[quantidadeCol])
-          : null;
-        const price = precoCol ? parseBrNumber(record[precoCol]) : null;
-        if (!date || typeof product !== "string" || !quantity || !amount) {
-          ignoredRows++;
-          continue;
-        }
-        rows.push({
-          kind: "trade",
-          date,
-          ticker: movimentacaoAssetName(product),
-          side,
-          quantity,
-          price: price ?? amount / quantity,
-          amount,
-          institution,
-          isFixedIncome: true,
-          tesouroTitle: isTesouroProduct(product)
-            ? normalizeTesouroTitleKey(product)
-            : null,
-        });
-        continue;
-      }
-
-      ignoredRows++;
-    }
-    return { reportType: "movimentacao", rows, ignoredRows };
+    return collectRows("movimentacao", records, (record) =>
+      parseMovimentacaoRow(record, col),
+    );
   }
-
   throw new Error(
     "Formato não reconhecido. Use o relatório de Negociação ou de Movimentação da Área do Investidor da B3.",
   );

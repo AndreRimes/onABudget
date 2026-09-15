@@ -158,7 +158,7 @@ export function periodStartIso(range: TimeRange, today: string): string | null {
 
 const PREFIXED_DAILY_EXPONENT = 1 / 365;
 
-export function computePortfolioSnapshot(input: {
+interface EngineInput {
   transactions: EngineTransaction[];
   dividends: EngineDividend[];
   assetTypeNames: Map<number, string>;
@@ -173,371 +173,511 @@ export function computePortfolioSnapshot(input: {
   range: TimeRange;
   today: string; // YYYY-MM-DD
   includeSeries: boolean;
-}): PortfolioSnapshot {
-  const {
-    dividends,
-    assetTypeNames,
-    quotes,
-    candles,
-    tesouroCandles,
-    fundCandles,
-    assetLabels,
-    benchmarks,
-    range,
-    today,
-    includeSeries,
-  } = input;
+}
 
-  const benchmarkIds = [...benchmarks.keys()];
-
-  const transactions = [...input.transactions].sort((a, b) =>
-    a.transactionDate.localeCompare(b.transactionDate),
-  );
-  const sortedDividends = [...dividends].sort((a, b) =>
-    a.paymentDate.localeCompare(b.paymentDate),
-  );
-
-  if (transactions.length === 0) {
-    return {
-      holdings: [],
-      summary: {
-        totalValue: 0,
-        totalInvested: 0,
-        periodGain: 0,
-        periodGainPercent: 0,
-        periodDividends: 0,
-        dividends12m: 0,
-        monthlyIncome: 0,
-        realizedGain: 0,
-        dailyChange: 0,
-        quotesAsOf: null,
-        benchmarkGains: {},
-      },
-      series: [],
-      issues: [],
-    };
-  }
-
-  const fullStart = transactions[0]!.transactionDate;
-  const rangeStart = periodStartIso(range, today) ?? fullStart;
-  // The replay always begins at the first transaction so that state (prices,
-  // fixed-income accrual, cost basis) is correct when the range window opens.
-  const replayStart = fullStart < rangeStart ? fullStart : rangeStart;
-
-  const assets = new Map<string, AssetState>();
-  const getAsset = (tx: EngineTransaction): AssetState => {
-    let state = assets.get(tx.assetName);
-    if (!state) {
-      state = {
-        assetTypeId: tx.assetTypeId,
-        quantity: 0,
-        costBasis: 0,
-        netDeposits: 0,
-        realizedGain: 0,
-        dividendsAccumulated: 0,
-        marketValue: 0,
-        lastPrice: null,
-        candleIndex: 0,
-        isFixedIncome: tx.isFixedIncome,
-        fixedIncomeYieldType: tx.fixedIncomeYieldType,
-        fixedIncomeRate: tx.fixedIncomeRate,
-        fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
-        tesouroTitle: tx.tesouroTitle,
-        fundCnpj: tx.fundCnpj,
-        startGain: 0,
-        startValue: 0,
-      };
-      assets.set(tx.assetName, state);
-    }
-    return state;
+function emptySnapshot(): PortfolioSnapshot {
+  return {
+    holdings: [],
+    summary: {
+      totalValue: 0,
+      totalInvested: 0,
+      periodGain: 0,
+      periodGainPercent: 0,
+      periodDividends: 0,
+      dividends12m: 0,
+      monthlyIncome: 0,
+      realizedGain: 0,
+      dailyChange: 0,
+      quotesAsOf: null,
+      benchmarkGains: {},
+    },
+    series: [],
+    issues: [],
   };
+}
 
+function newAssetState(tx: EngineTransaction): AssetState {
+  return {
+    assetTypeId: tx.assetTypeId,
+    quantity: 0,
+    costBasis: 0,
+    netDeposits: 0,
+    realizedGain: 0,
+    dividendsAccumulated: 0,
+    marketValue: 0,
+    lastPrice: null,
+    candleIndex: 0,
+    isFixedIncome: tx.isFixedIncome,
+    fixedIncomeYieldType: tx.fixedIncomeYieldType,
+    fixedIncomeRate: tx.fixedIncomeRate,
+    fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
+    tesouroTitle: tx.tesouroTitle,
+    fundCnpj: tx.fundCnpj,
+    startGain: 0,
+    startValue: 0,
+  };
+}
+
+/** Accrual fixed income: tracks principal directly and compounds daily. */
+function isAccrualFixedIncome(state: AssetState): boolean {
+  return state.isFixedIncome && !state.tesouroTitle;
+}
+
+/** Total return of one asset: what it is worth plus everything it paid out,
+ *  measured against the net cash put into it. */
+function assetTotalGain(state: AssetState): number {
+  return state.marketValue + state.dividendsAccumulated - state.netDeposits;
+}
+
+/** Compound one day of yield into an accrual fixed-income position. */
+function accrueFixedIncome(state: AssetState, cdiRate: number): void {
+  if (state.fixedIncomeYieldType === "CDI_PERCENTAGE") {
+    const pct = (state.fixedIncomeRate ?? 100) / 100;
+    state.marketValue *= 1 + cdiRate * pct;
+  } else if (state.fixedIncomeYieldType === "PREFIXED") {
+    const annual = (state.fixedIncomeRate ?? 0) / 100;
+    state.marketValue *= Math.pow(1 + annual, PREFIXED_DAILY_EXPONENT);
+  }
+}
+
+function applyBuy(state: AssetState, tx: EngineTransaction): void {
+  state.quantity += tx.quantity;
+  state.costBasis += tx.totalAmount;
+  state.netDeposits += tx.totalAmount;
+  // Accrual fixed income tracks principal directly; Tesouro derives its
+  // value from PU × quantity in the price-marking step instead.
+  if (isAccrualFixedIncome(state)) state.marketValue += tx.totalAmount;
+}
+
+function applySell(state: AssetState, tx: EngineTransaction): void {
+  const avgCost = state.quantity > 0 ? state.costBasis / state.quantity : 0;
+  const soldCost = avgCost * tx.quantity;
+  state.quantity -= tx.quantity;
+  state.costBasis -= soldCost;
+  state.realizedGain += tx.totalAmount - soldCost;
+  state.netDeposits -= tx.totalAmount;
+  const accrual = isAccrualFixedIncome(state);
+  if (accrual) {
+    state.marketValue = Math.max(0, state.marketValue - tx.totalAmount);
+  }
+  if (state.quantity <= 1e-9) {
+    state.quantity = 0;
+    state.costBasis = 0;
+    if (accrual) state.marketValue = 0;
+  }
+}
+
+/** Forward-fill `state.lastPrice` from the candles published up to `day`. */
+function forwardFillPrice(
+  state: AssetState,
+  assetCandles: CandlePoint[] | undefined,
+  day: string,
+): void {
+  if (!assetCandles) return;
+  while (
+    state.candleIndex < assetCandles.length &&
+    assetCandles[state.candleIndex]!.date <= day
+  ) {
+    state.lastPrice = assetCandles[state.candleIndex]!.close;
+    state.candleIndex++;
+  }
+}
+
+function priceStatusFor(
+  state: AssetState,
+  quote: QuoteResult | undefined,
+): SnapshotHolding["priceStatus"] {
+  if (state.tesouroTitle || state.fundCnpj) {
+    return state.lastPrice != null ? "ok" : "unavailable";
+  }
+  if (state.isFixedIncome) return "fixed_income";
+  return quote?.status ?? "unavailable";
+}
+
+function quoteIssueMessage(assetName: string, status: QuoteStatus): string {
+  if (status === "not_found") {
+    return `Ativo ${assetName} não encontrado na API de cotações`;
+  }
+  if (status === "stale") {
+    return `Cotação de ${assetName} pode estar desatualizada`;
+  }
+  return `Cotação de ${assetName} indisponível no momento`;
+}
+
+interface DividendStats {
+  dividends12m: number;
+  dividendsLast3m: number;
+  byAsset12m: Map<string, number>;
+}
+
+function dividendStats(
+  dividends: EngineDividend[],
+  today: string,
+): DividendStats {
+  const twelveMonthsAgo = addMonthsIso(today, -12);
+  const threeMonthsAgo = addMonthsIso(today, -3);
+  const stats: DividendStats = {
+    dividends12m: 0,
+    dividendsLast3m: 0,
+    byAsset12m: new Map(),
+  };
+  for (const dividend of dividends) {
+    if (dividend.paymentDate >= twelveMonthsAgo) {
+      stats.dividends12m += dividend.amount;
+      stats.byAsset12m.set(
+        dividend.assetName,
+        (stats.byAsset12m.get(dividend.assetName) ?? 0) + dividend.amount,
+      );
+    }
+    if (dividend.paymentDate >= threeMonthsAgo) {
+      stats.dividendsLast3m += dividend.amount;
+    }
+  }
+  return stats;
+}
+
+/**
+ * Chronological replay of the ledger. One instance per snapshot: `run()` walks
+ * every calendar day from the first trade to `today`, and the fields hold the
+ * end-of-replay state the holdings and summary are read from.
+ */
+class PortfolioReplay {
+  readonly assets = new Map<string, AssetState>();
+  readonly series: SnapshotPoint[] = [];
+  readonly benchmarkIds: string[];
   // Benchmarks: one shadow portfolio per index, each receiving exactly the
   // same cash flows on the same days as the real one and compounding at that
-  // index's daily return. Same construction as the original CDI-only version,
-  // just replicated per benchmark.
-  const benchmarkValues = new Map<string, number>(
-    benchmarkIds.map((id) => [id, 0]),
-  );
-  let netDeposits = 0;
-  let dividendsAccumulated = 0;
-
-  let txIndex = 0;
-  let divIndex = 0;
-  const series: SnapshotPoint[] = [];
-  let startGainTotal: number | null = null;
-  const startBenchmarkGains = new Map<string, number>(
-    benchmarkIds.map((id) => [id, 0]),
-  );
+  // index's daily return.
+  readonly benchmarkValues: Map<string, number>;
+  readonly startBenchmarkGains: Map<string, number>;
+  netDeposits = 0;
+  dividendsAccumulated = 0;
+  startGainTotal: number | null = null;
+  startDividendsAccumulated = 0;
   // Total-return gain at the end of the day before `today`, so "today's change"
   // is derived from the exact same replay as the period gain — this makes the
   // "hoje" figure identical to the period gain when the selected range is 1d.
-  const yesterdayIso = addDaysIso(today, -1);
-  let yesterdayGain: number | null = null;
-  let startDividendsAccumulated = 0;
+  yesterdayGain: number | null = null;
 
-  // Total return of one asset: what it is worth plus everything it paid out,
-  // measured against the net cash put into it.
-  const assetTotalGain = (state: AssetState): number =>
-    state.marketValue + state.dividendsAccumulated - state.netDeposits;
+  private readonly yesterdayIso: string;
+  private readonly rangeStart: string;
+  private readonly replayStart: string;
+  private txIndex = 0;
+  private divIndex = 0;
 
-  // One Date, stepped in place: building a fresh one per day and formatting
-  // it through toISOString was the single most expensive operation in this
-  // loop, on a loop that runs once per calendar day since the first trade.
-  const cursor = new Date(`${replayStart}T00:00:00Z`);
-  const last = new Date(`${today}T00:00:00Z`).getTime();
-  for (; cursor.getTime() <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-    const day = isoDayOf(cursor);
-    // CDI still drives fixed-income accrual below, so it is read out by name
-    // even though every benchmark compounds generically.
-    const cdiRate = benchmarks.get("CDI")?.get(day) ?? 0;
+  constructor(
+    private readonly input: EngineInput,
+    private readonly transactions: EngineTransaction[],
+    private readonly dividends: EngineDividend[],
+  ) {
+    this.benchmarkIds = [...input.benchmarks.keys()];
+    this.benchmarkValues = new Map(this.benchmarkIds.map((id) => [id, 0]));
+    this.startBenchmarkGains = new Map(this.benchmarkIds.map((id) => [id, 0]));
+    this.yesterdayIso = addDaysIso(input.today, -1);
 
-    // 1) Accrue daily yield before the day's cash flows.
-    for (const id of benchmarkIds) {
+    const fullStart = transactions[0]!.transactionDate;
+    this.rangeStart = periodStartIso(input.range, input.today) ?? fullStart;
+    // The replay always begins at the first transaction so that state (prices,
+    // fixed-income accrual, cost basis) is correct when the range window opens.
+    this.replayStart =
+      fullStart < this.rangeStart ? fullStart : this.rangeStart;
+  }
+
+  run(): void {
+    // One Date, stepped in place: building a fresh one per day and formatting
+    // it through toISOString was the single most expensive operation in this
+    // loop, on a loop that runs once per calendar day since the first trade.
+    const cursor = new Date(`${this.replayStart}T00:00:00Z`);
+    const last = new Date(`${this.input.today}T00:00:00Z`).getTime();
+    for (
+      ;
+      cursor.getTime() <= last;
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
+    ) {
+      const day = isoDayOf(cursor);
+      // 1) Accrue daily yield before the day's cash flows.
+      this.accrue(day);
+      // 2) Apply the day's transactions.
+      while (
+        this.txIndex < this.transactions.length &&
+        this.transactions[this.txIndex]!.transactionDate === day
+      ) {
+        this.applyTransaction(this.transactions[this.txIndex]!);
+        this.txIndex++;
+      }
+      // 3) Apply the day's dividends.
+      while (
+        this.divIndex < this.dividends.length &&
+        this.dividends[this.divIndex]!.paymentDate === day
+      ) {
+        this.applyDividend(this.dividends[this.divIndex]!);
+        this.divIndex++;
+      }
+      // 4) Mark market assets to the day's price.
+      const totalValue = this.markToMarket(day);
+      // 5) Range-start snapshot and series point.
+      this.closeDay(day, totalValue);
+    }
+  }
+
+  /** Benchmark's gain over the range on the same cash flows as the portfolio. */
+  benchmarkGain(id: string): number {
+    return (
+      this.benchmarkValues.get(id)! -
+      this.netDeposits -
+      this.startBenchmarkGains.get(id)!
+    );
+  }
+
+  private getAsset(tx: EngineTransaction): AssetState {
+    let state = this.assets.get(tx.assetName);
+    if (!state) {
+      state = newAssetState(tx);
+      this.assets.set(tx.assetName, state);
+    }
+    return state;
+  }
+
+  private accrue(day: string): void {
+    const { benchmarks } = this.input;
+    for (const id of this.benchmarkIds) {
       const rate = benchmarks.get(id)?.get(day) ?? 0;
-      benchmarkValues.set(id, benchmarkValues.get(id)! * (1 + rate));
+      this.benchmarkValues.set(id, this.benchmarkValues.get(id)! * (1 + rate));
     }
-    for (const state of assets.values()) {
+    // CDI still drives fixed-income accrual, so it is read out by name even
+    // though every benchmark compounds generically.
+    const cdiRate = benchmarks.get("CDI")?.get(day) ?? 0;
+    for (const state of this.assets.values()) {
       // Tesouro is marked to market (step 4), not accrued.
-      if (!state.isFixedIncome || state.tesouroTitle || state.quantity <= 0)
-        continue;
-      if (state.fixedIncomeYieldType === "CDI_PERCENTAGE") {
-        const pct = (state.fixedIncomeRate ?? 100) / 100;
-        state.marketValue *= 1 + cdiRate * pct;
-      } else if (state.fixedIncomeYieldType === "PREFIXED") {
-        const annual = (state.fixedIncomeRate ?? 0) / 100;
-        state.marketValue *= Math.pow(1 + annual, PREFIXED_DAILY_EXPONENT);
+      if (isAccrualFixedIncome(state) && state.quantity > 0) {
+        accrueFixedIncome(state, cdiRate);
       }
     }
+  }
 
-    // 2) Apply the day's transactions.
-    while (
-      txIndex < transactions.length &&
-      transactions[txIndex]!.transactionDate === day
-    ) {
-      const tx = transactions[txIndex]!;
-      const state = getAsset(tx);
-      if (tx.transactionType === "BUY") {
-        state.quantity += tx.quantity;
-        state.costBasis += tx.totalAmount;
-        state.netDeposits += tx.totalAmount;
-        netDeposits += tx.totalAmount;
-        for (const id of benchmarkIds) {
-          benchmarkValues.set(id, benchmarkValues.get(id)! + tx.totalAmount);
-        }
-        // Accrual fixed income tracks principal directly; Tesouro derives its
-        // value from PU × quantity in the price-marking step instead.
-        if (state.isFixedIncome && !state.tesouroTitle)
-          state.marketValue += tx.totalAmount;
-      } else {
-        const avgCost =
-          state.quantity > 0 ? state.costBasis / state.quantity : 0;
-        const soldCost = avgCost * tx.quantity;
-        state.quantity -= tx.quantity;
-        state.costBasis -= soldCost;
-        state.realizedGain += tx.totalAmount - soldCost;
-        state.netDeposits -= tx.totalAmount;
-        netDeposits -= tx.totalAmount;
-        for (const id of benchmarkIds) {
-          benchmarkValues.set(id, benchmarkValues.get(id)! - tx.totalAmount);
-        }
-        if (state.isFixedIncome && !state.tesouroTitle) {
-          state.marketValue = Math.max(0, state.marketValue - tx.totalAmount);
-        }
-        if (state.quantity <= 1e-9) {
-          state.quantity = 0;
-          state.costBasis = 0;
-          if (state.isFixedIncome && !state.tesouroTitle) state.marketValue = 0;
-        }
-      }
-      txIndex++;
+  /** Move `amount` of cash into (+) or out of (−) every shadow portfolio. */
+  private shiftBenchmarks(amount: number): void {
+    for (const id of this.benchmarkIds) {
+      this.benchmarkValues.set(id, this.benchmarkValues.get(id)! + amount);
     }
+  }
 
-    // 3) Apply the day's dividends.
-    while (
-      divIndex < sortedDividends.length &&
-      sortedDividends[divIndex]!.paymentDate === day
-    ) {
-      const dividend = sortedDividends[divIndex]!;
-      dividendsAccumulated += dividend.amount;
-      const state = assets.get(dividend.assetName);
-      if (state) state.dividendsAccumulated += dividend.amount;
-      divIndex++;
+  private applyTransaction(tx: EngineTransaction): void {
+    const state = this.getAsset(tx);
+    if (tx.transactionType === "BUY") {
+      applyBuy(state, tx);
+      this.netDeposits += tx.totalAmount;
+      this.shiftBenchmarks(tx.totalAmount);
+    } else {
+      applySell(state, tx);
+      this.netDeposits -= tx.totalAmount;
+      this.shiftBenchmarks(-tx.totalAmount);
     }
+  }
 
-    // 4) Mark market assets to the day's price (forward-filled candles;
-    //    today's point prefers the live quote).
+  private applyDividend(dividend: EngineDividend): void {
+    this.dividendsAccumulated += dividend.amount;
+    const state = this.assets.get(dividend.assetName);
+    if (state) state.dividendsAccumulated += dividend.amount;
+  }
+
+  private candlesFor(assetName: string, state: AssetState) {
+    if (state.tesouroTitle) return this.input.tesouroCandles.get(assetName);
+    if (state.fundCnpj) return this.input.fundCandles.get(assetName);
+    return this.input.candles.get(assetName);
+  }
+
+  /**
+   * Price one market asset on `day`: forward-filled candles, with today's
+   * point preferring the live quote. Tesouro is priced from its official PU
+   * series, funds from the CVM quota series, everything else from brapi.
+   */
+  private priceAsset(assetName: string, state: AssetState, day: string): void {
+    forwardFillPrice(state, this.candlesFor(assetName, state), day);
+    // Neither Tesouro nor funds have an intraday quote: their last published
+    // price *is* the price, and for a fund it is a few days old by design.
+    if (day === this.input.today && !state.tesouroTitle && !state.fundCnpj) {
+      const quote = this.input.quotes.get(assetName);
+      if (quote?.price != null) state.lastPrice = quote.price;
+    }
+    const fallback = state.quantity > 0 ? state.costBasis / state.quantity : 0;
+    state.marketValue = state.quantity * (state.lastPrice ?? fallback);
+  }
+
+  /** Mark every asset to the day's price and return the portfolio total. */
+  private markToMarket(day: string): number {
     // The day's total is summed in the same pass, rather than in one more walk
     // over every asset afterwards.
     let totalValue = 0;
-    for (const [assetName, state] of assets) {
-      // Accrual fixed income keeps its compounded marketValue (step 1). Tesouro
-      // and market assets are priced here — Tesouro from its official PU series,
-      // everything else from brapi candles + today's live quote.
-      if (state.isFixedIncome && !state.tesouroTitle) {
-        totalValue += state.marketValue;
-        continue;
-      }
-      const assetCandles = state.tesouroTitle
-        ? tesouroCandles.get(assetName)
-        : state.fundCnpj
-          ? fundCandles.get(assetName)
-          : candles.get(assetName);
-      if (assetCandles) {
-        while (
-          state.candleIndex < assetCandles.length &&
-          assetCandles[state.candleIndex]!.date <= day
-        ) {
-          state.lastPrice = assetCandles[state.candleIndex]!.close;
-          state.candleIndex++;
-        }
-      }
-      // Neither Tesouro nor funds have an intraday quote: their last published
-      // price *is* the price, and for a fund it is a few days old by design.
-      if (day === today && !state.tesouroTitle && !state.fundCnpj) {
-        const quote = quotes.get(assetName);
-        if (quote?.price != null) state.lastPrice = quote.price;
-      }
-      const price =
-        state.lastPrice ??
-        (state.quantity > 0 ? state.costBasis / state.quantity : 0);
-      state.marketValue = state.quantity * price;
+    for (const [assetName, state] of this.assets) {
+      // Accrual fixed income keeps its compounded marketValue (step 1).
+      if (!isAccrualFixedIncome(state)) this.priceAsset(assetName, state, day);
       totalValue += state.marketValue;
     }
+    return totalValue;
+  }
 
-    const totalGain = totalValue + dividendsAccumulated - netDeposits;
+  private closeDay(day: string, totalValue: number): void {
+    const totalGain = totalValue + this.dividendsAccumulated - this.netDeposits;
+    if (day === this.yesterdayIso) this.yesterdayGain = totalGain;
+    if (day < this.rangeStart) return;
 
-    if (day === yesterdayIso) yesterdayGain = totalGain;
-
-    // 5) Snapshot state the first time the replay enters the range window.
-    if (day >= rangeStart && startGainTotal === null) {
-      startGainTotal = totalGain;
-      startDividendsAccumulated = dividendsAccumulated;
-      for (const id of benchmarkIds) {
-        startBenchmarkGains.set(id, benchmarkValues.get(id)! - netDeposits);
+    // Snapshot state the first time the replay enters the range window.
+    if (this.startGainTotal === null) {
+      this.startGainTotal = totalGain;
+      this.startDividendsAccumulated = this.dividendsAccumulated;
+      for (const id of this.benchmarkIds) {
+        this.startBenchmarkGains.set(
+          id,
+          this.benchmarkValues.get(id)! - this.netDeposits,
+        );
       }
-      for (const state of assets.values()) {
+      for (const state of this.assets.values()) {
         state.startGain = assetTotalGain(state);
         state.startValue = state.marketValue;
       }
     }
 
-    if (includeSeries && day >= rangeStart) {
+    if (this.input.includeSeries) {
       const benchmarkGains: Record<string, number> = {};
-      for (const id of benchmarkIds) {
-        benchmarkGains[id] =
-          benchmarkValues.get(id)! - netDeposits - startBenchmarkGains.get(id)!;
+      for (const id of this.benchmarkIds) {
+        benchmarkGains[id] = this.benchmarkGain(id);
       }
-
-      series.push({
+      this.series.push({
         date: day,
         value: totalValue,
-        invested: netDeposits,
-        gain: totalGain - (startGainTotal ?? 0),
+        invested: this.netDeposits,
+        gain: totalGain - this.startGainTotal,
         benchmarkGains,
-        dividendsAccumulated: dividendsAccumulated - startDividendsAccumulated,
+        dividendsAccumulated:
+          this.dividendsAccumulated - this.startDividendsAccumulated,
       });
     }
   }
+}
 
-  // ---- Final state → holdings + summary --------------------------------
-  const twelveMonthsAgo = addMonthsIso(today, -12);
-  const threeMonthsAgo = addMonthsIso(today, -3);
-  const dividendsByAsset12m = new Map<string, number>();
-  let dividends12m = 0;
-  let dividendsLast3m = 0;
-  for (const dividend of sortedDividends) {
-    if (dividend.paymentDate >= twelveMonthsAgo) {
-      dividends12m += dividend.amount;
-      dividendsByAsset12m.set(
-        dividend.assetName,
-        (dividendsByAsset12m.get(dividend.assetName) ?? 0) + dividend.amount,
-      );
-    }
-    if (dividend.paymentDate >= threeMonthsAgo) {
-      dividendsLast3m += dividend.amount;
-    }
-  }
+function buildHolding(
+  assetName: string,
+  state: AssetState,
+  quote: QuoteResult | undefined,
+  input: EngineInput,
+  dividends12m: number,
+): SnapshotHolding {
+  const averageCost = state.costBasis / state.quantity;
+  const currentPrice =
+    state.quantity > 0 ? state.marketValue / state.quantity : 0;
+  const unrealizedGain = state.marketValue - state.costBasis;
+  const periodGain = assetTotalGain(state) - state.startGain;
+  const periodBase = state.startValue > 0 ? state.startValue : state.costBasis;
 
-  const holdings: SnapshotHolding[] = [];
-  const issues: PortfolioSnapshot["issues"] = [];
-  let totalValue = 0;
-  let realizedGainTotal = 0;
-  let quotesAsOf: Date | null = null;
+  return {
+    assetName,
+    label: input.assetLabels.get(assetName) ?? null,
+    assetTypeId: state.assetTypeId,
+    assetTypeName: input.assetTypeNames.get(state.assetTypeId) ?? "Outros",
+    quantity: state.quantity,
+    averageCost,
+    currentPrice,
+    priceStatus: priceStatusFor(state, quote),
+    priceAsOf: quote?.asOf ? quote.asOf.toISOString() : null,
+    currentValue: state.marketValue,
+    totalCost: state.costBasis,
+    unrealizedGain,
+    unrealizedGainPercent:
+      state.costBasis > 0 ? (unrealizedGain / state.costBasis) * 100 : 0,
+    periodGain,
+    periodGainPercent: periodBase > 0 ? (periodGain / periodBase) * 100 : 0,
+    dividendsTotal: state.dividendsAccumulated,
+    dividends12m,
+    isFixedIncome: state.isFixedIncome,
+    fixedIncomeYieldType: state.fixedIncomeYieldType,
+    fixedIncomeRate: state.fixedIncomeRate,
+    fixedIncomeMaturityDate: state.fixedIncomeMaturityDate,
+    tesouroTitle: state.tesouroTitle,
+    fundCnpj: state.fundCnpj,
+  };
+}
 
-  for (const [assetName, state] of assets) {
-    realizedGainTotal += state.realizedGain;
+interface HoldingsResult {
+  holdings: SnapshotHolding[];
+  issues: PortfolioSnapshot["issues"];
+  totalValue: number;
+  realizedGainTotal: number;
+  quotesAsOf: Date | null;
+}
+
+function buildHoldings(
+  replay: PortfolioReplay,
+  input: EngineInput,
+  byAsset12m: Map<string, number>,
+): HoldingsResult {
+  const result: HoldingsResult = {
+    holdings: [],
+    issues: [],
+    totalValue: 0,
+    realizedGainTotal: 0,
+    quotesAsOf: null,
+  };
+
+  for (const [assetName, state] of replay.assets) {
+    result.realizedGainTotal += state.realizedGain;
     if (state.quantity <= 0) continue;
 
-    totalValue += state.marketValue;
+    result.totalValue += state.marketValue;
 
     const quote =
-      state.isFixedIncome || state.fundCnpj ? undefined : quotes.get(assetName);
-    const priceStatus: SnapshotHolding["priceStatus"] =
-      state.tesouroTitle || state.fundCnpj
-        ? state.lastPrice != null
-          ? "ok"
-          : "unavailable"
-        : state.isFixedIncome
-          ? "fixed_income"
-          : (quote?.status ?? "unavailable");
-
+      state.isFixedIncome || state.fundCnpj
+        ? undefined
+        : input.quotes.get(assetName);
     if (!state.isFixedIncome && quote && quote.status !== "ok") {
-      issues.push({
+      result.issues.push({
         assetName,
         status: quote.status,
-        message:
-          quote.status === "not_found"
-            ? `Ativo ${assetName} não encontrado na API de cotações`
-            : quote.status === "stale"
-              ? `Cotação de ${assetName} pode estar desatualizada`
-              : `Cotação de ${assetName} indisponível no momento`,
+        message: quoteIssueMessage(assetName, quote.status),
       });
     }
-    if (quote?.asOf && (!quotesAsOf || quote.asOf > quotesAsOf)) {
-      quotesAsOf = quote.asOf;
+    if (quote?.asOf && (!result.quotesAsOf || quote.asOf > result.quotesAsOf)) {
+      result.quotesAsOf = quote.asOf;
     }
 
-    const averageCost = state.costBasis / state.quantity;
-    const currentPrice =
-      state.quantity > 0 ? state.marketValue / state.quantity : 0;
-    const unrealizedGain = state.marketValue - state.costBasis;
-    const periodGain = assetTotalGain(state) - state.startGain;
-    const periodBase =
-      state.startValue > 0 ? state.startValue : state.costBasis;
-
-    holdings.push({
-      assetName,
-      label: assetLabels.get(assetName) ?? null,
-      assetTypeId: state.assetTypeId,
-      assetTypeName: assetTypeNames.get(state.assetTypeId) ?? "Outros",
-      quantity: state.quantity,
-      averageCost,
-      currentPrice,
-      priceStatus,
-      priceAsOf: quote?.asOf ? quote.asOf.toISOString() : null,
-      currentValue: state.marketValue,
-      totalCost: state.costBasis,
-      unrealizedGain,
-      unrealizedGainPercent:
-        state.costBasis > 0 ? (unrealizedGain / state.costBasis) * 100 : 0,
-      periodGain,
-      periodGainPercent: periodBase > 0 ? (periodGain / periodBase) * 100 : 0,
-      dividendsTotal: state.dividendsAccumulated,
-      dividends12m: dividendsByAsset12m.get(assetName) ?? 0,
-      isFixedIncome: state.isFixedIncome,
-      fixedIncomeYieldType: state.fixedIncomeYieldType,
-      fixedIncomeRate: state.fixedIncomeRate,
-      fixedIncomeMaturityDate: state.fixedIncomeMaturityDate,
-      tesouroTitle: state.tesouroTitle,
-      fundCnpj: state.fundCnpj,
-    });
+    result.holdings.push(
+      buildHolding(
+        assetName,
+        state,
+        quote,
+        input,
+        byAsset12m.get(assetName) ?? 0,
+      ),
+    );
   }
 
-  holdings.sort((a, b) => b.currentValue - a.currentValue);
+  result.holdings.sort((a, b) => b.currentValue - a.currentValue);
+  return result;
+}
 
+export function computePortfolioSnapshot(
+  input: EngineInput,
+): PortfolioSnapshot {
+  if (input.transactions.length === 0) return emptySnapshot();
+
+  const transactions = [...input.transactions].sort((a, b) =>
+    a.transactionDate.localeCompare(b.transactionDate),
+  );
+  const sortedDividends = [...input.dividends].sort((a, b) =>
+    a.paymentDate.localeCompare(b.paymentDate),
+  );
+
+  const replay = new PortfolioReplay(input, transactions, sortedDividends);
+  replay.run();
+
+  // ---- Final state → holdings + summary --------------------------------
+  const stats = dividendStats(sortedDividends, input.today);
+  const { holdings, issues, totalValue, realizedGainTotal, quotesAsOf } =
+    buildHoldings(replay, input, stats.byAsset12m);
+
+  const { netDeposits, dividendsAccumulated } = replay;
   const finalGain = totalValue + dividendsAccumulated - netDeposits;
-  const periodGain = finalGain - (startGainTotal ?? 0);
+  const periodGain = finalGain - (replay.startGainTotal ?? 0);
   // Invested capital = net deposits (aportes) — the exact quantity the chart
   // plots as "Total Investido" (SnapshotPoint.invested). Reporting it here, and
   // basing the return on it, keeps the "Total Investido" and "Rentabilidade"
@@ -547,7 +687,8 @@ export function computePortfolioSnapshot(input: {
   // "Today's change" = the 1-day slice of the same replay, so it matches the
   // period gain exactly when the range is 1d (Hoje). Zero if there is no prior
   // day (a portfolio that only starts today).
-  const dailyChange = yesterdayGain != null ? finalGain - yesterdayGain : 0;
+  const dailyChange =
+    replay.yesterdayGain != null ? finalGain - replay.yesterdayGain : 0;
 
   return {
     holdings,
@@ -556,20 +697,17 @@ export function computePortfolioSnapshot(input: {
       totalInvested: netDeposits,
       periodGain,
       periodGainPercent,
-      periodDividends: dividendsAccumulated - startDividendsAccumulated,
-      dividends12m,
-      monthlyIncome: dividendsLast3m / 3,
+      periodDividends: dividendsAccumulated - replay.startDividendsAccumulated,
+      dividends12m: stats.dividends12m,
+      monthlyIncome: stats.dividendsLast3m / 3,
       realizedGain: realizedGainTotal,
       dailyChange,
       quotesAsOf: quotesAsOf ? quotesAsOf.toISOString() : null,
       benchmarkGains: Object.fromEntries(
-        benchmarkIds.map((id) => [
-          id,
-          benchmarkValues.get(id)! - netDeposits - startBenchmarkGains.get(id)!,
-        ]),
+        replay.benchmarkIds.map((id) => [id, replay.benchmarkGain(id)]),
       ),
     },
-    series,
+    series: replay.series,
     issues,
   };
 }

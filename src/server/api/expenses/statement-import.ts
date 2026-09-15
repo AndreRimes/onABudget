@@ -144,6 +144,137 @@ export async function previewStatementRows(
   };
 }
 
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+interface ImportCandidate {
+  hash: string;
+  categoryId: number | null;
+  providerCategory: string | null;
+  row: StatementRow;
+}
+
+interface ImportedExpense {
+  description: string;
+  categoryId: number;
+}
+
+/**
+ * Create the categories the user accepted from Pluggy, once per name, and
+ * return name -> id. Categories are per-owner, so both the conflict target
+ * and the read-back are keyed by (userId, name) — the same name under another
+ * account is a different category, not a conflict.
+ */
+async function ensureProviderCategories(
+  tx: DbTransaction,
+  userId: string,
+  names: string[],
+): Promise<Map<string, number>> {
+  const providerCategoryIds = new Map<string, number>();
+  // Colours already spoken for, so each category the import creates gets
+  // a hue of its own instead of every one of them sharing a default.
+  const usedColors = (
+    await tx
+      .select({ color: expenseCategories.color })
+      .from(expenseCategories)
+      .where(eq(expenseCategories.userId, userId))
+  ).map((row) => row.color);
+  for (const name of new Set(names)) {
+    const color = nextCategoryColor(usedColors);
+    const inserted = await tx
+      .insert(expenseCategories)
+      .values({ userId, name, color })
+      .onConflictDoNothing({
+        target: [expenseCategories.userId, expenseCategories.name],
+      })
+      .returning({ id: expenseCategories.id });
+    // Only a row that was actually written claims the colour; on a
+    // conflict the existing category keeps whatever colour it has.
+    if (inserted.length > 0) usedColors.push(color);
+    const [category] = await tx
+      .select({ id: expenseCategories.id })
+      .from(expenseCategories)
+      .where(
+        and(
+          eq(expenseCategories.userId, userId),
+          eq(expenseCategories.name, name),
+        ),
+      );
+    if (category) providerCategoryIds.set(name, category.id);
+  }
+  return providerCategoryIds;
+}
+
+/** Write the candidates as expenses; duplicates count as skipped. */
+async function insertCandidates(
+  tx: DbTransaction,
+  accountId: number,
+  candidates: ImportCandidate[],
+  providerCategoryIds: Map<string, number>,
+): Promise<{ inserted: number; skipped: number; imported: ImportedExpense[] }> {
+  let inserted = 0;
+  let skipped = 0;
+  const imported: ImportedExpense[] = [];
+
+  // Shape every row first, then write them in batches: one awaited
+  // INSERT per row turned a 5000-line statement into 5000 sequential
+  // round trips inside a single transaction.
+  const pending: Array<{
+    values: typeof expenses.$inferInsert;
+    description: string;
+    categoryId: number;
+  }> = [];
+
+  for (const candidate of candidates) {
+    const categoryId =
+      candidate.categoryId ??
+      (candidate.providerCategory
+        ? providerCategoryIds.get(candidate.providerCategory)
+        : undefined);
+    if (categoryId === undefined) {
+      skipped++;
+      continue;
+    }
+    pending.push({
+      values: {
+        checkingAccountId: accountId,
+        categoryId,
+        description: candidate.row.description || null,
+        amount: candidate.row.amount,
+        expenseDate: candidate.row.date,
+        source: "IMPORT",
+        sourceHash: candidate.hash,
+      },
+      description: candidate.row.description,
+      categoryId,
+    });
+  }
+
+  // Returning the source hash rather than the id keeps the counters exact:
+  // `onConflictDoNothing` drops rows already imported, so the hashes that
+  // come back are precisely the ones written — and only those are learned
+  // from, so a duplicate never re-teaches the categorizer.
+  for (const batch of chunk(pending, INSERT_CHUNK_SIZE)) {
+    const written = await tx
+      .insert(expenses)
+      .values(batch.map((entry) => entry.values))
+      .onConflictDoNothing({ target: expenses.sourceHash })
+      .returning({ sourceHash: expenses.sourceHash });
+    const writtenHashes = new Set(written.map((entry) => entry.sourceHash));
+
+    for (const entry of batch) {
+      if (writtenHashes.has(entry.values.sourceHash!)) {
+        inserted++;
+        imported.push({
+          description: entry.description,
+          categoryId: entry.categoryId,
+        });
+      } else skipped++;
+    }
+  }
+
+  return { inserted, skipped, imported };
+}
+
 export async function importStatementRows(input: {
   userId: string;
   accountId: number;
@@ -173,12 +304,7 @@ export async function importStatementRows(input: {
   const ignored = new Set(ignoredHashes);
   const acceptedPluggy = new Set(pluggyCategoryHashes);
 
-  const candidates: Array<{
-    hash: string;
-    categoryId: number | null;
-    providerCategory: string | null;
-    row: StatementRow;
-  }> = [];
+  const candidates: ImportCandidate[] = [];
   const toIgnore: Array<string | null> = [];
   let skipped = 0;
 
@@ -213,105 +339,25 @@ export async function importStatementRows(input: {
   });
 
   let inserted = 0;
-  const imported: Array<{ description: string; categoryId: number }> = [];
+  let imported: ImportedExpense[] = [];
   if (candidates.length > 0) {
     await db.transaction(async (tx) => {
-      const providerCategoryIds = new Map<string, number>();
-      // Colours already spoken for, so each category the import creates gets
-      // a hue of its own instead of every one of them sharing a default.
-      const usedColors = (
-        await tx
-          .select({ color: expenseCategories.color })
-          .from(expenseCategories)
-          .where(eq(expenseCategories.userId, userId))
-      ).map((row) => row.color);
-      for (const name of new Set(
+      const providerCategoryIds = await ensureProviderCategories(
+        tx,
+        userId,
         candidates
           .map((candidate) => candidate.providerCategory)
           .filter((name): name is string => !!name),
-      )) {
-        // Categories are per-owner, so both the conflict target and the
-        // read-back are keyed by (userId, name) — the same name under another
-        // account is a different category, not a conflict.
-        const color = nextCategoryColor(usedColors);
-        const inserted = await tx
-          .insert(expenseCategories)
-          .values({ userId, name, color })
-          .onConflictDoNothing({
-            target: [expenseCategories.userId, expenseCategories.name],
-          })
-          .returning({ id: expenseCategories.id });
-        // Only a row that was actually written claims the colour; on a
-        // conflict the existing category keeps whatever colour it has.
-        if (inserted.length > 0) usedColors.push(color);
-        const [category] = await tx
-          .select({ id: expenseCategories.id })
-          .from(expenseCategories)
-          .where(
-            and(
-              eq(expenseCategories.userId, userId),
-              eq(expenseCategories.name, name),
-            ),
-          );
-        if (category) providerCategoryIds.set(name, category.id);
-      }
-
-      // Shape every row first, then write them in batches: one awaited
-      // INSERT per row turned a 5000-line statement into 5000 sequential
-      // round trips inside a single transaction.
-      const pending: Array<{
-        values: typeof expenses.$inferInsert;
-        description: string;
-        categoryId: number;
-      }> = [];
-
-      for (const candidate of candidates) {
-        const categoryId =
-          candidate.categoryId ??
-          (candidate.providerCategory
-            ? providerCategoryIds.get(candidate.providerCategory)
-            : undefined);
-        if (categoryId === undefined) {
-          skipped++;
-          continue;
-        }
-        pending.push({
-          values: {
-            checkingAccountId: accountId,
-            categoryId,
-            description: candidate.row.description || null,
-            amount: candidate.row.amount,
-            expenseDate: candidate.row.date,
-            source: "IMPORT",
-            sourceHash: candidate.hash,
-          },
-          description: candidate.row.description,
-          categoryId,
-        });
-      }
-
-      // Returning the source hash rather than the id keeps the counters exact:
-      // `onConflictDoNothing` drops rows already imported, so the hashes that
-      // come back are precisely the ones written — and only those are learned
-      // from, so a duplicate never re-teaches the categorizer.
-      for (const batch of chunk(pending, INSERT_CHUNK_SIZE)) {
-        const written = await tx
-          .insert(expenses)
-          .values(batch.map((entry) => entry.values))
-          .onConflictDoNothing({ target: expenses.sourceHash })
-          .returning({ sourceHash: expenses.sourceHash });
-        const writtenHashes = new Set(written.map((entry) => entry.sourceHash));
-
-        for (const entry of batch) {
-          if (writtenHashes.has(entry.values.sourceHash!)) {
-            inserted++;
-            imported.push({
-              description: entry.description,
-              categoryId: entry.categoryId,
-            });
-          } else skipped++;
-        }
-      }
+      );
+      const outcome = await insertCandidates(
+        tx,
+        accountId,
+        candidates,
+        providerCategoryIds,
+      );
+      inserted = outcome.inserted;
+      skipped += outcome.skipped;
+      imported = outcome.imported;
     });
   }
 

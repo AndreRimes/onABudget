@@ -14,8 +14,18 @@ import { parseBrNumber, stripAccents } from "~/lib/parse";
 import type { ParsedStatementRow } from "./statement-row";
 
 const MONTHS: Record<string, number> = {
-  jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6,
-  jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
+  jan: 1,
+  fev: 2,
+  mar: 3,
+  abr: 4,
+  mai: 5,
+  jun: 6,
+  jul: 7,
+  ago: 8,
+  set: 9,
+  out: 10,
+  nov: 11,
+  dez: 12,
 };
 
 /**
@@ -188,57 +198,142 @@ function cleanDescription(raw: string): string {
     .trim();
 }
 
-export function parseFaturaText(text: string): FaturaParseResult {
-  const referenceMonth = findReferenceMonth(text);
-  const lines = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+interface PendingRecord {
+  day: number;
+  month: number;
+  year: number | null;
+  parts: string[];
+  /**
+   * How many further lines this record may consume while looking for its
+   * amount. A real transaction carries it on the same line, or one or two
+   * lines later when the PDF splits the table cells. Without a budget, a
+   * stray dated line — the boleto's "30/06/2026 05311988126 OUTROS N ..." —
+   * swallows the rest of the document and emits the boleto total as a
+   * bogus purchase.
+   */
+  budget: number;
+}
 
-  const rows: ParsedStatementRow[] = [];
-  const unparsedSamples: string[] = [];
-  let ignoredRows = 0;
+interface DateHead {
+  day: number;
+  month: number;
+  year: number | null;
+  /** Whatever follows the date on the same line. */
+  rest: string;
+}
 
-  // A record starts at a leading date and ends at the line carrying its
-  // amount, which may be the same line or a later one (PDF table extraction
-  // frequently splits them).
-  let pending:
-    | {
-        day: number;
-        month: number;
-        year: number | null;
-        parts: string[];
-        /**
-         * How many further lines this record may consume while looking for its
-         * amount. A real transaction carries it on the same line, or one or two
-         * lines later when the PDF splits the table cells. Without a budget, a
-         * stray dated line — the boleto's "30/06/2026 05311988126 OUTROS N ..." —
-         * swallows the rest of the document and emits the boleto total as a
-         * bogus purchase.
-         */
-        budget: number;
-      }
-    | null = null;
+/** Leading date of a line, or null when the line does not start a record. */
+function parseDateHead(line: string): DateHead | null {
+  const match = DATE_HEAD.exec(line);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = monthNumber(match[2]!);
+  if (month === null || day < 1 || day > 31) return null;
+  return {
+    day,
+    month,
+    year: match[3] ? Number(match[3]) : null,
+    rest: match[4] ?? "",
+  };
+}
 
-  const flush = (prefix: string, numberText: string, trailingDash: boolean) => {
-    if (!pending) return;
-    const date = resolveDate(pending.day, pending.month, pending.year, referenceMonth);
-    const amount = parseBrNumber(numberText);
-    const description = cleanDescription(pending.parts.join(" "));
-    pending = null;
+/**
+ * Line-by-line scanner. A record starts at a leading date and ends at the
+ * line carrying its amount, which may be the same line or a later one (PDF
+ * table extraction frequently splits them).
+ */
+class FaturaScanner {
+  readonly rows: ParsedStatementRow[] = [];
+  readonly unparsedSamples: string[] = [];
+  ignoredRows = 0;
+  private pending: PendingRecord | null = null;
 
-    if (!date || amount === null || amount === 0) {
-      ignoredRows++;
+  constructor(private readonly referenceMonth: string | null) {}
+
+  scan(line: string): void {
+    const head = parseDateHead(line);
+    if (head) this.startRecord(head);
+    else if (this.pending) this.continueRecord(line);
+    // Lines that never started with a date are summary/boiler-plate (limits,
+    // instalment simulations, the boleto block) and are not reported: every
+    // real purchase line begins with its date.
+  }
+
+  finish(): void {
+    if (this.pending) this.ignoredRows++;
+  }
+
+  private startRecord(head: DateHead): void {
+    // A previous record never found its amount — give up on it.
+    if (this.pending) this.abandon(Infinity);
+    this.pending = {
+      day: head.day,
+      month: head.month,
+      year: head.year,
+      parts: [],
+      budget: 3,
+    };
+    // Match the amount against `rest`, not the whole line: the offsets of
+    // a match on the line would be shifted by the date prefix and would
+    // slice the description in the wrong place.
+    if (!this.tryFlushFromLine(head.rest) && head.rest) {
+      this.pending.parts.push(head.rest);
+    }
+  }
+
+  private continueRecord(line: string): void {
+    const pending = this.pending!;
+    if (this.tryFlushFromLine(line)) return;
+    if (pending.budget > 0) {
+      pending.budget--;
+      pending.parts.push(line);
       return;
     }
-    if (!description || isNoise(description)) {
-      ignoredRows++;
+    // Budget exhausted: this was never a transaction.
+    this.abandon(8);
+  }
+
+  /** Drop the pending record, keeping a sample of it while under `maxSamples`. */
+  private abandon(maxSamples: number): void {
+    const pending = this.pending!;
+    if (this.unparsedSamples.length < maxSamples && pending.parts.length > 0) {
+      this.unparsedSamples.push(pending.parts.join(" ").slice(0, 120));
+    }
+    this.ignoredRows++;
+    this.pending = null;
+  }
+
+  /** Closes the pending record if `text` ends with an amount. */
+  private tryFlushFromLine(text: string): boolean {
+    const amountMatch = TRAILING_AMOUNT.exec(text);
+    if (!amountMatch) return false;
+    const prefix = text.slice(0, amountMatch.index);
+    if (prefix.trim()) this.pending!.parts.push(prefix.trim());
+    this.flush(prefix, amountMatch[1]!, !!amountMatch[2]);
+    return true;
+  }
+
+  private flush(prefix: string, numberText: string, trailingDash: boolean) {
+    const pending = this.pending!;
+    const date = resolveDate(
+      pending.day,
+      pending.month,
+      pending.year,
+      this.referenceMonth,
+    );
+    const amount = parseBrNumber(numberText);
+    const description = cleanDescription(pending.parts.join(" "));
+    this.pending = null;
+
+    if (!date || !amount || !description || isNoise(description)) {
+      this.ignoredRows++;
       return;
     }
 
     const credit =
-      isCreditAmount(prefix, numberText, trailingDash) || isPayment(description);
-    rows.push({
+      isCreditAmount(prefix, numberText, trailingDash) ||
+      isPayment(description);
+    this.rows.push({
       // A fatura lists spending; the exceptions are payments and refunds,
       // which are credits and never become expenses.
       kind: credit ? "credit" : "debit",
@@ -248,71 +343,24 @@ export function parseFaturaText(text: string): FaturaParseResult {
       fitId: null,
       acctId: null,
     });
-  };
-
-  for (const line of lines) {
-    const amountMatch = TRAILING_AMOUNT.exec(line);
-    const dateMatch = DATE_HEAD.exec(line);
-
-    if (dateMatch) {
-      const day = Number(dateMatch[1]);
-      const month = monthNumber(dateMatch[2]!);
-      if (month !== null && day >= 1 && day <= 31) {
-        // A previous record never found its amount — give up on it.
-        if (pending) {
-          if (pending.parts.length > 0) {
-            unparsedSamples.push(pending.parts.join(" ").slice(0, 120));
-          }
-          ignoredRows++;
-        }
-        const rest = dateMatch[4] ?? "";
-        pending = {
-          day,
-          month,
-          year: dateMatch[3] ? Number(dateMatch[3]) : null,
-          parts: [],
-          budget: 3,
-        };
-        // Match the amount against `rest`, not the whole line: the offsets of
-        // a match on the line would be shifted by the date prefix and would
-        // slice the description in the wrong place.
-        const restAmount = TRAILING_AMOUNT.exec(rest);
-        if (restAmount) {
-          const prefix = rest.slice(0, restAmount.index);
-          pending.parts.push(prefix.trim());
-          flush(prefix, restAmount[1]!, !!restAmount[2]);
-        } else if (rest) {
-          pending.parts.push(rest);
-        }
-        continue;
-      }
-    }
-
-    if (pending) {
-      if (amountMatch) {
-        const before = line.slice(0, amountMatch.index);
-        if (before.trim()) pending.parts.push(before.trim());
-        flush(before, amountMatch[1]!, !!amountMatch[2]);
-        continue;
-      }
-      if (pending.budget > 0) {
-        pending.budget--;
-        pending.parts.push(line);
-        continue;
-      }
-      // Budget exhausted: this was never a transaction.
-      if (unparsedSamples.length < 8 && pending.parts.length > 0) {
-        unparsedSamples.push(pending.parts.join(" ").slice(0, 120));
-      }
-      ignoredRows++;
-      pending = null;
-    }
-    // Lines that never started with a date are summary/boiler-plate (limits,
-    // instalment simulations, the boleto block) and are not reported: every
-    // real purchase line begins with its date.
   }
+}
 
-  if (pending) ignoredRows++;
+export function parseFaturaText(text: string): FaturaParseResult {
+  const referenceMonth = findReferenceMonth(text);
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 
-  return { rows, ignoredRows, unparsedSamples, referenceMonth };
+  const scanner = new FaturaScanner(referenceMonth);
+  for (const line of lines) scanner.scan(line);
+  scanner.finish();
+
+  return {
+    rows: scanner.rows,
+    ignoredRows: scanner.ignoredRows,
+    unparsedSamples: scanner.unparsedSamples,
+    referenceMonth,
+  };
 }

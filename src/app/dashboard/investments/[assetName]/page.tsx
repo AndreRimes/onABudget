@@ -33,7 +33,7 @@ import {
   formatSignedPercent,
   gainTone,
 } from "~/components/sections/investment/format";
-import { api } from "~/trpc/react";
+import { api, type RouterOutputs } from "~/trpc/react";
 import { PerformanceChart } from "~/components/lazy-charts";
 
 type TimeRange = "1d" | "5d" | "1mo" | "6mo" | "1y" | "max";
@@ -46,6 +46,12 @@ const timeRangeLabels: Record<TimeRange, string> = {
   "1y": "Último ano",
   max: "Todo o período",
 };
+
+const TONE_CLASS = { positive: "text-profit", negative: "text-loss" } as const;
+
+function toneClass(tone: "positive" | "negative" | undefined): string {
+  return tone ? TONE_CLASS[tone] : "";
+}
 
 function Stat({
   label,
@@ -64,15 +70,7 @@ function Stat({
         <CardTitle className="text-sm font-medium">{label}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div
-          className={`text-2xl font-bold tabular-nums ${
-            tone === "positive"
-              ? "text-profit"
-              : tone === "negative"
-                ? "text-loss"
-                : ""
-          }`}
-        >
+        <div className={`text-2xl font-bold tabular-nums ${toneClass(tone)}`}>
           {value}
         </div>
         {hint && (
@@ -80,6 +78,179 @@ function Stat({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
+type Holding = Snapshot["holdings"][number];
+
+function LoadError({
+  message,
+  isFetching,
+  onRetry,
+}: {
+  message: string;
+  isFetching: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <Card className="border-destructive/50 bg-destructive/5">
+      <CardContent className="flex flex-col items-start gap-3 py-6">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
+          <div className="space-y-1 text-sm">
+            <p className="font-medium">Não foi possível carregar este ativo.</p>
+            <p className="text-muted-foreground">{message}</p>
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          disabled={isFetching}
+        >
+          {isFetching ? "Tentando..." : "Tentar novamente"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-28 w-full" />
+        ))}
+      </div>
+      <Skeleton className="h-96 w-full" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}
+
+function IssuesCard({ issues }: { issues: Snapshot["issues"] }) {
+  if (issues.length === 0) return null;
+  return (
+    <Card className="bg-highlight/50">
+      <CardContent className="flex items-start gap-3 py-4">
+        <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
+        <div className="space-y-1 text-sm">
+          {issues.map((issue) => (
+            <p key={issue.assetName} className="text-muted-foreground">
+              {issue.message}
+            </p>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HoldingStats({ holding }: { holding: Holding }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <Stat
+        label="Valor Total"
+        value={formatCurrency(holding.currentValue)}
+        hint={`${holding.quantity.toLocaleString("pt-BR", {
+          maximumFractionDigits: 6,
+        })} × ${formatCurrency(holding.currentPrice)}`}
+      />
+      <Stat
+        label="Preço Médio"
+        value={formatCurrency(holding.averageCost)}
+        hint={`Custo total: ${formatCurrency(holding.totalCost)}`}
+      />
+      <Stat
+        label="Ganho no Período"
+        value={formatSignedCurrency(holding.periodGain)}
+        hint={`${formatSignedPercent(holding.periodGainPercent)} de rentabilidade`}
+        tone={holding.periodGain >= 0 ? "positive" : "negative"}
+      />
+      <Stat
+        label="Proventos"
+        value={formatCurrency(holding.dividendsTotal)}
+        hint={
+          holding.dividends12m > 0
+            ? `12m: ${formatCurrency(holding.dividends12m)}`
+            : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function ClosedPositionCard({ realizedGain }: { realizedGain: number }) {
+  return (
+    <Card>
+      <CardContent className="py-6">
+        <p className="text-muted-foreground">
+          Você não tem mais posição neste ativo. O histórico abaixo continua
+          disponível.
+        </p>
+        {realizedGain !== 0 && (
+          <p className="mt-1 text-sm">
+            Ganho realizado:{" "}
+            <span
+              className={`font-medium tabular-nums ${gainTone(realizedGain)}`}
+            >
+              {formatCurrency(realizedGain)}
+            </span>
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AssetDetailBody({
+  snapshot,
+  assetName,
+  state,
+}: {
+  snapshot: Snapshot | undefined;
+  assetName: string;
+  state: {
+    isPending: boolean;
+    isError: boolean;
+    error: { message: string } | null;
+    isFetching: boolean;
+    refetch: () => unknown;
+  };
+}) {
+  if (state.isError && !snapshot) {
+    return (
+      <LoadError
+        message={state.error?.message ?? ""}
+        isFetching={state.isFetching}
+        onRetry={() => void state.refetch()}
+      />
+    );
+  }
+  if (state.isPending || !snapshot) return <LoadingSkeleton />;
+
+  const holding = snapshot.holdings[0];
+  return (
+    <>
+      <IssuesCard issues={snapshot.issues} />
+
+      {holding ? (
+        <HoldingStats holding={holding} />
+      ) : (
+        <ClosedPositionCard realizedGain={snapshot.summary.realizedGain} />
+      )}
+
+      <PerformanceChart
+        series={snapshot.series}
+        title={`Evolução de ${assetName} vs CDI`}
+        description="Ganho acumulado no período (incluindo proventos) comparado ao CDI sobre os mesmos aportes neste ativo"
+      />
+
+      <TransactionsTable assetName={assetName} />
+      <DividendsTable assetName={assetName} />
+    </>
   );
 }
 
@@ -179,118 +350,11 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      {isError && !snapshot ? (
-        <Card className="border-destructive/50 bg-destructive/5">
-          <CardContent className="flex flex-col items-start gap-3 py-6">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
-              <div className="space-y-1 text-sm">
-                <p className="font-medium">
-                  Não foi possível carregar este ativo.
-                </p>
-                <p className="text-muted-foreground">{error.message}</p>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-            >
-              {isFetching ? "Tentando..." : "Tentar novamente"}
-            </Button>
-          </CardContent>
-        </Card>
-      ) : isPending || !snapshot ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <Skeleton key={index} className="h-28 w-full" />
-            ))}
-          </div>
-          <Skeleton className="h-96 w-full" />
-          <Skeleton className="h-64 w-full" />
-        </div>
-      ) : (
-        <>
-          {snapshot.issues.length > 0 && (
-            <Card className="bg-highlight/50">
-              <CardContent className="flex items-start gap-3 py-4">
-                <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
-                <div className="space-y-1 text-sm">
-                  {snapshot.issues.map((issue) => (
-                    <p key={issue.assetName} className="text-muted-foreground">
-                      {issue.message}
-                    </p>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {holding ? (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <Stat
-                label="Valor Total"
-                value={formatCurrency(holding.currentValue)}
-                hint={`${holding.quantity.toLocaleString("pt-BR", {
-                  maximumFractionDigits: 6,
-                })} × ${formatCurrency(holding.currentPrice)}`}
-              />
-              <Stat
-                label="Preço Médio"
-                value={formatCurrency(holding.averageCost)}
-                hint={`Custo total: ${formatCurrency(holding.totalCost)}`}
-              />
-              <Stat
-                label="Ganho no Período"
-                value={formatSignedCurrency(holding.periodGain)}
-                hint={`${formatSignedPercent(holding.periodGainPercent)} de rentabilidade`}
-                tone={holding.periodGain >= 0 ? "positive" : "negative"}
-              />
-              <Stat
-                label="Proventos"
-                value={formatCurrency(holding.dividendsTotal)}
-                hint={
-                  holding.dividends12m > 0
-                    ? `12m: ${formatCurrency(holding.dividends12m)}`
-                    : undefined
-                }
-              />
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="py-6">
-                <p className="text-muted-foreground">
-                  Você não tem mais posição neste ativo. O histórico abaixo
-                  continua disponível.
-                </p>
-                {snapshot.summary.realizedGain !== 0 && (
-                  <p className="mt-1 text-sm">
-                    Ganho realizado:{" "}
-                    <span
-                      className={`font-medium tabular-nums ${gainTone(
-                        snapshot.summary.realizedGain,
-                      )}`}
-                    >
-                      {formatCurrency(snapshot.summary.realizedGain)}
-                    </span>
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          <PerformanceChart
-            series={snapshot.series}
-            title={`Evolução de ${assetName} vs CDI`}
-            description="Ganho acumulado no período (incluindo proventos) comparado ao CDI sobre os mesmos aportes neste ativo"
-          />
-
-          <TransactionsTable assetName={assetName} />
-          <DividendsTable assetName={assetName} />
-        </>
-      )}
+      <AssetDetailBody
+        snapshot={snapshot}
+        assetName={assetName}
+        state={{ isPending, isError, error, isFetching, refetch }}
+      />
     </div>
   );
 }

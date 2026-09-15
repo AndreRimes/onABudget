@@ -14,13 +14,12 @@ jobs:
     uses: ./.github/workflows/check.yaml
 
   quality:
+    needs: check
     uses: ./.github/workflows/sonar.yml
     secrets: inherit
 
   build-and-push:
-    needs: 
-        - quality 
-        - check
+    needs: quality 
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

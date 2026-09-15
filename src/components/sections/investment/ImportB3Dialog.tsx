@@ -150,7 +150,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
         tickers.add(entry.row.ticker);
       }
     }
-    return [...tickers].sort();
+    return [...tickers].sort((a, b) => a.localeCompare(b));
   }, [newRows]);
 
   // Only institutions that actually have new rows still need assigning.

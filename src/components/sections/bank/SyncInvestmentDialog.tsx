@@ -58,6 +58,174 @@ function formatQuantity(value: number): string {
   }).format(value);
 }
 
+function plural(count: number, singular: string, pluralForm: string): string {
+  return count === 1 ? singular : pluralForm;
+}
+
+function shortfallHint(shortfalls: FetchResult["shortfalls"]): string {
+  if (shortfalls.every((shortfall) => shortfall.offered)) {
+    return "As cotas que faltam podem entrar como posição inicial na caixa abaixo, pelo valor de aplicação que a instituição informou.";
+  }
+  if (shortfalls.some((shortfall) => shortfall.offered)) {
+    return "Parte delas pode entrar como posição inicial na caixa abaixo; o restante, cuja aplicação a instituição não informa, precisa ser lançado à mão.";
+  }
+  return "A instituição não informa o valor aplicado nesses ativos, então as compras anteriores ao histórico precisam ser lançadas à mão.";
+}
+
+/**
+ * The connector serves a fixed window of history. A holding bought before it
+ * starts returns only its recent movements, so the imported position is a
+ * fraction of the real one — worth saying plainly, since the numbers
+ * otherwise look ordinary.
+ */
+function ShortfallNotice({
+  shortfalls,
+}: {
+  shortfalls: FetchResult["shortfalls"];
+}) {
+  if (shortfalls.length === 0) return null;
+  return (
+    <div className="border-destructive text-destructive border-2 p-3 text-sm">
+      <p className="font-medium">
+        {shortfalls.length === 1
+          ? "1 ativo tem posição maior do que o histórico disponível explica:"
+          : `${shortfalls.length} ativos têm posição maior do que o histórico disponível explica:`}
+      </p>
+      {/* Capped: this list runs to a line per holding, and a long one would
+          push the import controls off the dialog. */}
+      <ul className="mt-2 grid max-h-48 gap-1 overflow-y-auto">
+        {shortfalls.map((shortfall) => (
+          <li key={shortfall.investmentId}>
+            {shortfall.assetLabel ?? shortfall.assetName}: o banco informa{" "}
+            {formatQuantity(shortfall.reported)} cotas, o histórico cobre{" "}
+            {formatQuantity(shortfall.covered)} — faltam{" "}
+            {formatQuantity(shortfall.missing)}.
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2">{shortfallHint(shortfalls)}</p>
+    </div>
+  );
+}
+
+/**
+ * A dropped movement means the imported position is smaller than the one the
+ * bank holds, which otherwise shows up only as a quantity that looks
+ * inexplicably low.
+ */
+function DroppedNotice({ fetched }: { fetched: FetchResult }) {
+  const { droppedWithoutQuantity, droppedUnusable } = fetched;
+  if (droppedWithoutQuantity <= 0 && droppedUnusable <= 0) return null;
+  return (
+    <p className="text-destructive text-sm">
+      {droppedWithoutQuantity > 0 &&
+        `${droppedWithoutQuantity} ${plural(
+          droppedWithoutQuantity,
+          "movimentação veio sem quantidade nem valor de cota e ficou de fora",
+          "movimentações vieram sem quantidade nem valor de cota e ficaram de fora",
+        )}. `}
+      {droppedUnusable > 0 &&
+        `${droppedUnusable} ${plural(
+          droppedUnusable,
+          "movimentação veio sem data ou valor utilizável e ficou de fora",
+          "movimentações vieram sem data ou valor utilizável e ficaram de fora",
+        )}. `}
+      A quantidade desses ativos fica menor que a posição real do banco.
+    </p>
+  );
+}
+
+function FetchSummary({
+  fetched,
+  newRowCount,
+}: {
+  fetched: FetchResult;
+  newRowCount: number;
+}) {
+  return (
+    <>
+      <p className="text-muted-foreground text-sm">
+        {newRowCount}{" "}
+        {plural(newRowCount, "movimentação nova", "movimentações novas")} de{" "}
+        {fetched.holdings} ativo{fetched.holdings !== 1 ? "s" : ""}.
+        {fetched.holdingsWithoutCostBasis > 0 &&
+          ` ${fetched.holdingsWithoutCostBasis} ativo${fetched.holdingsWithoutCostBasis !== 1 ? "s" : ""} sem histórico e sem valor de aplicação não pôde ser importado.`}
+        {fetched.unsupported > 0 &&
+          ` ${fetched.unsupported} ${plural(fetched.unsupported, "movimentação sem suporte foi ignorada", "movimentações sem suporte foram ignoradas")}.`}
+      </p>
+      <ShortfallNotice shortfalls={fetched.shortfalls} />
+      <DroppedNotice fetched={fetched} />
+    </>
+  );
+}
+
+type PreviewEntry = PreviewResult[number];
+
+function rowKindLabel(row: PreviewEntry["row"]): string {
+  if (row.kind === "position") return "Posição inicial";
+  if (row.kind === "income") return "Rendimento";
+  return row.side === "BUY" ? "Compra" : "Venda";
+}
+
+function statusLabel(entry: PreviewEntry): string {
+  if (entry.status === "new") return "Novo";
+  return entry.importedElsewhere ? "Já importado da B3" : "Duplicado";
+}
+
+function PreviewTable({ rows }: { rows: PreviewEntry[] }) {
+  return (
+    <div className="max-h-80 overflow-y-auto border-2">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Data</TableHead>
+            <TableHead>Ativo</TableHead>
+            <TableHead>Tipo</TableHead>
+            <TableHead className="text-right">Valor</TableHead>
+            <TableHead className="text-right">Status</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((entry) => (
+            <TableRow key={entry.hash}>
+              <TableCell>
+                {new Date(`${entry.row.date}T12:00:00`).toLocaleDateString(
+                  "pt-BR",
+                )}
+              </TableCell>
+              <TableCell>
+                {/* Readable name when the provider sent one; the code below
+                    it is what the ledger keys the asset by. */}
+                {entry.row.assetLabel ? (
+                  <span className="flex flex-col">
+                    <span>{entry.row.assetLabel}</span>
+                    <span className="text-muted-foreground font-mono text-[11px]">
+                      {entry.row.assetName}
+                    </span>
+                  </span>
+                ) : (
+                  entry.row.assetName
+                )}
+              </TableCell>
+              <TableCell>{rowKindLabel(entry.row)}</TableCell>
+              <TableCell className="text-right">
+                {formatCurrency(entry.row.amount)}
+              </TableCell>
+              <TableCell className="text-right">
+                <Badge
+                  variant={entry.status === "new" ? "default" : "secondary"}
+                >
+                  {statusLabel(entry)}
+                </Badge>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 export function SyncInvestmentDialog({
   connectionId,
   institution,
@@ -187,8 +355,6 @@ export function SyncInvestmentDialog({
       ),
     [newRows],
   );
-  const movementLabel =
-    newRows.length === 1 ? "movimentação nova" : "movimentações novas";
 
   const confirm = () => {
     if (!connectionId || !fetched) return;
@@ -232,70 +398,7 @@ export function SyncInvestmentDialog({
 
         {!isFetching && !isPreviewing && fetched && preview && (
           <div className="grid gap-4">
-            <p className="text-muted-foreground text-sm">
-              {newRows.length} {movementLabel} de {fetched.holdings} ativo
-              {fetched.holdings !== 1 ? "s" : ""}.
-              {fetched.holdingsWithoutCostBasis > 0 &&
-                ` ${fetched.holdingsWithoutCostBasis} ativo${fetched.holdingsWithoutCostBasis !== 1 ? "s" : ""} sem histórico e sem valor de aplicação não pôde ser importado.`}
-              {fetched.unsupported > 0 &&
-                ` ${fetched.unsupported} ${fetched.unsupported === 1 ? "movimentação sem suporte foi ignorada" : "movimentações sem suporte foram ignoradas"}.`}
-            </p>
-
-            {/* The connector serves a fixed window of history. A holding
-                bought before it starts returns only its recent movements, so
-                the imported position is a fraction of the real one — worth
-                saying plainly, since the numbers otherwise look ordinary. */}
-            {fetched.shortfalls.length > 0 && (
-              <div className="border-destructive text-destructive border-2 p-3 text-sm">
-                <p className="font-medium">
-                  {fetched.shortfalls.length === 1
-                    ? "1 ativo tem posição maior do que o histórico disponível explica:"
-                    : `${fetched.shortfalls.length} ativos têm posição maior do que o histórico disponível explica:`}
-                </p>
-                {/* Capped: this list runs to a line per holding, and a long
-                    one would push the import controls off the dialog. */}
-                <ul className="mt-2 grid max-h-48 gap-1 overflow-y-auto">
-                  {fetched.shortfalls.map((shortfall) => (
-                    <li key={shortfall.investmentId}>
-                      {shortfall.assetLabel ?? shortfall.assetName}: o banco
-                      informa {formatQuantity(shortfall.reported)} cotas, o
-                      histórico cobre {formatQuantity(shortfall.covered)} —
-                      faltam {formatQuantity(shortfall.missing)}.
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-2">
-                  {fetched.shortfalls.every((shortfall) => shortfall.offered)
-                    ? "As cotas que faltam podem entrar como posição inicial na caixa abaixo, pelo valor de aplicação que a instituição informou."
-                    : fetched.shortfalls.some((shortfall) => shortfall.offered)
-                      ? "Parte delas pode entrar como posição inicial na caixa abaixo; o restante, cuja aplicação a instituição não informa, precisa ser lançado à mão."
-                      : "A instituição não informa o valor aplicado nesses ativos, então as compras anteriores ao histórico precisam ser lançadas à mão."}
-                </p>
-              </div>
-            )}
-
-            {/* A dropped movement means the imported position is smaller than
-                the one the bank holds, which otherwise shows up only as a
-                quantity that looks inexplicably low. */}
-            {(fetched.droppedWithoutQuantity > 0 ||
-              fetched.droppedUnusable > 0) && (
-              <p className="text-destructive text-sm">
-                {fetched.droppedWithoutQuantity > 0 &&
-                  `${fetched.droppedWithoutQuantity} ${
-                    fetched.droppedWithoutQuantity === 1
-                      ? "movimentação veio sem quantidade nem valor de cota e ficou de fora"
-                      : "movimentações vieram sem quantidade nem valor de cota e ficaram de fora"
-                  }. `}
-                {fetched.droppedUnusable > 0 &&
-                  `${fetched.droppedUnusable} ${
-                    fetched.droppedUnusable === 1
-                      ? "movimentação veio sem data ou valor utilizável e ficou de fora"
-                      : "movimentações vieram sem data ou valor utilizável e ficaram de fora"
-                  }. `}
-                A quantidade desses ativos fica menor que a posição real do
-                banco.
-              </p>
-            )}
+            <FetchSummary fetched={fetched} newRowCount={newRows.length} />
 
             {newPositionCount > 0 && (
               <label className="border-foreground bg-highlight/40 flex cursor-pointer items-start gap-3 border-2 p-3">
@@ -371,69 +474,7 @@ export function SyncInvestmentDialog({
               </div>
             )}
 
-            <div className="max-h-80 overflow-y-auto border-2">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Data</TableHead>
-                    <TableHead>Ativo</TableHead>
-                    <TableHead>Tipo</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {selectedRows.map((entry) => (
-                    <TableRow key={entry.hash}>
-                      <TableCell>
-                        {new Date(
-                          `${entry.row.date}T12:00:00`,
-                        ).toLocaleDateString("pt-BR")}
-                      </TableCell>
-                      <TableCell>
-                        {/* Readable name when the provider sent one; the code
-                            below it is what the ledger keys the asset by. */}
-                        {entry.row.assetLabel ? (
-                          <span className="flex flex-col">
-                            <span>{entry.row.assetLabel}</span>
-                            <span className="text-muted-foreground font-mono text-[11px]">
-                              {entry.row.assetName}
-                            </span>
-                          </span>
-                        ) : (
-                          entry.row.assetName
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {entry.row.kind === "position"
-                          ? "Posição inicial"
-                          : entry.row.kind === "trade"
-                            ? entry.row.side === "BUY"
-                              ? "Compra"
-                              : "Venda"
-                            : "Rendimento"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatCurrency(entry.row.amount)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge
-                          variant={
-                            entry.status === "new" ? "default" : "secondary"
-                          }
-                        >
-                          {entry.status === "new"
-                            ? "Novo"
-                            : entry.importedElsewhere
-                              ? "Já importado da B3"
-                              : "Duplicado"}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <PreviewTable rows={selectedRows} />
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>
