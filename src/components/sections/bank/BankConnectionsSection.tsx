@@ -162,11 +162,11 @@ function ConnectionCard({
   connection,
   onSync,
   onSyncInvestments,
-}: {
+}: Readonly<{
   connection: Connection;
   onSync: (target: SyncTarget) => void;
   onSyncInvestments: (target: InvestmentSyncTarget) => void;
-}) {
+}>) {
   const utils = api.useUtils();
   const [managing, setManaging] = useState(false);
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
@@ -392,7 +392,7 @@ function ConnectionCard({
                 setInvestmentAccount({
                   connectionId: connection.id,
                   investmentAccountId:
-                    value === "__none__" ? null : parseInt(value),
+                    value === "__none__" ? null : Number.parseInt(value),
                 })
               }
               disabled={isSavingInvestmentAccount}
@@ -529,7 +529,7 @@ function ConnectionCard({
                     )}
                     <Select
                       onValueChange={(value) =>
-                        link(providerAccount, parseInt(value))
+                        link(providerAccount, Number.parseInt(value))
                       }
                     >
                       <SelectTrigger className="w-56">

@@ -37,10 +37,10 @@ import {
 function HoldingCard({
   holding,
   totalValue,
-}: {
+}: Readonly<{
   holding: Holding;
   totalValue: number;
-}) {
+}>) {
   return (
     <Link
       href={assetDetailHref(holding.assetName)}
@@ -85,10 +85,10 @@ function HoldingCard({
 export function HoldingsSection({
   holdings,
   totalValue,
-}: {
+}: Readonly<{
   holdings: Holding[];
   totalValue: number;
-}) {
+}>) {
   const groups = useMemo(() => {
     const map = new Map<string, Holding[]>();
     for (const holding of holdings) {

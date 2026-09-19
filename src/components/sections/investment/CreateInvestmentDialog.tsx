@@ -74,8 +74,9 @@ export function CreateInvestmentDialog() {
 
   // Calculate total amount
   const totalAmount = isFixedIncome
-    ? parseFloat(investedAmount || "0")
-    : parseFloat(quantity || "0") * parseFloat(pricePerUnit || "0");
+    ? Number.parseFloat(investedAmount || "0")
+    : Number.parseFloat(quantity || "0") *
+      Number.parseFloat(pricePerUnit || "0");
 
   const { mutate, isPending } = api.investments.create.useMutation({
     onSuccess: () => {
@@ -105,29 +106,15 @@ export function CreateInvestmentDialog() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isFixedIncome) {
-      if (
-        !accountId ||
-        !assetTypeId ||
-        !assetName ||
-        !investedAmount ||
-        !transactionDate
-      ) {
-        toast.error("Preencha todos os campos obrigatórios");
-        return;
-      }
-    } else {
-      if (
-        !accountId ||
-        !assetTypeId ||
-        !assetName ||
-        !quantity ||
-        !pricePerUnit ||
-        !transactionDate
-      ) {
-        toast.error("Preencha todos os campos obrigatórios");
-        return;
-      }
+    const missingRequired =
+      !accountId ||
+      !assetTypeId ||
+      !assetName ||
+      !transactionDate ||
+      (isFixedIncome ? !investedAmount : !quantity || !pricePerUnit);
+    if (missingRequired) {
+      toast.error("Preencha todos os campos obrigatórios");
+      return;
     }
 
     const parsedDate = parseDisplayDate(transactionDate);
@@ -136,14 +123,30 @@ export function CreateInvestmentDialog() {
       return;
     }
 
-    const qty = isFixedIncome ? 1 : parseFloat(quantity);
+    const qty = isFixedIncome ? 1 : Number.parseFloat(quantity);
     const price = isFixedIncome
-      ? parseFloat(investedAmount)
-      : parseFloat(pricePerUnit);
+      ? Number.parseFloat(investedAmount)
+      : Number.parseFloat(pricePerUnit);
+
+    const rate = fixedIncomeRate ? Number.parseFloat(fixedIncomeRate) : null;
+    const maturity = fixedIncomeMaturityDate
+      ? parseDisplayDate(fixedIncomeMaturityDate)
+      : null;
+    const fixedIncomeFields = isFixedIncome
+      ? {
+          fixedIncomeYieldType,
+          fixedIncomeRate: rate,
+          fixedIncomeMaturityDate: maturity,
+        }
+      : {
+          fixedIncomeYieldType: null,
+          fixedIncomeRate: null,
+          fixedIncomeMaturityDate: null,
+        };
 
     mutate({
-      investmentAccountId: parseInt(accountId),
-      assetTypeId: parseInt(assetTypeId),
+      investmentAccountId: Number.parseInt(accountId),
+      assetTypeId: Number.parseInt(assetTypeId),
       assetName: assetName.toUpperCase().trim(),
       transactionType,
       quantity: qty,
@@ -151,21 +154,7 @@ export function CreateInvestmentDialog() {
       totalAmount: totalAmount,
       transactionDate: parsedDate,
       isFixedIncome,
-      ...(isFixedIncome
-        ? {
-            fixedIncomeYieldType,
-            fixedIncomeRate: fixedIncomeRate
-              ? parseFloat(fixedIncomeRate)
-              : null,
-            fixedIncomeMaturityDate: fixedIncomeMaturityDate
-              ? parseDisplayDate(fixedIncomeMaturityDate)
-              : null,
-          }
-        : {
-            fixedIncomeYieldType: null,
-            fixedIncomeRate: null,
-            fixedIncomeMaturityDate: null,
-          }),
+      ...fixedIncomeFields,
     });
   };
 

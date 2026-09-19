@@ -65,7 +65,9 @@ const formatPercent = (value: number) =>
 type DashboardAccount = RouterOutputs["account"]["getAll"][number];
 type RecentExpense = RouterOutputs["expenses"]["getRecent"][number];
 
-function AccountIcon({ type }: { type: DashboardAccount["accountType"] }) {
+function AccountIcon({
+  type,
+}: Readonly<{ type: DashboardAccount["accountType"] }>) {
   if (type === "INVESTMENT")
     return <PiggyBank className="text-muted-foreground h-5 w-5" />;
   if (type === "CREDIT_CARD")
@@ -75,9 +77,9 @@ function AccountIcon({ type }: { type: DashboardAccount["accountType"] }) {
 
 function AccountBalancesCard({
   accounts,
-}: {
+}: Readonly<{
   accounts: DashboardAccount[] | undefined;
-}) {
+}>) {
   return (
     <Card>
       <CardHeader>
@@ -119,10 +121,10 @@ function AccountBalancesCard({
 function RecentExpensesCard({
   expenses,
   monthLabel,
-}: {
+}: Readonly<{
   expenses: RecentExpense[];
   monthLabel: string;
-}) {
+}>) {
   return (
     <Card>
       <CardHeader>
@@ -226,7 +228,7 @@ export function DashboardClient() {
   const { data: monthlySummary } = api.expenses.getMonthlySummary.useQuery({
     dateRange: {
       startDate: last12Months[0]!.start,
-      endDate: last12Months[last12Months.length - 1]!.end,
+      endDate: last12Months.at(-1)!.end,
     },
   });
 
@@ -331,8 +333,8 @@ export function DashboardClient() {
     });
 
   const handleSaveBudget = () => {
-    const value = parseFloat(budgetInput.replace(",", "."));
-    if (isNaN(value) || value <= 0) {
+    const value = Number.parseFloat(budgetInput.replace(",", "."));
+    if (Number.isNaN(value) || value <= 0) {
       toast.error("Insira um valor válido");
       return;
     }
@@ -461,10 +463,14 @@ export function DashboardClient() {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
+                    <label
+                      htmlFor="budget-amount"
+                      className="text-sm font-medium"
+                    >
                       Orçamento Mensal (R$)
                     </label>
                     <Input
+                      id="budget-amount"
                       type="number"
                       step="0.01"
                       placeholder="Ex: 3000.00"

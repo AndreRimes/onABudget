@@ -275,7 +275,7 @@ async function persistCandles(
   const coverageFrom = meta?.candlesFrom ?? null;
   const coverageTo = meta?.candlesTo ?? null;
   const fetchedFrom = candles[0]!.date;
-  const fetchedTo = candles[candles.length - 1]!.date;
+  const fetchedTo = candles.at(-1)!.date;
   const newFrom =
     !coverageFrom || fetchedFrom < coverageFrom ? fetchedFrom : coverageFrom;
   const newTo = !coverageTo || fetchedTo > coverageTo ? fetchedTo : coverageTo;
@@ -349,14 +349,14 @@ async function syncCdiRange(start: string, end: string): Promise<void> {
 
 export class MarketCacheService {
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
-  private candlesSyncedOn = new Map<string, string>();
+  private readonly candlesSyncedOn = new Map<string, string>();
   private cdiSyncedOn: string | null = null;
   /** benchmark id -> epoch ms of the last tail-check, to rate-limit refetches */
-  private benchmarkSyncedAt = new Map<string, number>();
+  private readonly benchmarkSyncedAt = new Map<string, number>();
   /** tesouro title key -> ISO date of last CSV sync, to fetch at most once a day */
-  private tesouroSyncedOn = new Map<string, string>();
+  private readonly tesouroSyncedOn = new Map<string, string>();
   /** CVM month (YYYY-MM) -> ISO date it was last downloaded, same reason */
-  private fundMonthSyncedOn = new Map<string, string>();
+  private readonly fundMonthSyncedOn = new Map<string, string>();
 
   /**
    * Records the freshness of what callers actually got. This is the

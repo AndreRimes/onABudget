@@ -45,7 +45,7 @@ interface EditExpenseDialogProps {
 export function EditExpenseDialog({
   expense,
   onClose,
-}: EditExpenseDialogProps) {
+}: Readonly<EditExpenseDialogProps>) {
   const [categoryId, setCategoryId] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState("");
@@ -81,8 +81,8 @@ export function EditExpenseDialog({
     }
     mutate({
       id: expense.id,
-      categoryId: parseInt(categoryId),
-      amount: parseFloat(amount),
+      categoryId: Number.parseInt(categoryId),
+      amount: Number.parseFloat(amount),
       date,
       description: description || undefined,
     });

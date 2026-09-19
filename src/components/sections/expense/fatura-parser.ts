@@ -74,18 +74,29 @@ export interface FaturaParseResult {
   referenceMonth: string | null;
 }
 
+/**
+ * What may sit between the parts of a date: a punctuation mark with optional
+ * spaces around it, or whitespace (optionally the `de` of `03 de julho`).
+ * The two branches cannot both match the same text, which keeps the head
+ * pattern below linear.
+ */
+const DATE_SEP = String.raw`(?:\s*[/.-]\s*|\s+(?:de\s+)?)`;
+
 /** Leading date of a record: `03/07`, `03 jul`, `03 de julho`, with optional year. */
-const DATE_HEAD =
-  /^\s*(\d{1,2})\s*(?:\/|-|\.|\s+de\s+|\s+)\s*(\d{1,2}|[a-zç]{3,9})\.?(?:\s*(?:\/|-|\.|\s+de\s+|\s+)\s*(\d{2,4}))?\b\s*(.*)$/i;
+const DATE_HEAD = new RegExp(
+  String.raw`^\s*(\d{1,2})${DATE_SEP}(\d{1,2}|[a-zç]{3,9})\.?(?:${DATE_SEP}(\d{2,4}))?\b\s*(.*)$`,
+  "i",
+);
 
 /**
- * Trailing money on a line. The currency marker is matched as a unit (`R$`,
- * never a lone `R`) — a bare `R?` would eat the last letter of descriptions
- * like "AMAZON BR". The sign is deliberately NOT part of this pattern; see
- * isCreditAmount().
+ * Trailing money on a line (lines are trimmed before they get here). The
+ * currency marker is matched as a unit (`R$`, never a lone `R`) — the `R` is
+ * only optional in front of a `$`, so it cannot eat the last letter of
+ * descriptions like "AMAZON BR". The sign is deliberately NOT part of this
+ * pattern; see isCreditAmount().
  */
 const TRAILING_AMOUNT =
-  /(?:^|\s)(?:(?:R\$|\$)\s*)?(-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2}|-?\d+\.\d{2})\s*(-)?\s*$/;
+  /(?:^|\s)(?:R?\$\s*)?(-?(?:\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}|\d+\.\d{2}))\s*(-)?$/;
 
 /**
  * Direction of a fatura line.
@@ -192,10 +203,16 @@ function rejoinSplitInitials(text: string): string {
   return text.replace(/\b([BCDFGHJKLMNPQRSTVWXYZ])\s+([A-Z]{3,})/g, "$1$2");
 }
 
+/** Punctuation a bill leaves dangling after a description (column fillers). */
+const TRAILING_FILLER = new Set([".", "-", "–", "—", "+", " ", "\t"]);
+
 function cleanDescription(raw: string): string {
-  return rejoinSplitInitials(raw.replace(/\s{2,}/g, " "))
-    .replace(/[.\-–—+\s]+$/, "")
-    .trim();
+  const text = rejoinSplitInitials(raw.replace(/\s{2,}/g, " "));
+  // A `[...]+$` regex here is quadratic on long runs; a scan from the end is
+  // linear and just as clear.
+  let end = text.length;
+  while (end > 0 && TRAILING_FILLER.has(text[end - 1]!)) end--;
+  return text.slice(0, end).trim();
 }
 
 interface PendingRecord {
@@ -305,7 +322,7 @@ class FaturaScanner {
 
   /** Closes the pending record if `text` ends with an amount. */
   private tryFlushFromLine(text: string): boolean {
-    const amountMatch = TRAILING_AMOUNT.exec(text);
+    const amountMatch = TRAILING_AMOUNT.exec(text.trimEnd());
     if (!amountMatch) return false;
     const prefix = text.slice(0, amountMatch.index);
     if (prefix.trim()) this.pending!.parts.push(prefix.trim());

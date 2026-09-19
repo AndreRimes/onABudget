@@ -39,6 +39,8 @@ import {
 import { api, type RouterOutputs } from "~/trpc/react";
 import { invalidatePortfolio } from "~/trpc/invalidate";
 import { parseB3Workbook, type ParsedB3Row } from "./b3-parser";
+import { plural } from "~/lib/format";
+import { withRenderKeys } from "~/lib/render-keys";
 import { formatCurrency } from "./format";
 
 type PreviewResult = RouterOutputs["investments"]["importB3Preview"];
@@ -51,6 +53,23 @@ const incomeTypeLabels = {
 
 const institutionLabel = (institution: string) =>
   institution || "(Sem instituição)";
+
+type PreviewEntry = PreviewResult["rows"][number];
+
+function b3RowKey({ row }: PreviewEntry): string {
+  const quantity = row.kind === "trade" ? row.quantity : "";
+  return `${row.kind}|${row.date}|${row.ticker}|${quantity}|${row.amount}`;
+}
+
+function statusLabel(entry: PreviewEntry): string {
+  if (entry.status === "new") return "Novo";
+  return entry.importedElsewhere ? "Já sincronizado" : "Duplicado";
+}
+
+function rowLabel(row: PreviewEntry["row"]): string {
+  if (row.kind !== "trade") return incomeTypeLabels[row.type];
+  return `${row.side === "BUY" ? "Compra" : "Venda"} de ${row.quantity}`;
+}
 
 export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   const { isControlled, open, setOpen } = useControllableOpen(props);
@@ -183,13 +202,13 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
           .filter(([, accountId]) => accountId)
           .map(([institution, accountId]) => [
             institution,
-            parseInt(accountId),
+            Number.parseInt(accountId),
           ]),
       ),
       assetTypeByTicker: Object.fromEntries(
         Object.entries(assetTypeByTicker).map(([ticker, typeId]) => [
           ticker,
-          parseInt(typeId),
+          Number.parseInt(typeId),
         ]),
       ),
       rows: newRows.map((entry) => entry.row as ParsedB3Row),
@@ -366,36 +385,30 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {preview.rows.map((entry, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{entry.row.date}</TableCell>
-                        <TableCell className="font-medium">
-                          {entry.row.ticker}
-                        </TableCell>
-                        <TableCell>
-                          {entry.row.kind === "trade"
-                            ? `${entry.row.side === "BUY" ? "Compra" : "Venda"} de ${entry.row.quantity}`
-                            : incomeTypeLabels[entry.row.type]}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(entry.row.amount)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={
-                              entry.status === "new" ? "default" : "secondary"
-                            }
-                            className="text-xs"
-                          >
-                            {entry.status === "new"
-                              ? "Novo"
-                              : entry.importedElsewhere
-                                ? "Já sincronizado"
-                                : "Duplicado"}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {withRenderKeys(preview.rows, b3RowKey).map(
+                      ({ key, item: entry }) => (
+                        <TableRow key={key}>
+                          <TableCell>{entry.row.date}</TableCell>
+                          <TableCell className="font-medium">
+                            {entry.row.ticker}
+                          </TableCell>
+                          <TableCell>{rowLabel(entry.row)}</TableCell>
+                          <TableCell className="text-right">
+                            {formatCurrency(entry.row.amount)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Badge
+                              variant={
+                                entry.status === "new" ? "default" : "secondary"
+                              }
+                              className="text-xs"
+                            >
+                              {statusLabel(entry)}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ),
+                    )}
                   </TableBody>
                 </Table>
               </div>
@@ -420,7 +433,7 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
           >
             {isImporting
               ? "Importando..."
-              : `Importar ${newRows.length} registro${newRows.length !== 1 ? "s" : ""}`}
+              : `Importar ${newRows.length} ${plural(newRows.length, "registro", "registros")}`}
           </Button>
         </DialogFooter>
       </DialogContent>

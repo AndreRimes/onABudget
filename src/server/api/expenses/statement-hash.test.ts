@@ -127,7 +127,7 @@ describe("computeHashes", () => {
 
   it("does not let a credit consume an occurrence slot", () => {
     const hashes = computeHashes("u1", [row({ kind: "credit" }), row(), row()]);
-    expect(hashes[0]).toBe(null);
+    expect(hashes[0]).toBeNull();
     expect(hashes[2]).toBe(`${hashes[1]}#1`);
   });
 });

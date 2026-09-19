@@ -9,6 +9,8 @@ import type { QuoteResult, QuoteStatus } from "~/server/services/market-cache";
 
 export type TimeRange = "1d" | "5d" | "1mo" | "6mo" | "1y" | "max";
 
+export type FixedIncomeYieldType = "CDI_PERCENTAGE" | "PREFIXED";
+
 export interface EngineTransaction {
   assetName: string;
   assetTypeId: number;
@@ -17,7 +19,7 @@ export interface EngineTransaction {
   totalAmount: number;
   transactionDate: string; // YYYY-MM-DD
   isFixedIncome: boolean;
-  fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
+  fixedIncomeYieldType: FixedIncomeYieldType | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
   // When set, the holding is marked to market from official Tesouro Direto PU
@@ -46,7 +48,8 @@ export interface SnapshotHolding {
   quantity: number;
   averageCost: number;
   currentPrice: number;
-  priceStatus: QuoteStatus | "fixed_income";
+  /** "provider": marked at the unit price the bank reported, by the owner's choice. */
+  priceStatus: QuoteStatus | "fixed_income" | "provider";
   priceAsOf: string | null; // ISO datetime of the quote, when live
   currentValue: number;
   totalCost: number;
@@ -57,7 +60,7 @@ export interface SnapshotHolding {
   dividendsTotal: number;
   dividends12m: number;
   isFixedIncome: boolean;
-  fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
+  fixedIncomeYieldType: FixedIncomeYieldType | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
   tesouroTitle: string | null;
@@ -109,7 +112,7 @@ interface AssetState {
   lastPrice: number | null;
   candleIndex: number;
   isFixedIncome: boolean;
-  fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED" | null;
+  fixedIncomeYieldType: FixedIncomeYieldType | null;
   fixedIncomeRate: number | null;
   fixedIncomeMaturityDate: string | null;
   tesouroTitle: string | null;
@@ -168,6 +171,12 @@ interface EngineInput {
   fundCandles: Map<string, CandlePoint[]>; // assetName -> daily quota series
   /** assetName -> readable name, for assets whose key is a code. */
   assetLabels: Map<string, string>;
+  /**
+   * assetName -> unit price the bank reported, for holdings the owner chose
+   * to value the bank's way. Applies to today only: it is the bank's current
+   * figure, not a history.
+   */
+  pinnedPrices?: Map<string, number>;
   /** benchmark id -> (ISO date -> decimal daily return) */
   benchmarks: Map<string, Map<string, number>>;
   range: TimeRange;
@@ -286,7 +295,9 @@ function forwardFillPrice(
 function priceStatusFor(
   state: AssetState,
   quote: QuoteResult | undefined,
+  pinned: boolean,
 ): SnapshotHolding["priceStatus"] {
+  if (pinned) return "provider";
   if (state.tesouroTitle || state.fundCnpj) {
     return state.lastPrice != null ? "ok" : "unavailable";
   }
@@ -500,6 +511,12 @@ class PortfolioReplay {
       const quote = this.input.quotes.get(assetName);
       if (quote?.price != null) state.lastPrice = quote.price;
     }
+    // The owner's choice to trust the bank's price wins over every source —
+    // that is what the choice means — but only for today's mark.
+    if (day === this.input.today) {
+      const pinned = this.input.pinnedPrices?.get(assetName);
+      if (pinned != null) state.lastPrice = pinned;
+    }
     const fallback = state.quantity > 0 ? state.costBasis / state.quantity : 0;
     state.marketValue = state.quantity * (state.lastPrice ?? fallback);
   }
@@ -578,7 +595,11 @@ function buildHolding(
     quantity: state.quantity,
     averageCost,
     currentPrice,
-    priceStatus: priceStatusFor(state, quote),
+    priceStatus: priceStatusFor(
+      state,
+      quote,
+      input.pinnedPrices?.has(assetName) ?? false,
+    ),
     priceAsOf: quote?.asOf ? quote.asOf.toISOString() : null,
     currentValue: state.marketValue,
     totalCost: state.costBasis,
@@ -629,7 +650,8 @@ function buildHoldings(
       state.isFixedIncome || state.fundCnpj
         ? undefined
         : input.quotes.get(assetName);
-    if (!state.isFixedIncome && quote && quote.status !== "ok") {
+    const pinned = input.pinnedPrices?.has(assetName) ?? false;
+    if (!state.isFixedIncome && !pinned && quote && quote.status !== "ok") {
       result.issues.push({
         assetName,
         status: quote.status,

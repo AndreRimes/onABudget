@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import type { ChartConfig } from "~/components/ui/chart";
+import { DonutCenterLabel } from "~/components/ui/donut-center-label";
 import {
   ChartContainer,
   ChartTooltip,
@@ -58,7 +59,7 @@ export function DashboardExpenseCharts({
   categoryChartData,
   monthlySpend,
   monthLabel,
-}: DashboardExpenseChartsProps) {
+}: Readonly<DashboardExpenseChartsProps>) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {/* Spending Trend - Last 12 Months */}
@@ -146,33 +147,13 @@ export function DashboardExpenseCharts({
                   strokeWidth={2}
                 >
                   <Label
-                    content={({ viewBox }) => {
-                      if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                        return (
-                          <text
-                            x={viewBox.cx}
-                            y={viewBox.cy}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                          >
-                            <tspan
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              className="fill-foreground text-lg font-bold"
-                            >
-                              {formatCurrency(monthlySpend)}
-                            </tspan>
-                            <tspan
-                              x={viewBox.cx}
-                              y={(viewBox.cy ?? 0) + 20}
-                              className="fill-muted-foreground text-xs"
-                            >
-                              Total
-                            </tspan>
-                          </text>
-                        );
-                      }
-                    }}
+                    content={
+                      <DonutCenterLabel
+                        primary={formatCurrency(monthlySpend)}
+                        secondary="Total"
+                        primaryClassName="fill-foreground text-lg font-bold"
+                      />
+                    }
                   />
                 </Pie>
               </PieChart>

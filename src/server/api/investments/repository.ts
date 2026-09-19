@@ -1,4 +1,4 @@
-import { eq, desc, and, between, inArray } from "drizzle-orm";
+import { eq, desc, and, between, inArray, sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import {
   investmentTransactions,
@@ -7,6 +7,7 @@ import {
   assetTypes,
   dividends,
   providerHoldings,
+  reconciliationDecisions,
 } from "~/server/db/schema";
 import type { CandlePoint } from "~/server/services/brapi";
 import {
@@ -17,12 +18,15 @@ import {
 import { dividendRepository } from "../dividends/repository";
 import { BENCHMARK_IDS } from "./benchmarks";
 import {
+  decisionApplies,
   reconcileHoldings,
   type ProviderHoldingFact,
   type Reconciliation,
+  type ReconciliationDecision,
 } from "./reconcile";
 import {
   computePortfolioSnapshot,
+  type FixedIncomeYieldType,
   type PortfolioSnapshot,
   type TimeRange,
 } from "./portfolio-engine";
@@ -41,7 +45,7 @@ export type CreateInvestmentInput = {
   totalAmount: number;
   transactionDate: string;
   isFixedIncome?: boolean;
-  fixedIncomeYieldType?: "CDI_PERCENTAGE" | "PREFIXED" | null;
+  fixedIncomeYieldType?: FixedIncomeYieldType | null;
   fixedIncomeRate?: number | null;
   fixedIncomeMaturityDate?: string | null;
 };
@@ -144,7 +148,7 @@ async function assetLabelsFor(userId: string) {
 }
 
 /** What the provider last reported for each of this owner's holdings. */
-async function providerHoldingsFor(
+export async function providerHoldingsFor(
   userId: string,
 ): Promise<ProviderHoldingFact[]> {
   return await db
@@ -157,6 +161,43 @@ async function providerHoldingsFor(
     })
     .from(providerHoldings)
     .where(eq(providerHoldings.userId, userId));
+}
+
+/** Every reconciliation decision this owner recorded, lapsed ones included. */
+export async function reconciliationDecisionsFor(
+  userId: string,
+): Promise<ReconciliationDecision[]> {
+  return await db
+    .select({
+      assetName: reconciliationDecisions.assetName,
+      decision: reconciliationDecisions.decision,
+      providerQuantity: reconciliationDecisions.providerQuantity,
+      providerValue: reconciliationDecisions.providerValue,
+      providerProfit: reconciliationDecisions.providerProfit,
+    })
+    .from(reconciliationDecisions)
+    .where(eq(reconciliationDecisions.userId, userId));
+}
+
+/**
+ * assetName -> the bank's unit price, for holdings the owner chose to value
+ * the bank's way — while the bank still reports the figures that choice was
+ * made against. A lapsed decision pins nothing.
+ */
+function pinnedPricesFor(
+  decisions: ReconciliationDecision[],
+  facts: ProviderHoldingFact[],
+): Map<string, number> {
+  const factByAsset = new Map(facts.map((fact) => [fact.assetName, fact]));
+  const pinned = new Map<string, number>();
+  for (const decision of decisions) {
+    if (decision.decision !== "bank_price") continue;
+    const fact = factByAsset.get(decision.assetName);
+    if (!decisionApplies(decision, fact)) continue;
+    if (!fact?.quantity || fact.quantity <= 0 || fact.value == null) continue;
+    pinned.set(decision.assetName, fact.value / fact.quantity);
+  }
+  return pinned;
 }
 
 /** CNPJ -> provider-reported quota, for the funds actually held. */
@@ -399,6 +440,38 @@ export class InvestmentRepository {
   }
 
   /**
+   * Multiply the cost of every buy of an asset by `factor`, so the position's
+   * total cost lands on a figure the ledger had wrong — the bank's, when the
+   * owner accepts it. Sells are left alone: the engine prices what a sell
+   * cost from the average cost at the time, which scales along with the buys,
+   * so the remaining cost basis ends up scaled by exactly `factor` too.
+   */
+  async rescaleBuyCostByAssetName(
+    userId: string,
+    assetName: string,
+    factor: number,
+  ): Promise<number> {
+    const accountIds = await this.userAccountIds(userId);
+    if (accountIds.length === 0) return 0;
+
+    const updated = await db
+      .update(investmentTransactions)
+      .set({
+        pricePerUnit: sql`${investmentTransactions.pricePerUnit} * ${factor}`,
+        totalAmount: sql`${investmentTransactions.totalAmount} * ${factor}`,
+      })
+      .where(
+        and(
+          inArray(investmentTransactions.investmentAccountId, accountIds),
+          eq(investmentTransactions.assetName, assetName),
+          eq(investmentTransactions.transactionType, "BUY"),
+        ),
+      )
+      .returning({ id: investmentTransactions.id });
+    return updated.length;
+  }
+
+  /**
    * Set the fixed-income yield metadata (yield type / rate / maturity) on every
    * transaction the user holds under a given asset name. B3 imports arrive with
    * these blank, so this lets the user fill them in afterward and have the
@@ -408,7 +481,7 @@ export class InvestmentRepository {
     userId: string,
     assetName: string,
     values: {
-      fixedIncomeYieldType: "CDI_PERCENTAGE" | "PREFIXED";
+      fixedIncomeYieldType: FixedIncomeYieldType;
       fixedIncomeRate: number;
       fixedIncomeMaturityDate: string | null;
     },
@@ -485,7 +558,7 @@ export class InvestmentRepository {
       return {
         assetName: symbol,
         price: quote?.price ?? null,
-        status: quote?.status ?? ("unavailable" as QuoteStatus),
+        status: quote?.status ?? "unavailable",
         asOf: quote?.asOf?.toISOString() ?? null,
       };
     });
@@ -570,6 +643,7 @@ export class InvestmentRepository {
     const facts = Promise.all([
       assetLabelsFor(userId),
       providerHoldingsFor(userId),
+      reconciliationDecisionsFor(userId),
     ]);
     const fundQuotas = facts.then(([labels]) =>
       marketCacheService.getFundQuotas(
@@ -583,7 +657,7 @@ export class InvestmentRepository {
       candles,
       benchmarks,
       tesouroByTitle,
-      [labels, providerFacts],
+      [labels, providerFacts, decisions],
       quotasByCnpj,
     ] = await Promise.all([
       marketCacheService.getQuotes(activeMarketSymbols),
@@ -638,6 +712,7 @@ export class InvestmentRepository {
       assetLabels: new Map(
         labels.map((entry) => [entry.assetName, entry.label]),
       ),
+      pinnedPrices: pinnedPricesFor(decisions, providerFacts),
       quotes,
       candles,
       tesouroCandles,
@@ -653,7 +728,11 @@ export class InvestmentRepository {
     // visible, and the comparison costs one small table read.
     return {
       ...snapshot,
-      reconciliation: reconcileHoldings(snapshot.holdings, providerFacts),
+      reconciliation: reconcileHoldings(
+        snapshot.holdings,
+        providerFacts,
+        decisions,
+      ),
     };
   }
 }

@@ -228,25 +228,29 @@ export function pluggyInvestmentSourceHash(row: PluggyInvestmentRow): string {
 }
 
 /** The yield terms a holding implies, shared by movements and opening positions. */
+/** A rate Pluggy actually filled in; zero and null both mean "unknown". */
+function positiveRate(rate: number | null | undefined): number | null {
+  return rate && rate > 0 ? rate : null;
+}
+
+function fixedIncomeYieldType(
+  investment: PluggyInvestment,
+): "CDI_PERCENTAGE" | "PREFIXED" | null {
+  if (investment.rateType === "CDI") return "CDI_PERCENTAGE";
+  return positiveRate(investment.fixedAnnualRate) === null ? null : "PREFIXED";
+}
+
 function fixedIncomeTerms(investment: PluggyInvestment) {
-  const yieldType =
-    investment.rateType === "CDI"
-      ? ("CDI_PERCENTAGE" as const)
-      : investment.fixedAnnualRate && investment.fixedAnnualRate > 0
-        ? ("PREFIXED" as const)
-        : null;
+  const yieldType = fixedIncomeYieldType(investment);
 
   return {
     isFixedIncome: investment.type === "FIXED_INCOME",
     fixedIncomeYieldType: yieldType,
-    fixedIncomeRate:
+    fixedIncomeRate: positiveRate(
       yieldType === "CDI_PERCENTAGE"
-        ? investment.rate && investment.rate > 0
-          ? investment.rate
-          : null
-        : investment.fixedAnnualRate && investment.fixedAnnualRate > 0
-          ? investment.fixedAnnualRate
-          : null,
+        ? investment.rate
+        : investment.fixedAnnualRate,
+    ),
     fixedIncomeMaturityDate: day(investment.dueDate),
   };
 }
@@ -399,13 +403,10 @@ export function normalizeShortfallPosition(
   const own = rows.filter(
     (row) => row.investmentId === investment.id && row.kind === "trade",
   );
-  const inWindow = own.reduce(
-    (total, row) =>
-      row.kind === "trade"
-        ? total + (row.side === "BUY" ? row.amount : -row.amount)
-        : total,
-    0,
-  );
+  const inWindow = own.reduce((total, row) => {
+    if (row.kind !== "trade") return total;
+    return row.side === "BUY" ? total + row.amount : total - row.amount;
+  }, 0);
   const amount = applied - inWindow;
   if (amount <= 0) return null;
 

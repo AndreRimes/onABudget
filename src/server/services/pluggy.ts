@@ -12,7 +12,7 @@ import {
   upstreamRequestsTotal,
   type UpstreamOperation,
 } from "~/server/metrics/instruments";
-import { countUpstreamCall } from "~/server/metrics/upstream";
+import { countUpstreamCall, responseOutcome } from "~/server/metrics/upstream";
 
 const PLUGGY_BASE_URL = "https://api.pluggy.ai";
 const FETCH_TIMEOUT_MS = 20_000;
@@ -171,11 +171,7 @@ async function pluggyFetch(
 
     upstreamRequestsTotal.inc({
       ...labels,
-      outcome: response.ok
-        ? "success"
-        : response.status === 404
-          ? "not_found"
-          : "http_error",
+      outcome: responseOutcome(response),
       status_class: `${Math.floor(response.status / 100)}xx`,
     });
 

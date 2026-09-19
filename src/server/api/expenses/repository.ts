@@ -56,8 +56,10 @@ export function getAllExpensesByUser(
   const conditions = [eq(accounts.userId, userId)];
 
   if (dateRange) {
-    conditions.push(gte(expenses.expenseDate, dateRange.startDate));
-    conditions.push(lte(expenses.expenseDate, dateRange.endDate));
+    conditions.push(
+      gte(expenses.expenseDate, dateRange.startDate),
+      lte(expenses.expenseDate, dateRange.endDate),
+    );
   }
 
   return db
@@ -143,8 +145,10 @@ export function getAllExpensesByAccount(
   ];
 
   if (dateRange) {
-    conditions.push(gte(expenses.expenseDate, dateRange.startDate));
-    conditions.push(lte(expenses.expenseDate, dateRange.endDate));
+    conditions.push(
+      gte(expenses.expenseDate, dateRange.startDate),
+      lte(expenses.expenseDate, dateRange.endDate),
+    );
   }
 
   return db

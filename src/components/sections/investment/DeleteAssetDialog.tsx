@@ -20,11 +20,11 @@ import { invalidatePortfolio } from "~/trpc/invalidate";
 export function DeleteAssetDialog({
   assetName,
   onDeleted,
-}: {
+}: Readonly<{
   assetName: string;
   /** Fired after deletion — the detail page must leave, it no longer exists. */
   onDeleted?: () => void;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const utils = api.useUtils();
 

@@ -12,7 +12,6 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="input-group"
-      role="group"
       className={cn(
         "border-foreground bg-card has-[[data-slot][aria-invalid=true]]:border-destructive group/input-group relative flex h-9 w-full min-w-0 items-center border-2 transition-[color,box-shadow] outline-none has-[[data-slot=input-group-control]:focus-visible]:shadow-[3px_3px_0_0_var(--hard)] has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5 [[data-slot=combobox-content]_&]:focus-within:border-inherit [[data-slot=combobox-content]_&]:focus-within:ring-0",
         className,
@@ -50,7 +49,10 @@ function InputGroupAddon({
 }: React.ComponentProps<"div"> & VariantProps<typeof inputGroupAddonVariants>) {
   return (
     <div
-      role="group"
+      // A layout wrapper: its content (icon, text, button) carries the
+      // semantics. The click below only mirrors what a <label> does for a
+      // pointer user — keyboard users reach the input directly.
+      role="presentation"
       data-slot="input-group-addon"
       data-align={align}
       className={cn(inputGroupAddonVariants({ align }), className)}

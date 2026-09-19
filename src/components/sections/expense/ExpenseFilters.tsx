@@ -189,7 +189,7 @@ export function ExpenseFilters({
   accounts,
   categories,
   months,
-}: ExpenseFiltersProps) {
+}: Readonly<ExpenseFiltersProps>) {
   const patch = (partial: Partial<ExpenseFilterState>) =>
     onChange({ ...value, ...partial });
 

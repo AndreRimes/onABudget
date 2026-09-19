@@ -28,13 +28,38 @@ const SLICE_COLORS = [
 const OTHER_COLOR = "var(--muted-foreground)";
 const MAX_SLICES = SLICE_COLORS.length;
 
+function AllocationTooltip({
+  active,
+  payload,
+  totalValue,
+}: Readonly<{
+  active?: boolean;
+  // recharts types the payload as `any`; the Pie's `data` is what it holds.
+  payload?: { payload?: { name: string; value: number } }[];
+  totalValue: number;
+}>) {
+  if (!active || !payload?.length) return null;
+  const entry = payload[0]?.payload;
+  if (!entry) return null;
+  return (
+    <div className="bg-background border-2 p-2 text-sm shadow-md">
+      <p className="font-medium">{entry.name}</p>
+      <p>
+        {formatCurrency(entry.value)}
+        {totalValue > 0 &&
+          ` (${formatPercent((entry.value / totalValue) * 100)})`}
+      </p>
+    </div>
+  );
+}
+
 export function AllocationDonut({
   holdings,
   totalValue,
-}: {
+}: Readonly<{
   holdings: Snapshot["holdings"];
   totalValue: number;
-}) {
+}>) {
   const data = useMemo(() => {
     const byType = new Map<string, number>();
     for (const holding of holdings) {
@@ -83,23 +108,7 @@ export function AllocationDonut({
         <ChartContainer config={{}} className="mx-auto aspect-square max-h-56">
           <PieChart>
             <ChartTooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null;
-                const entry = payload[0]?.payload as
-                  | { name: string; value: number }
-                  | undefined;
-                if (!entry) return null;
-                return (
-                  <div className="bg-background border-2 p-2 text-sm shadow-md">
-                    <p className="font-medium">{entry.name}</p>
-                    <p>
-                      {formatCurrency(entry.value)}
-                      {totalValue > 0 &&
-                        ` (${formatPercent((entry.value / totalValue) * 100)})`}
-                    </p>
-                  </div>
-                );
-              }}
+              content={<AllocationTooltip totalValue={totalValue} />}
             />
             <Pie
               data={data}

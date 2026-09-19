@@ -70,7 +70,7 @@ function uniqueName(base: string, suffix: string | null, taken: Set<string>) {
   for (const candidate of candidates) {
     if (!taken.has(nameKey(candidate))) return candidate;
   }
-  const last = candidates[candidates.length - 1]!;
+  const last = candidates.at(-1)!;
   for (let n = 2; ; n++) {
     const candidate = `${last} (${n})`;
     if (!taken.has(nameKey(candidate))) return candidate;

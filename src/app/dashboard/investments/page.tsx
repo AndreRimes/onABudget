@@ -8,7 +8,7 @@ import {
   HandCoins,
   Plus,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent } from "~/components/ui/card";
 import {
@@ -64,6 +64,78 @@ export default function InvestmentsPage() {
     { range: timeRange },
     { staleTime: 5 * 60 * 1000, placeholderData: keepPreviousData, retry: 1 },
   );
+
+  let content: ReactNode;
+  if (isError && !snapshot) {
+    content = (
+      <Card className="border-destructive/50 bg-destructive/5">
+        <CardContent className="flex flex-col items-start gap-3 py-6">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
+            <div className="space-y-1 text-sm">
+              <p className="font-medium">
+                Não foi possível carregar os investimentos.
+              </p>
+              <p className="text-muted-foreground">{error.message}</p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            {isFetching ? "Tentando..." : "Tentar novamente"}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  } else if (isPending || !snapshot) {
+    content = <InvestmentsSkeleton />;
+  } else {
+    content = (
+      <>
+        {snapshot.issues.length > 0 && (
+          <Card className="bg-highlight/50">
+            <CardContent className="flex items-start gap-3 py-4">
+              <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
+              <div className="space-y-1 text-sm">
+                {snapshot.issues.map((issue) => (
+                  <p key={issue.assetName} className="text-muted-foreground">
+                    {issue.message}
+                  </p>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <SummaryCards summary={snapshot.summary} />
+
+        <ReconciliationCard reconciliation={snapshot.reconciliation} />
+
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <PerformanceChart series={snapshot.series} />
+          </div>
+          <AllocationDonut
+            holdings={snapshot.holdings}
+            totalValue={snapshot.summary.totalValue}
+          />
+        </div>
+
+        <div className="space-y-4">
+          <h2 className="text-xl font-semibold">
+            Investimentos por Tipo de Ativo
+          </h2>
+          <HoldingsSection
+            holdings={snapshot.holdings}
+            totalValue={snapshot.summary.totalValue}
+          />
+        </div>
+      </>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -136,72 +208,7 @@ export default function InvestmentsPage() {
         onOpenChange={(next) => setOpenDialog(next ? "assetType" : null)}
       />
 
-      {isError && !snapshot ? (
-        <Card className="border-destructive/50 bg-destructive/5">
-          <CardContent className="flex flex-col items-start gap-3 py-6">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="text-destructive mt-0.5 h-5 w-5 shrink-0" />
-              <div className="space-y-1 text-sm">
-                <p className="font-medium">
-                  Não foi possível carregar os investimentos.
-                </p>
-                <p className="text-muted-foreground">{error.message}</p>
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-            >
-              {isFetching ? "Tentando..." : "Tentar novamente"}
-            </Button>
-          </CardContent>
-        </Card>
-      ) : isPending || !snapshot ? (
-        <InvestmentsSkeleton />
-      ) : (
-        <>
-          {snapshot.issues.length > 0 && (
-            <Card className="bg-highlight/50">
-              <CardContent className="flex items-start gap-3 py-4">
-                <AlertTriangle className="text-foreground mt-0.5 h-5 w-5 shrink-0" />
-                <div className="space-y-1 text-sm">
-                  {snapshot.issues.map((issue) => (
-                    <p key={issue.assetName} className="text-muted-foreground">
-                      {issue.message}
-                    </p>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <SummaryCards summary={snapshot.summary} />
-
-          <ReconciliationCard reconciliation={snapshot.reconciliation} />
-
-          <div className="grid gap-6 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <PerformanceChart series={snapshot.series} />
-            </div>
-            <AllocationDonut
-              holdings={snapshot.holdings}
-              totalValue={snapshot.summary.totalValue}
-            />
-          </div>
-
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">
-              Investimentos por Tipo de Ativo
-            </h2>
-            <HoldingsSection
-              holdings={snapshot.holdings}
-              totalValue={snapshot.summary.totalValue}
-            />
-          </div>
-        </>
-      )}
+      {content}
     </div>
   );
 }

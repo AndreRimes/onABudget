@@ -103,10 +103,10 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
     }
 
     mutate({
-      investmentAccountId: parseInt(accountId),
+      investmentAccountId: Number.parseInt(accountId),
       assetName: assetName.toUpperCase().trim(),
       type,
-      amount: parseFloat(amount),
+      amount: Number.parseFloat(amount),
       paymentDate: parsedDate,
     });
   };

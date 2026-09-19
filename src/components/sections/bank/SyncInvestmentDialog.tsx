@@ -80,9 +80,9 @@ function shortfallHint(shortfalls: FetchResult["shortfalls"]): string {
  */
 function ShortfallNotice({
   shortfalls,
-}: {
+}: Readonly<{
   shortfalls: FetchResult["shortfalls"];
-}) {
+}>) {
   if (shortfalls.length === 0) return null;
   return (
     <div className="border-destructive text-destructive border-2 p-3 text-sm">
@@ -113,7 +113,7 @@ function ShortfallNotice({
  * bank holds, which otherwise shows up only as a quantity that looks
  * inexplicably low.
  */
-function DroppedNotice({ fetched }: { fetched: FetchResult }) {
+function DroppedNotice({ fetched }: Readonly<{ fetched: FetchResult }>) {
   const { droppedWithoutQuantity, droppedUnusable } = fetched;
   if (droppedWithoutQuantity <= 0 && droppedUnusable <= 0) return null;
   return (
@@ -138,10 +138,10 @@ function DroppedNotice({ fetched }: { fetched: FetchResult }) {
 function FetchSummary({
   fetched,
   newRowCount,
-}: {
+}: Readonly<{
   fetched: FetchResult;
   newRowCount: number;
-}) {
+}>) {
   return (
     <>
       <p className="text-muted-foreground text-sm">
@@ -172,7 +172,7 @@ function statusLabel(entry: PreviewEntry): string {
   return entry.importedElsewhere ? "Já importado da B3" : "Duplicado";
 }
 
-function PreviewTable({ rows }: { rows: PreviewEntry[] }) {
+function PreviewTable({ rows }: Readonly<{ rows: PreviewEntry[] }>) {
   return (
     <div className="max-h-80 overflow-y-auto border-2">
       <Table>
@@ -230,7 +230,7 @@ export function SyncInvestmentDialog({
   connectionId,
   institution,
   onOpenChange,
-}: SyncInvestmentDialogProps) {
+}: Readonly<SyncInvestmentDialogProps>) {
   const utils = api.useUtils();
   const [fetched, setFetched] = useState<FetchResult | null>(null);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -367,7 +367,7 @@ export function SyncInvestmentDialog({
       assetTypeByAsset: Object.fromEntries(
         Object.entries(assetTypeByAsset)
           .filter(([, typeId]) => typeId && typeId !== PLUGGY_TYPE_VALUE)
-          .map(([asset, typeId]) => [asset, parseInt(typeId)]),
+          .map(([asset, typeId]) => [asset, Number.parseInt(typeId)]),
       ),
       pluggyTypeAssets: Object.entries(assetTypeByAsset)
         .filter(([, typeId]) => typeId === PLUGGY_TYPE_VALUE)
@@ -401,8 +401,9 @@ export function SyncInvestmentDialog({
             <FetchSummary fetched={fetched} newRowCount={newRows.length} />
 
             {newPositionCount > 0 && (
-              <label className="border-foreground bg-highlight/40 flex cursor-pointer items-start gap-3 border-2 p-3">
+              <div className="border-foreground bg-highlight/40 flex items-start gap-3 border-2 p-3">
                 <input
+                  id="include-positions"
                   type="checkbox"
                   className="mt-1"
                   checked={includePositions}
@@ -410,22 +411,28 @@ export function SyncInvestmentDialog({
                     setIncludePositions(event.target.checked)
                   }
                 />
-                <span className="grid gap-1 text-sm">
-                  <span className="font-bold">
-                    Importar {newPositionCount} posição
-                    {newPositionCount !== 1 ? "ões" : ""} inicial
-                    {newPositionCount !== 1 ? "is" : ""}
-                  </span>
-                  <span className="text-muted-foreground">
+                <div className="grid gap-1 text-sm">
+                  <label
+                    htmlFor="include-positions"
+                    className="cursor-pointer font-bold"
+                  >
+                    Importar {newPositionCount}{" "}
+                    {plural(
+                      newPositionCount,
+                      "posição inicial",
+                      "posições iniciais",
+                    )}
+                  </label>
+                  <p className="text-muted-foreground">
                     Cada uma entra como uma única compra, pelo valor de
                     aplicação que a instituição informou: ativos sem nenhum
                     histórico no Open Finance, e a parte dos ativos acima que é
                     anterior ao histórico disponível. Se a instituição passar a
                     enviar o histórico completo depois, remova a posição inicial
                     para não contar em dobro.
-                  </span>
-                </span>
-              </label>
+                  </p>
+                </div>
+              </div>
             )}
 
             {unknownAssets.length > 0 && (
@@ -490,7 +497,7 @@ export function SyncInvestmentDialog({
               >
                 {isImporting
                   ? "Importando..."
-                  : `Importar ${newRows.length} ${newRows.length === 1 ? "movimentação" : "movimentações"}`}
+                  : `Importar ${newRows.length} ${plural(newRows.length, "movimentação", "movimentações")}`}
               </Button>
             </div>
           </div>

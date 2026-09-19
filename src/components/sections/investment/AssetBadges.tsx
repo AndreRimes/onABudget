@@ -15,7 +15,7 @@ export type Holding = Snapshot["holdings"][number];
  * a readable name came with it, that name leads and the code stays underneath
  * as the identifier: two CDBs from the same bank are told apart only by it.
  */
-export function AssetTitle({ holding }: { holding: Holding }) {
+export function AssetTitle({ holding }: Readonly<{ holding: Holding }>) {
   if (!holding.label) return <>{holding.assetName}</>;
   return (
     <span className="flex min-w-0 flex-col">
@@ -31,9 +31,22 @@ export function AssetTitle({ holding }: { holding: Holding }) {
  * Flags a holding whose price couldn't be refreshed. Renders nothing when the
  * price is trustworthy, so it can be dropped next to any asset name.
  */
-export function PriceStatusBadge({ holding }: { holding: Holding }) {
+export function PriceStatusBadge({ holding }: Readonly<{ holding: Holding }>) {
   if (holding.priceStatus === "ok" || holding.priceStatus === "fixed_income") {
     return null;
+  }
+  // Trustworthy by the owner's own choice, but worth saying: it is not a
+  // market quote and will not move until the bank reports a new figure.
+  if (holding.priceStatus === "provider") {
+    return (
+      <Badge
+        variant="outline"
+        title="Avaliado pelo preço que o banco informou na última sincronização, por escolha sua na conferência."
+        className="bg-highlight text-[10px]"
+      >
+        Preço do banco
+      </Badge>
+    );
   }
   const label =
     holding.priceStatus === "not_found" ? "Sem cotação" : "Desatualizada";
@@ -52,7 +65,16 @@ export function PriceStatusBadge({ holding }: { holding: Holding }) {
  * How a fixed-income position is valued: official Tesouro PU, or an accrual at
  * a given rate. Renders nothing for market assets.
  */
-export function FixedIncomeBadges({ holding }: { holding: Holding }) {
+function rateLabel(holding: Holding): string {
+  if (holding.fixedIncomeRate == null || holding.fixedIncomeYieldType == null) {
+    return "Taxa não definida";
+  }
+  return holding.fixedIncomeYieldType === "CDI_PERCENTAGE"
+    ? `${holding.fixedIncomeRate}% CDI`
+    : `${holding.fixedIncomeRate}% a.a.`;
+}
+
+export function FixedIncomeBadges({ holding }: Readonly<{ holding: Holding }>) {
   if (!holding.isFixedIncome) return null;
 
   return (
@@ -75,12 +97,7 @@ export function FixedIncomeBadges({ holding }: { holding: Holding }) {
               : undefined
           }
         >
-          {holding.fixedIncomeRate == null ||
-          holding.fixedIncomeYieldType == null
-            ? "Taxa não definida"
-            : holding.fixedIncomeYieldType === "CDI_PERCENTAGE"
-              ? `${holding.fixedIncomeRate}% CDI`
-              : `${holding.fixedIncomeRate}% a.a.`}
+          {rateLabel(holding)}
         </Badge>
       )}
       {holding.fixedIncomeMaturityDate && (

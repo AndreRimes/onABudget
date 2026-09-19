@@ -14,7 +14,9 @@ import { invalidatePortfolio } from "~/trpc/invalidate";
  * position. The snapshot is invalidated afterwards so the whole page (values,
  * gains, chart) is recomputed from the prices that were just fetched.
  */
-export function RefreshQuotesButton({ assetName }: { assetName?: string }) {
+export function RefreshQuotesButton({
+  assetName,
+}: Readonly<{ assetName?: string }>) {
   const utils = api.useUtils();
 
   const { mutate, isPending } = api.investments.refreshQuotes.useMutation({
@@ -47,6 +49,8 @@ export function RefreshQuotesButton({ assetName }: { assetName?: string }) {
     },
   });
 
+  const idleLabel = assetName ? "Atualizar cotação" : "Atualizar cotações";
+
   return (
     <Button
       variant="outline"
@@ -57,11 +61,7 @@ export function RefreshQuotesButton({ assetName }: { assetName?: string }) {
       <RefreshCw
         className={`mr-2 h-4 w-4 ${isPending ? "animate-spin" : ""}`}
       />
-      {isPending
-        ? "Atualizando..."
-        : assetName
-          ? "Atualizar cotação"
-          : "Atualizar cotações"}
+      {isPending ? "Atualizando..." : idleLabel}
     </Button>
   );
 }

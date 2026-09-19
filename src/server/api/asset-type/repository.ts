@@ -2,8 +2,11 @@
 // Asset types were global until migration 0014.
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "~/server/db";
-import { accounts, assetTypes } from "~/server/db/schema";
-import { investmentTransactions } from "~/server/db/schema";
+import {
+  accounts,
+  assetTypes,
+  investmentTransactions,
+} from "~/server/db/schema";
 
 export type AssetTypeInsert = typeof assetTypes.$inferInsert;
 export type AssetType = typeof assetTypes.$inferSelect;
@@ -62,13 +65,14 @@ export class AssetTypeRepository {
     // `%` and `_` are LIKE wildcards; a user typing them is looking for the
     // characters themselves, not for "everything".
     const escaped = query.replace(/[\\%_]/g, (char) => `\\${char}`);
+    const pattern = `%${escaped}%`;
     return await db
       .select()
       .from(assetTypes)
       .where(
         and(
           eq(assetTypes.userId, userId),
-          sql`${assetTypes.name} LIKE ${`%${escaped}%`} ESCAPE '\\'`,
+          sql`${assetTypes.name} LIKE ${pattern} ESCAPE '\\'`,
         ),
       )
       .orderBy(assetTypes.name);

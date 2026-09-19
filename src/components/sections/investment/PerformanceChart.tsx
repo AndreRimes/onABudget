@@ -43,7 +43,10 @@ function formatAxisCurrency(value: number): string {
   return value.toFixed(0);
 }
 
-function SeriesSwatch({ color, dash }: { color: string; dash: string }) {
+function SeriesSwatch({
+  color,
+  dash,
+}: Readonly<{ color: string; dash: string }>) {
   return (
     <svg width="16" height="8" aria-hidden className="shrink-0">
       <line
@@ -60,15 +63,103 @@ function SeriesSwatch({ color, dash }: { color: string; dash: string }) {
   );
 }
 
+type ChartRow = Record<string, number | string>;
+
+function PerformanceTooltip({
+  active: isActive,
+  payload,
+  visible,
+}: Readonly<{
+  active?: boolean;
+  // recharts types the payload as `any`; `chartData` below is what it holds.
+  payload?: { payload?: ChartRow }[];
+  visible: BenchmarkId[];
+}>) {
+  if (!isActive || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+
+  const invested = Number(row.invested);
+  const pct = (amount: number) =>
+    invested > 0 ? (amount / invested) * 100 : 0;
+  const gain = Number(row.gain);
+
+  return (
+    <div className="bg-popover min-w-56 border-2 p-3 text-sm shadow-md">
+      <p className="text-muted-foreground mb-2 font-medium">
+        {String(row.label)}
+      </p>
+
+      <div className="space-y-1.5">
+        {/* Identity is name + swatch, never colour alone. */}
+        <div className="flex items-center justify-between gap-4">
+          <span className="flex items-center gap-1.5">
+            <SeriesSwatch color={PORTFOLIO_COLOR} dash="" />
+            Carteira
+          </span>
+          <span className="font-semibold tabular-nums">
+            {formatCurrency(gain)}
+            <span className="text-muted-foreground ml-1 text-xs">
+              ({formatPercent(pct(gain))})
+            </span>
+          </span>
+        </div>
+
+        {visible.map((id) => {
+          const amount = Number(row[id] ?? 0);
+          return (
+            <div key={id} className="flex items-center justify-between gap-4">
+              <span className="text-muted-foreground flex items-center gap-1.5">
+                <SeriesSwatch
+                  color={BENCHMARKS[id].colorVar}
+                  dash={BENCHMARKS[id].dash}
+                />
+                {BENCHMARKS[id].label}
+              </span>
+              <span className="tabular-nums">
+                {formatCurrency(amount)}
+                <span className="text-muted-foreground ml-1 text-xs">
+                  ({formatPercent(pct(amount))})
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="text-muted-foreground mt-2 space-y-1 border-t pt-2 text-xs">
+        <div className="flex justify-between gap-4">
+          <span>Patrimônio</span>
+          <span className="tabular-nums">
+            {formatCurrency(Number(row.value))}
+          </span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span>Total investido</span>
+          <span className="tabular-nums">{formatCurrency(invested)}</span>
+        </div>
+        {Number(row.dividendsAccumulated) > 0 && (
+          <div className="flex justify-between gap-4">
+            <span>Proventos no período</span>
+            <span className="tabular-nums">
+              {formatCurrency(Number(row.dividendsAccumulated))}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function PerformanceChart({
   series,
   title = "Evolução da Carteira",
   description = "Ganho acumulado no período, incluindo proventos, comparado a índices sobre os mesmos aportes",
-}: {
+}: Readonly<{
   series: Snapshot["series"];
   title?: string;
   description?: string;
-}) {
+}>) {
   const [active, setActive] = useState<BenchmarkId[]>(DEFAULT_BENCHMARKS);
 
   // Only offer benchmarks the server actually returned data for — a provider
@@ -117,14 +208,12 @@ export function PerformanceChart({
         </div>
 
         {available.length > 0 && (
-          <div
-            className="flex flex-wrap items-center gap-2"
-            role="group"
-            aria-label="Índices para comparação"
-          >
-            <span className="text-muted-foreground mr-1 text-xs">
+          <fieldset className="flex min-w-0 flex-wrap items-center gap-2">
+            {/* Floated so the legend flows inline with the toggles instead of
+                taking the fieldset's caption slot. */}
+            <legend className="text-muted-foreground float-left mr-1 text-xs">
               Comparar com:
-            </span>
+            </legend>
             {available.map((id) => {
               const benchmark = BENCHMARKS[id];
               const isOn = visible.includes(id);
@@ -150,7 +239,7 @@ export function PerformanceChart({
                 </button>
               );
             })}
-          </div>
+          </fieldset>
         )}
       </CardHeader>
 
@@ -220,91 +309,7 @@ export function PerformanceChart({
                       stroke: "var(--muted-foreground)",
                       strokeDasharray: "4 4",
                     }}
-                    content={({ active: isActive, payload }) => {
-                      if (!isActive || !payload?.length) return null;
-                      const row = payload[0]?.payload as
-                        | (typeof chartData)[number]
-                        | undefined;
-                      if (!row) return null;
-
-                      const invested = Number(row.invested);
-                      const pct = (amount: number) =>
-                        invested > 0 ? (amount / invested) * 100 : 0;
-                      const gain = Number(row.gain);
-
-                      return (
-                        <div className="bg-popover min-w-56 border-2 p-3 text-sm shadow-md">
-                          <p className="text-muted-foreground mb-2 font-medium">
-                            {String(row.label)}
-                          </p>
-
-                          <div className="space-y-1.5">
-                            {/* Identity is name + swatch, never colour alone. */}
-                            <div className="flex items-center justify-between gap-4">
-                              <span className="flex items-center gap-1.5">
-                                <SeriesSwatch color={PORTFOLIO_COLOR} dash="" />
-                                Carteira
-                              </span>
-                              <span className="font-semibold tabular-nums">
-                                {formatCurrency(gain)}
-                                <span className="text-muted-foreground ml-1 text-xs">
-                                  ({formatPercent(pct(gain))})
-                                </span>
-                              </span>
-                            </div>
-
-                            {visible.map((id) => {
-                              const amount = Number(row[id] ?? 0);
-                              return (
-                                <div
-                                  key={id}
-                                  className="flex items-center justify-between gap-4"
-                                >
-                                  <span className="text-muted-foreground flex items-center gap-1.5">
-                                    <SeriesSwatch
-                                      color={BENCHMARKS[id].colorVar}
-                                      dash={BENCHMARKS[id].dash}
-                                    />
-                                    {BENCHMARKS[id].label}
-                                  </span>
-                                  <span className="tabular-nums">
-                                    {formatCurrency(amount)}
-                                    <span className="text-muted-foreground ml-1 text-xs">
-                                      ({formatPercent(pct(amount))})
-                                    </span>
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          <div className="text-muted-foreground mt-2 space-y-1 border-t pt-2 text-xs">
-                            <div className="flex justify-between gap-4">
-                              <span>Patrimônio</span>
-                              <span className="tabular-nums">
-                                {formatCurrency(Number(row.value))}
-                              </span>
-                            </div>
-                            <div className="flex justify-between gap-4">
-                              <span>Total investido</span>
-                              <span className="tabular-nums">
-                                {formatCurrency(invested)}
-                              </span>
-                            </div>
-                            {Number(row.dividendsAccumulated) > 0 && (
-                              <div className="flex justify-between gap-4">
-                                <span>Proventos no período</span>
-                                <span className="tabular-nums">
-                                  {formatCurrency(
-                                    Number(row.dividendsAccumulated),
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    }}
+                    content={<PerformanceTooltip visible={visible} />}
                   />
 
                   {/* Benchmarks first so the portfolio's filled area draws on

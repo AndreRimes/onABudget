@@ -24,6 +24,14 @@ const store =
   new AsyncLocalStorage<{ count: number }>();
 globalForUpstream.upstreamFanoutStore = store;
 
+/** Prometheus `outcome` label for an upstream HTTP response. */
+export function responseOutcome(
+  response: Pick<Response, "ok" | "status">,
+): "success" | "not_found" | "http_error" {
+  if (response.ok) return "success";
+  return response.status === 404 ? "not_found" : "http_error";
+}
+
 export function withUpstreamFanoutScope<T>(
   procedure: string,
   fn: () => Promise<T>,

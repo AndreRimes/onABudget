@@ -58,12 +58,12 @@ function Stat({
   value,
   hint,
   tone,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   hint?: string;
   tone?: "positive" | "negative";
-}) {
+}>) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -88,11 +88,11 @@ function LoadError({
   message,
   isFetching,
   onRetry,
-}: {
+}: Readonly<{
   message: string;
   isFetching: boolean;
   onRetry: () => void;
-}) {
+}>) {
   return (
     <Card className="border-destructive/50 bg-destructive/5">
       <CardContent className="flex flex-col items-start gap-3 py-6">
@@ -130,7 +130,7 @@ function LoadingSkeleton() {
   );
 }
 
-function IssuesCard({ issues }: { issues: Snapshot["issues"] }) {
+function IssuesCard({ issues }: Readonly<{ issues: Snapshot["issues"] }>) {
   if (issues.length === 0) return null;
   return (
     <Card className="bg-highlight/50">
@@ -148,7 +148,7 @@ function IssuesCard({ issues }: { issues: Snapshot["issues"] }) {
   );
 }
 
-function HoldingStats({ holding }: { holding: Holding }) {
+function HoldingStats({ holding }: Readonly<{ holding: Holding }>) {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <Stat
@@ -182,7 +182,9 @@ function HoldingStats({ holding }: { holding: Holding }) {
   );
 }
 
-function ClosedPositionCard({ realizedGain }: { realizedGain: number }) {
+function ClosedPositionCard({
+  realizedGain,
+}: Readonly<{ realizedGain: number }>) {
   return (
     <Card>
       <CardContent className="py-6">
@@ -209,7 +211,7 @@ function AssetDetailBody({
   snapshot,
   assetName,
   state,
-}: {
+}: Readonly<{
   snapshot: Snapshot | undefined;
   assetName: string;
   state: {
@@ -219,7 +221,7 @@ function AssetDetailBody({
     isFetching: boolean;
     refetch: () => unknown;
   };
-}) {
+}>) {
   if (state.isError && !snapshot) {
     return (
       <LoadError

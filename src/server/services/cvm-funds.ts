@@ -77,8 +77,9 @@ function chooseSubclass(rows: CsvRow[], reference: number | undefined): string {
     return best.subclass;
   }
 
-  return latest.reduce((biggest, row) =>
-    row.netAssets > biggest.netAssets ? row : biggest,
+  return latest.reduce(
+    (biggest, row) => (row.netAssets > biggest.netAssets ? row : biggest),
+    latest[0]!,
   ).subclass;
 }
 

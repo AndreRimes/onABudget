@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -43,7 +43,7 @@ const typeLabels: Record<Dividend["type"], string> = {
   RENDIMENTO: "Rendimento",
 };
 
-export function DividendsTable({ assetName }: { assetName: string }) {
+export function DividendsTable({ assetName }: Readonly<{ assetName: string }>) {
   const [deleting, setDeleting] = useState<Dividend | null>(null);
 
   const utils = api.useUtils();
@@ -68,6 +68,65 @@ export function DividendsTable({ assetName }: { assetName: string }) {
       },
     });
 
+  let content: ReactNode;
+  if (isPending) {
+    content = (
+      <div className="space-y-2">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Skeleton key={index} className="h-10 w-full" />
+        ))}
+      </div>
+    );
+  } else if (!dividends?.length) {
+    content = (
+      <p className="text-muted-foreground py-6 text-center">
+        Nenhum provento registrado
+      </p>
+    );
+  } else {
+    content = (
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Data de Pagamento</TableHead>
+              <TableHead>Tipo</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Origem</TableHead>
+              <TableHead className="w-8" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {dividends.map((dividend) => (
+              <TableRow key={dividend.id}>
+                <TableCell>{toDisplayDate(dividend.paymentDate)}</TableCell>
+                <TableCell>{typeLabels[dividend.type]}</TableCell>
+                <TableCell className="text-right font-medium">
+                  {formatCurrency(dividend.amount)}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className="text-xs">
+                    {dividend.source === "B3_IMPORT" ? "B3" : "Manual"}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => setDeleting(dividend)}
+                  >
+                    Excluir
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -83,59 +142,7 @@ export function DividendsTable({ assetName }: { assetName: string }) {
           )}
         </div>
       </CardHeader>
-      <CardContent>
-        {isPending ? (
-          <div className="space-y-2">
-            {Array.from({ length: 3 }).map((_, index) => (
-              <Skeleton key={index} className="h-10 w-full" />
-            ))}
-          </div>
-        ) : !dividends?.length ? (
-          <p className="text-muted-foreground py-6 text-center">
-            Nenhum provento registrado
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Data de Pagamento</TableHead>
-                  <TableHead>Tipo</TableHead>
-                  <TableHead className="text-right">Valor</TableHead>
-                  <TableHead>Origem</TableHead>
-                  <TableHead className="w-8" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {dividends.map((dividend) => (
-                  <TableRow key={dividend.id}>
-                    <TableCell>{toDisplayDate(dividend.paymentDate)}</TableCell>
-                    <TableCell>{typeLabels[dividend.type]}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(dividend.amount)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {dividend.source === "B3_IMPORT" ? "B3" : "Manual"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setDeleting(dividend)}
-                      >
-                        Excluir
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
+      <CardContent>{content}</CardContent>
 
       <AlertDialog
         open={deleting !== null}

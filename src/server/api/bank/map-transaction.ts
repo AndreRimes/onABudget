@@ -28,14 +28,13 @@ export function toStatementRow(
   if (transaction.status === "PENDING") return null;
   if (!transaction.amount) return null;
 
-  const kind: StatementRow["kind"] =
+  // On a card a positive amount is a purchase; on a bank account Pluggy
+  // labels the direction itself.
+  const isDebit =
     accountType === "CREDIT"
       ? transaction.amount > 0
-        ? "debit"
-        : "credit"
-      : transaction.type === "DEBIT"
-        ? "debit"
-        : "credit";
+      : transaction.type === "DEBIT";
+  const kind: StatementRow["kind"] = isDebit ? "debit" : "credit";
 
   // The friendly description is what the categorizer learns from; the raw one
   // is only a fallback for connectors that leave it empty. "First non-empty"

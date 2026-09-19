@@ -462,10 +462,10 @@ describe("normalizeOpeningPosition", () => {
       normalizeOpeningPosition(
         investment({ amountOriginal: null, amount: 3850, balance: 3850 }),
       ),
-    ).toBe(null);
+    ).toBeNull();
     expect(
       normalizeOpeningPosition(investment({ amountOriginal: 0, quantity: 10 })),
-    ).toBe(null);
+    ).toBeNull();
   });
 
   it("refuses a holding with no acquisition date or no quantity", () => {
@@ -473,12 +473,12 @@ describe("normalizeOpeningPosition", () => {
       normalizeOpeningPosition(
         investment({ issueDate: null, date: null, amountOriginal: 900 }),
       ),
-    ).toBe(null);
+    ).toBeNull();
     expect(
       normalizeOpeningPosition(
         investment({ amountOriginal: 900, quantity: null }),
       ),
-    ).toBe(null);
+    ).toBeNull();
   });
 
   it("carries fixed-income terms through", () => {

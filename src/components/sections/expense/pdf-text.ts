@@ -37,7 +37,7 @@ function fragmentsToLines(fragments: TextFragment[]): string[] {
   lines.push(current);
 
   return lines.map((line) =>
-    line
+    [...line]
       .sort((a, b) => a.x - b.x)
       .map((fragment) => fragment.str)
       .join(" ")

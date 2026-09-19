@@ -73,10 +73,14 @@ const UNKNOWN = { operation: "other", table: "other" } as const;
 /** The statement forms `execute`/`batch` accept: an object, a string, or a [sql, args] tuple. */
 type StatementLike = InStatement | [string, InArgs?];
 
+function statementText(stmt: StatementLike): string {
+  if (typeof stmt === "string") return stmt;
+  if (Array.isArray(stmt)) return stmt[0];
+  return stmt.sql;
+}
+
 function labelsFor(stmt: StatementLike): { operation: string; table: string } {
-  const sql = (
-    typeof stmt === "string" ? stmt : Array.isArray(stmt) ? stmt[0] : stmt.sql
-  ).trimStart();
+  const sql = statementText(stmt).trimStart();
 
   const first = /^[a-z]+/i.exec(sql)?.[0]?.toLowerCase() ?? "";
   const operation = OPERATIONS.has(first) ? first : "other";
@@ -108,9 +112,6 @@ async function timed<T>(
   }
 }
 
-type Execute = Client["execute"];
-type Batch = Client["batch"];
-
 export function instrumentClient(client: Client): Client {
   return new Proxy(client, {
     get(target, prop) {
@@ -124,7 +125,7 @@ export function instrumentClient(client: Client): Client {
               ? target.execute(stmt, args)
               : target.execute(stmt),
           );
-        return execute as Execute;
+        return execute;
       }
 
       if (prop === "batch") {
@@ -134,7 +135,7 @@ export function instrumentClient(client: Client): Client {
             stmts.length > 0 ? labelsFor(stmts[0]!) : UNKNOWN,
             () => target.batch(stmts, mode),
           );
-        return batch as Batch;
+        return batch;
       }
 
       // Read against `target`, not the proxy — routing a getter back through

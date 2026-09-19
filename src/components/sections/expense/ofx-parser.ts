@@ -20,8 +20,8 @@ function decodeOfx(buffer: ArrayBuffer): string {
   const head = new TextDecoder("windows-1252").decode(bytes.slice(0, 1024));
 
   const declared =
-    /^\s*ENCODING:\s*(\S+)/im.exec(head)?.[1] ??
-    /^\s*CHARSET:\s*(\S+)/im.exec(head)?.[1] ??
+    /^[ \t]*ENCODING:[ \t]*(\S+)/im.exec(head)?.[1] ??
+    /^[ \t]*CHARSET:[ \t]*(\S+)/im.exec(head)?.[1] ??
     /<\?xml[^>]*encoding=["']([^"']+)["']/i.exec(head)?.[1];
 
   const label = declared?.toUpperCase().trim();
@@ -67,13 +67,13 @@ function parseOfxAmount(raw: string | null): number | null {
     // Whichever comes last is the decimal separator.
     cleaned =
       cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
-        ? cleaned.replace(/\./g, "").replace(",", ".")
-        : cleaned.replace(/,/g, "");
+        ? cleaned.replaceAll(".", "").replace(",", ".")
+        : cleaned.replaceAll(",", "");
   } else if (hasComma) {
     cleaned = cleaned.replace(",", ".");
   }
   const parsed = Number(cleaned);
-  return isNaN(parsed) ? null : parsed;
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /** Splits the document into <STMTTRN> blocks, tolerating a missing close tag. */
@@ -85,12 +85,12 @@ function transactionBlocks(text: string): string[] {
     const start = match.index + match[0].length;
     const closeIndex = text.slice(start).search(/<\/STMTTRN>/i);
     const nextIndex = text.slice(start).search(/<STMTTRN>/i);
-    const end =
-      closeIndex >= 0 && (nextIndex < 0 || closeIndex < nextIndex)
-        ? start + closeIndex
-        : nextIndex >= 0
-          ? start + nextIndex
-          : text.length;
+    let end = text.length;
+    if (closeIndex >= 0 && (nextIndex < 0 || closeIndex < nextIndex)) {
+      end = start + closeIndex;
+    } else if (nextIndex >= 0) {
+      end = start + nextIndex;
+    }
     blocks.push(text.slice(start, end));
   }
   return blocks;

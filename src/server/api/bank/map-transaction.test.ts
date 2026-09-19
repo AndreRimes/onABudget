@@ -69,7 +69,7 @@ describe("toStatementRow", () => {
     });
 
     it("skips zero-amount transactions", () => {
-      expect(toStatementRow(transaction({ amount: 0 }), "BANK")).toBe(null);
+      expect(toStatementRow(transaction({ amount: 0 }), "BANK")).toBeNull();
     });
 
     it("keeps transactions with an unknown status", () => {
@@ -127,6 +127,6 @@ describe("toStatementRow", () => {
   });
 
   it("reports no provider category when Pluggy sent none", () => {
-    expect(toStatementRow(transaction(), "BANK")?.providerCategory).toBe(null);
+    expect(toStatementRow(transaction(), "BANK")?.providerCategory).toBeNull();
   });
 });

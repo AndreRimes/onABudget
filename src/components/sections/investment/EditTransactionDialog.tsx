@@ -32,11 +32,11 @@ export function EditTransactionDialog({
   transaction,
   open,
   onOpenChange,
-}: {
+}: Readonly<{
   transaction: Transaction;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}) {
+}>) {
   const isFixedIncome = transaction.isFixedIncome ?? false;
 
   const [accountId, setAccountId] = useState(
@@ -73,8 +73,9 @@ export function EditTransactionDialog({
     accounts?.filter((account) => account.accountType === "INVESTMENT") ?? [];
 
   const totalAmount = isFixedIncome
-    ? parseFloat(investedAmount || "0")
-    : parseFloat(quantity || "0") * parseFloat(pricePerUnit || "0");
+    ? Number.parseFloat(investedAmount || "0")
+    : Number.parseFloat(quantity || "0") *
+      Number.parseFloat(pricePerUnit || "0");
 
   const { mutate, isPending } = api.investments.update.useMutation({
     onSuccess: () => {
@@ -106,19 +107,21 @@ export function EditTransactionDialog({
       toast.error("Data da transação inválida. Use o formato DD/MM/AAAA");
       return;
     }
-    if (!(totalAmount > 0)) {
+    if (totalAmount <= 0) {
       toast.error("O valor total precisa ser maior que zero");
       return;
     }
 
     mutate({
       id: transaction.id,
-      investmentAccountId: parseInt(accountId),
+      investmentAccountId: Number.parseInt(accountId),
       transactionType,
-      quantity: isFixedIncome ? transaction.quantity : parseFloat(quantity),
+      quantity: isFixedIncome
+        ? transaction.quantity
+        : Number.parseFloat(quantity),
       pricePerUnit: isFixedIncome
-        ? parseFloat(investedAmount)
-        : parseFloat(pricePerUnit),
+        ? Number.parseFloat(investedAmount)
+        : Number.parseFloat(pricePerUnit),
       totalAmount,
       transactionDate: parsedDate,
     });

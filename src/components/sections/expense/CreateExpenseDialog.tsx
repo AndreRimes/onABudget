@@ -85,9 +85,9 @@ export function CreateExpenseDialog() {
     }
 
     mutate({
-      accountId: parseInt(accountId),
-      categoryId: parseInt(categoryId),
-      amount: parseFloat(amount),
+      accountId: Number.parseInt(accountId),
+      categoryId: Number.parseInt(categoryId),
+      amount: Number.parseFloat(amount),
       date: parseDisplayDate(date),
       description: description || undefined,
     });

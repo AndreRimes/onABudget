@@ -21,11 +21,11 @@ import { invalidatePortfolio } from "~/trpc/invalidate";
 export function RenameAssetDialog({
   assetName,
   onRenamed,
-}: {
+}: Readonly<{
   assetName: string;
   /** Fired with the new name — the detail page is keyed by it and must follow. */
   onRenamed?: (newAssetName: string) => void;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const [newName, setNewName] = useState(assetName);
 

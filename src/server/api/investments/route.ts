@@ -5,6 +5,10 @@ import { accountRepository } from "../accounts/repository";
 import { assetTypeRepository } from "../asset-type/repository";
 import { investmentRepository } from "./repository";
 import { b3RowSchema, importB3Rows, previewB3Rows } from "./b3-import";
+import {
+  resolveReconciliation,
+  undoReconciliationDecision,
+} from "./reconcile-actions";
 import { searchStocks } from "~/server/services/brapi";
 
 /** Rejects an `investmentAccountId` the caller doesn't own. */
@@ -310,5 +314,36 @@ export const investmentsRouter = createTRPCRouter({
         assetTypeByTicker: input.assetTypeByTicker,
         rows: input.rows,
       });
+    }),
+
+  /**
+   * Settle one line of the bank reconciliation. The figures are recomputed
+   * server-side; the client only says which asset and which side to trust.
+   * Account and type are needed only for an asset the ledger has never seen.
+   */
+  resolveReconciliation: protectedProcedure
+    .input(
+      z.object({
+        assetName: z.string().max(200).min(1),
+        choice: z.enum(["app", "bank"]),
+        assetTypeId: z.number().optional(),
+        investmentAccountId: z.number().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      if (input.investmentAccountId != null) {
+        await assertOwnsAccount(userId, input.investmentAccountId);
+      }
+      if (input.assetTypeId != null) {
+        await assertOwnsAssetTypes(userId, [input.assetTypeId]);
+      }
+      return await resolveReconciliation({ userId, ...input });
+    }),
+
+  undoReconciliationDecision: protectedProcedure
+    .input(z.object({ assetName: z.string().max(200).min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      await undoReconciliationDecision(ctx.session.user.id, input.assetName);
     }),
 });

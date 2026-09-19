@@ -132,9 +132,7 @@ export async function previewStatementRows(
       ignoreReason: null as IgnoreReason,
       providerCategory,
       suggestedCategoryId: providerCategoryId ?? suggestion.categoryId,
-      suggestionSource: providerCategoryId
-        ? "pluggy"
-        : (suggestion.source as string | null),
+      suggestionSource: providerCategoryId ? "pluggy" : suggestion.source,
     };
   });
 

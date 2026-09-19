@@ -56,7 +56,7 @@ export function SyncBankAccountDialog({
   accountId,
   institution,
   onOpenChange,
-}: SyncBankAccountDialogProps) {
+}: Readonly<SyncBankAccountDialogProps>) {
   const [days, setDays] = useState<number>(DEFAULT_SYNC_DAYS);
   const [rows, setRows] = useState<ParsedStatementRow[] | null>(null);
   const [fetched, setFetched] = useState(0);

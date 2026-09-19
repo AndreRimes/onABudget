@@ -9,7 +9,7 @@ import {
   type UpstreamOperation,
   type UpstreamProvider,
 } from "~/server/metrics/instruments";
-import { countUpstreamCall } from "~/server/metrics/upstream";
+import { countUpstreamCall, responseOutcome } from "~/server/metrics/upstream";
 
 /** The requested symbol does not exist at the provider (permanent). */
 export class SymbolNotFoundError extends Error {
@@ -92,7 +92,7 @@ const FETCH_TIMEOUT_MS = 12_000;
  * outside this shape is reported as not found without a request being made,
  * which is also what the provider would have answered.
  */
-const SYMBOL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$/;
+const SYMBOL_SHAPE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,19}$/;
 
 export function isFetchableSymbol(symbol: string): boolean {
   return SYMBOL_SHAPE.test(symbol);
@@ -138,11 +138,7 @@ async function fetchWithTimeout(
     // market_quote_results_total, recorded by MarketCacheService.
     upstreamRequestsTotal.inc({
       ...labels,
-      outcome: response.ok
-        ? "success"
-        : response.status === 404
-          ? "not_found"
-          : "http_error",
+      outcome: responseOutcome(response),
       status_class: `${Math.floor(response.status / 100)}xx`,
     });
 
@@ -368,7 +364,7 @@ export async function fetchCdiDailyRates(
 
   return data.map((point) => ({
     date: point.data.split("/").reverse().join("-"),
-    dailyRate: parseFloat(point.valor) / 100,
+    dailyRate: Number.parseFloat(point.valor) / 100,
   }));
 }
 
@@ -416,7 +412,7 @@ async function fetchBcbSeries(
   return data
     .map((point) => ({
       date: point.data.split("/").reverse().join("-"),
-      value: parseFloat(point.valor),
+      value: Number.parseFloat(point.valor),
     }))
     .filter((point) => Number.isFinite(point.value));
 }
@@ -598,7 +594,9 @@ export async function fetchTesouroPrices(
     if (isoDate < fromDate) return;
 
     // Brazilian number format: "1.002,94" → 1002.94
-    const sellPrice = parseFloat(puVenda.replace(/\./g, "").replace(",", "."));
+    const sellPrice = Number.parseFloat(
+      puVenda.replaceAll(".", "").replace(",", "."),
+    );
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) return;
 
     out.push({ titleKey, date: isoDate, sellPrice });

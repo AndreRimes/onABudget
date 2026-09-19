@@ -30,9 +30,12 @@ const ACTIONS = new Set([
  * filter it out of sign-in panels.
  */
 export function recordAuthEvent(req: Request, res: Response): void {
+  // "/api/auth/sign-in/email/" -> "sign-in/email"
   const raw = new URL(req.url).pathname
-    .replace(/^\/api\/auth\/?/, "")
-    .replace(/\/+$/, "");
+    .split("/")
+    .filter(Boolean)
+    .slice(2)
+    .join("/");
 
   authEvents.inc({
     action: ACTIONS.has(raw) ? raw : "other",

@@ -40,7 +40,7 @@ export function EditAccountDialog({
   account,
   open,
   onOpenChange,
-}: EditAccountDialogProps) {
+}: Readonly<EditAccountDialogProps>) {
   const [accountType, setAccountType] = useState<AccountType>("CHECKING");
   const [balance, setBalance] = useState("");
   const [name, setName] = useState("");
@@ -69,7 +69,7 @@ export function EditAccountDialog({
     mutate({
       id: account.id,
       accountType,
-      balance: parseFloat(balance),
+      balance: Number.parseFloat(balance),
       name,
     });
   };

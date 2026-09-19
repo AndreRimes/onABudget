@@ -19,6 +19,7 @@ import {
   useControllableOpen,
   type ControllableOpenProps,
 } from "~/lib/use-controllable-open";
+import { withRenderKeys } from "~/lib/render-keys";
 import { StatementPreviewPanel } from "./StatementPreviewPanel";
 import { parseFaturaText, type FaturaParseResult } from "./fatura-parser";
 import type { ParsedStatementRow } from "./statement-row";
@@ -167,11 +168,13 @@ export function ImportFaturaDialog(props: ControllableOpenProps = {}) {
                     leitor:
                   </p>
                   <ul className="text-muted-foreground font-mono text-xs">
-                    {parsed.unparsedSamples.map((sample, index) => (
-                      <li key={index} className="truncate">
-                        {sample}
-                      </li>
-                    ))}
+                    {withRenderKeys(parsed.unparsedSamples, (s) => s).map(
+                      ({ key, item: sample }) => (
+                        <li key={key} className="truncate">
+                          {sample}
+                        </li>
+                      ),
+                    )}
                   </ul>
                 </div>
               )}

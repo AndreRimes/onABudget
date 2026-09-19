@@ -54,13 +54,14 @@ export function nextCategoryColor(used: Iterable<string>): string {
  * does not flicker through colours while the name is typed.
  */
 export function categoryColorFor(name: string): string {
-  // djb2. Any stable hash would do; this one is short and spreads the short,
-  // similar-prefixed strings ("Transporte", "Transferências") that category
-  // names actually are.
+  // djb2 (xor variant). Any stable hash would do; this one is short and
+  // spreads the short, similar-prefixed strings ("Transporte",
+  // "Transferências") that category names actually are. `Math.imul` and the
+  // xor keep it a 32-bit integer without a `| 0` truncation step.
   let hash = 5381;
   const key = name.trim().toLowerCase();
-  for (let i = 0; i < key.length; i++) {
-    hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+  for (const char of key) {
+    hash = Math.imul(hash, 33) ^ char.codePointAt(0)!;
   }
   return CATEGORY_PALETTE[Math.abs(hash) % CATEGORY_PALETTE.length]!;
 }

@@ -53,7 +53,7 @@ export function CreateAccountDialog() {
     e.preventDefault();
     mutate({
       accountType,
-      balance: parseFloat(balance) || 0,
+      balance: Number.parseFloat(balance) || 0,
       name: accountName,
     });
   };

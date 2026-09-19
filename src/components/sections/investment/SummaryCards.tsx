@@ -19,10 +19,10 @@ type Snapshot = RouterOutputs["investments"]["getPortfolioSnapshot"];
 function StatCard({
   label,
   children,
-}: {
+}: Readonly<{
   label: string;
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -35,7 +35,9 @@ function StatCard({
   );
 }
 
-export function SummaryCards({ summary }: { summary: Snapshot["summary"] }) {
+export function SummaryCards({
+  summary,
+}: Readonly<{ summary: Snapshot["summary"] }>) {
   const gainPositive = summary.periodGain >= 0;
   const valueGain = summary.periodGain - summary.periodDividends;
 

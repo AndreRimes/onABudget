@@ -23,6 +23,7 @@ import {
 import { isSpendingAccount } from "~/lib/account-type";
 import { formatCurrency, formatIsoDateBr } from "~/lib/format";
 import { cn } from "~/lib/utils";
+import { withRenderKeys } from "~/lib/render-keys";
 import { api, type RouterOutputs } from "~/trpc/react";
 import type { ParsedStatementRow } from "./statement-row";
 
@@ -53,6 +54,14 @@ interface StatementPreviewPanelProps {
 type PreviewEntry = PreviewResult["rows"][number];
 type Category = RouterOutputs["category"]["getAll"][number];
 
+/** Credits have no hash, so fall back to what the line itself says. */
+function previewRowKey(entry: PreviewEntry): string {
+  return (
+    entry.hash ??
+    `${entry.row.date}|${entry.row.description}|${entry.row.amount}`
+  );
+}
+
 function plural(count: number, suffix = "s"): string {
   return count !== 1 ? suffix : "";
 }
@@ -73,11 +82,11 @@ function PreviewError({
   message,
   onRetry,
   onCancel,
-}: {
+}: Readonly<{
   message: string;
   onRetry: () => void;
   onCancel: () => void;
-}) {
+}>) {
   return (
     <div className="border-destructive/50 grid gap-2 border-2 p-3">
       <p className="text-destructive text-sm font-medium">
@@ -103,12 +112,12 @@ function PreviewPending({
   isPreviewing,
   isSlow,
   onRetry,
-}: {
+}: Readonly<{
   rowCount: number;
   isPreviewing: boolean;
   isSlow: boolean;
   onRetry: () => void;
-}) {
+}>) {
   return (
     <div className="grid gap-2">
       <p className="text-muted-foreground text-sm">
@@ -142,11 +151,11 @@ function PreviewSummary({
   newCount,
   counts,
   parserIgnoredCount,
-}: {
+}: Readonly<{
   newCount: number;
   counts: { duplicate: number; credit: number; autoIgnored: number };
   parserIgnoredCount: number;
-}) {
+}>) {
   return (
     <p className="text-muted-foreground text-sm">
       {newCount} lançamento{plural(newCount)} novo{plural(newCount)},{" "}
@@ -166,14 +175,14 @@ function PreviewRow({
   isIgnored,
   categories,
   onChoose,
-}: {
+}: Readonly<{
   entry: PreviewEntry;
   /** Category chosen for this row's hash, "" or undefined when none yet. */
   categoryValue: string | undefined;
   isIgnored: boolean;
   categories: Category[];
   onChoose: (description: string, value: string) => void;
-}) {
+}>) {
   const isNew = entry.status === "new";
   let selectValue = categoryValue ?? "";
   if (isIgnored) selectValue = IGNORE_VALUE;
@@ -257,7 +266,7 @@ export function StatementPreviewPanel({
   initialAccountId = null,
   onImported,
   onCancel,
-}: StatementPreviewPanelProps) {
+}: Readonly<StatementPreviewPanelProps>) {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [accountId, setAccountId] = useState(
     initialAccountId != null ? initialAccountId.toString() : "",
@@ -413,11 +422,11 @@ export function StatementPreviewPanel({
       return;
     }
     runImport({
-      accountId: parseInt(accountId),
+      accountId: Number.parseInt(accountId),
       categoryByHash: Object.fromEntries(
         Object.entries(categoryByHash)
           .filter(([, value]) => value && value !== PLUGGY_CATEGORY_VALUE)
-          .map(([hash, value]) => [hash, parseInt(value)]),
+          .map(([hash, value]) => [hash, Number.parseInt(value)]),
       ),
       pluggyCategoryHashes: Object.entries(categoryByHash)
         .filter(([, value]) => value === PLUGGY_CATEGORY_VALUE)
@@ -503,18 +512,20 @@ export function StatementPreviewPanel({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {preview.rows.map((entry, index) => (
-              <PreviewRow
-                key={index}
-                entry={entry}
-                categoryValue={
-                  entry.hash ? categoryByHash[entry.hash] : undefined
-                }
-                isIgnored={!!entry.hash && ignoredHashes.has(entry.hash)}
-                categories={categories ?? []}
-                onChoose={applyToSameDescription}
-              />
-            ))}
+            {withRenderKeys(preview.rows, previewRowKey).map(
+              ({ key, item: entry }) => (
+                <PreviewRow
+                  key={key}
+                  entry={entry}
+                  categoryValue={
+                    entry.hash ? categoryByHash[entry.hash] : undefined
+                  }
+                  isIgnored={!!entry.hash && ignoredHashes.has(entry.hash)}
+                  categories={categories ?? []}
+                  onChoose={applyToSameDescription}
+                />
+              ),
+            )}
           </TableBody>
         </Table>
       </div>
@@ -530,7 +541,7 @@ export function StatementPreviewPanel({
         >
           {isImporting
             ? "Importando..."
-            : `Importar ${importableCount} lançamento${importableCount !== 1 ? "s" : ""}`}
+            : `Importar ${importableCount} lançamento${plural(importableCount)}`}
         </Button>
       </div>
     </>

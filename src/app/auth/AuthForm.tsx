@@ -67,7 +67,9 @@ const features = [
  * registration the tab is not rendered at all, rather than shown and then
  * refused by the auth server on submit.
  */
-export function AuthForm({ signupEnabled }: { signupEnabled: boolean }) {
+export function AuthForm({
+  signupEnabled,
+}: Readonly<{ signupEnabled: boolean }>) {
   const router = useRouter();
   const [loginError, setLoginError] = useState("");
   const [registerError, setRegisterError] = useState("");

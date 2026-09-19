@@ -28,7 +28,7 @@ export function FileDropzone({
   onFile,
   onClear,
   hint,
-}: FileDropzoneProps) {
+}: Readonly<FileDropzoneProps>) {
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 

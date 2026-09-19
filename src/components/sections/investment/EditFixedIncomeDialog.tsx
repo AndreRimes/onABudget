@@ -54,12 +54,12 @@ export function EditFixedIncomeDialog({
   yieldType,
   rate,
   maturityDate,
-}: {
+}: Readonly<{
   assetName: string;
   yieldType: YieldType | null;
   rate: number | null;
   maturityDate: string | null;
-}) {
+}>) {
   const [open, setOpen] = useState(false);
   const [fixedIncomeYieldType, setFixedIncomeYieldType] = useState<YieldType>(
     yieldType ?? "CDI_PERCENTAGE",
@@ -99,7 +99,7 @@ export function EditFixedIncomeDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedRate = parseFloat(fixedIncomeRate);
+    const parsedRate = Number.parseFloat(fixedIncomeRate);
     if (!parsedRate || parsedRate <= 0) {
       toast.error("Informe uma taxa válida");
       return;

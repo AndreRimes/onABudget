@@ -437,6 +437,36 @@ export const providerHoldings = sqliteTable(
 );
 
 /**
+ * What the owner decided about one disagreement between the ledger and the
+ * bank, when that decision has to outlive the next recalculation.
+ *
+ * Two of the possible resolutions do not touch the ledger and so need a place
+ * of their own: keeping the app's figure ("app"), and valuing the holding at
+ * the unit price the bank reported ("bank_price"). The other two — an
+ * adjusting trade, a rescaled cost — write to the ledger and leave no row here.
+ *
+ * Each row carries the bank's figures as they were when the decision was
+ * taken. A later sync that reports different numbers makes the decision lapse
+ * and the mismatch comes back: accepting one disagreement is not accepting
+ * every future one.
+ */
+export const reconciliationDecisions = sqliteTable(
+  "reconciliation_decisions",
+  {
+    userId: text("user_id").notNull(),
+    assetName: text("asset_name").notNull(),
+    decision: text("decision", { enum: ["app", "bank_price"] }).notNull(),
+    /** The cause the entry had when decided, for the UI to name it. */
+    cause: text("cause").notNull(),
+    providerQuantity: real("provider_quantity"),
+    providerValue: real("provider_value"),
+    providerProfit: real("provider_profit"),
+    decidedAt: integer("decided_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.assetName] })],
+);
+
+/**
  * One consented Open Finance connection (a Pluggy "item"), i.e. one bank the
  * owner linked at meu.pluggy.ai. Owned by a user id like every other domain
  * table, even though the free tier means there is only ever one owner.

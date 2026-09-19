@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { SnapshotHolding } from "./portfolio-engine";
-import { reconcileHoldings, type ProviderHoldingFact } from "./reconcile";
+import {
+  decisionApplies,
+  reconcileHoldings,
+  type ProviderHoldingFact,
+  type ReconciliationDecision,
+} from "./reconcile";
 
 function holding(overrides: Partial<SnapshotHolding> = {}): SnapshotHolding {
   return {
@@ -142,6 +147,7 @@ describe("reconcileHoldings", () => {
     );
 
     expect(result.unreported).toBe(1);
+    expect(result.mismatches).toHaveLength(0);
     expect(result.appTotal).toBe(560);
     expect(result.providerTotal).toBe(560);
     expect(
@@ -194,5 +200,91 @@ describe("reconcileHoldings", () => {
       [fact(), fact({ assetName: "B", syncedAt: older })],
     );
     expect(result.syncedAt).toEqual(older);
+  });
+
+  describe("decisions", () => {
+    const short = () => holding({ quantity: 6, currentValue: 240 });
+    const keep = (
+      overrides: Partial<ReconciliationDecision> = {},
+    ): ReconciliationDecision => ({
+      assetName: "PETR3",
+      decision: "app",
+      providerQuantity: 14,
+      providerValue: 560,
+      providerProfit: 140,
+      ...overrides,
+    });
+
+    it("reports a kept mismatch as accepted, outside the list of mismatches", () => {
+      const result = reconcileHoldings([short()], [fact()], [keep()]);
+
+      expect(result.entries[0]?.cause).toBe("accepted");
+      expect(result.mismatches).toHaveLength(0);
+      expect(result.accepted.map((entry) => entry.assetName)).toEqual([
+        "PETR3",
+      ]);
+      // The figures are unchanged: accepting is about attention, not totals.
+      expect(result.appTotal).toBe(240);
+      expect(result.providerTotal).toBe(560);
+    });
+
+    it("lets a decision lapse when the bank reports different figures", () => {
+      const result = reconcileHoldings(
+        [short()],
+        [fact({ quantity: 15, value: 600 })],
+        [keep()],
+      );
+
+      expect(result.entries[0]?.cause).toBe("quantity");
+      expect(result.accepted).toHaveLength(0);
+    });
+
+    it("never turns a match into an accepted one", () => {
+      const result = reconcileHoldings([holding()], [fact()], [keep()]);
+      expect(result.entries[0]?.cause).toBe("match");
+      expect(result.accepted).toHaveLength(0);
+    });
+
+    it("keeps an asset the ledger does not have at all", () => {
+      const result = reconcileHoldings(
+        [holding()],
+        [fact(), fact({ assetName: "HGLG11", quantity: 30, value: 4500 })],
+        [
+          keep({
+            assetName: "HGLG11",
+            providerQuantity: 30,
+            providerValue: 4500,
+            providerProfit: 140,
+          }),
+        ],
+      );
+
+      expect(result.mismatches).toHaveLength(0);
+      expect(result.accepted[0]).toMatchObject({
+        assetName: "HGLG11",
+        cause: "accepted",
+      });
+    });
+
+    it("leaves a bank-price decision to the pricing step", () => {
+      // It has already acted, upstream, in the price the holding carries; here
+      // it must not hide whatever is still different.
+      const result = reconcileHoldings(
+        [short()],
+        [fact()],
+        [keep({ decision: "bank_price" })],
+      );
+      expect(result.entries[0]?.cause).toBe("quantity");
+    });
+
+    it("matches figures within a float round trip, and null only with null", () => {
+      expect(decisionApplies(keep(), fact({ value: 560.0000001 }))).toBe(true);
+      expect(decisionApplies(keep(), fact({ value: 560.01 }))).toBe(false);
+      expect(decisionApplies(keep(), fact({ profit: null }))).toBe(false);
+      expect(
+        decisionApplies(keep({ providerProfit: null }), fact({ profit: null })),
+      ).toBe(true);
+      expect(decisionApplies(keep(), undefined)).toBe(false);
+    });
   });
 });

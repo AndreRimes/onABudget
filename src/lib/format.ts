@@ -10,3 +10,8 @@ export function formatIsoDateBr(iso: string): string {
   const [year, month, day] = iso.split("-");
   return year && month && day ? `${day}/${month}/${year}` : iso;
 }
+
+/** `plural(2, "ativo", "ativos")` -> `"ativos"`. */
+export function plural(count: number, one: string, many: string): string {
+  return count === 1 ? one : many;
+}

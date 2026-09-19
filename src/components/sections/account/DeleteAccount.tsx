@@ -24,7 +24,7 @@ export function DeleteAccountDialog({
   account,
   open,
   onOpenChange,
-}: DeleteAccountDialogProps) {
+}: Readonly<DeleteAccountDialogProps>) {
   const utils = api.useUtils();
   const { mutate, isPending } = api.account.delete.useMutation({
     onSuccess: () => {

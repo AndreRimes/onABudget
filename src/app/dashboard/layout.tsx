@@ -33,7 +33,9 @@ const navItems = [
   },
 ];
 
-export default function DashboardLayout({ children }: DashboardLayoutProps) {
+export default function DashboardLayout({
+  children,
+}: Readonly<DashboardLayoutProps>) {
   const router = useRouter();
   const pathname = usePathname();
 

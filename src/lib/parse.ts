@@ -18,14 +18,16 @@ export function normalizeHeader(header: string): string {
  * Excel serial number, or a `DD/MM/YYYY` string.
  */
 export function parseBrDate(value: unknown): string | null {
-  if (value instanceof Date && !isNaN(value.getTime())) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
   }
   if (typeof value === "number") {
     // Excel serial date: days since 1899-12-30
     const millis = Date.UTC(1899, 11, 30) + Math.round(value) * 86_400_000;
     const date = new Date(millis);
-    return isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+    return Number.isNaN(date.getTime())
+      ? null
+      : date.toISOString().slice(0, 10);
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -48,10 +50,13 @@ export function parseBrDate(value: unknown): string | null {
  * "55.90" as 5590 would be a hundredfold error, so the narrow rule wins.
  */
 export function parseBrNumber(value: unknown): number | null {
-  if (typeof value === "number") return isNaN(value) ? null : value;
+  if (typeof value === "number") return Number.isNaN(value) ? null : value;
   if (typeof value !== "string") return null;
 
-  let cleaned = value.replace(/R\$\s?/g, "").replace(/\s/g, "").trim();
+  let cleaned = value
+    .replace(/R\$\s?/g, "")
+    .replace(/\s/g, "")
+    .trim();
   if (cleaned === "" || cleaned === "-") return null;
 
   const hasComma = cleaned.includes(",");
@@ -60,8 +65,8 @@ export function parseBrNumber(value: unknown): number | null {
     // Whichever separator comes last is the decimal one.
     cleaned =
       cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
-        ? cleaned.replace(/\./g, "").replace(",", ".")
-        : cleaned.replace(/,/g, "");
+        ? cleaned.replaceAll(".", "").replace(",", ".")
+        : cleaned.replaceAll(",", "");
   } else if (hasComma) {
     cleaned = cleaned.replace(",", ".");
   } else if (hasDot) {
@@ -75,7 +80,7 @@ export function parseBrNumber(value: unknown): number | null {
   }
 
   const parsed = Number(cleaned);
-  return isNaN(parsed) ? null : parsed;
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 /**

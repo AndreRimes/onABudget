@@ -7,6 +7,8 @@
  * need to use are documented accordingly near the end.
  */
 
+import { randomInt } from "node:crypto";
+
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
@@ -105,7 +107,7 @@ export const createTRPCRouter = t.router;
  */
 const metricsMiddleware = t.middleware(async ({ next, path, type }) => {
   if (t._config.isDev) {
-    const waitMs = Math.floor(Math.random() * 400) + 100;
+    const waitMs = randomInt(100, 500);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 

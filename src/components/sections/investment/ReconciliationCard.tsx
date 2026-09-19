@@ -1,8 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 
 import type { Reconciliation } from "~/server/api/investments/reconcile";
+import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import {
   Table,
@@ -12,16 +15,15 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { api } from "~/trpc/react";
+import { invalidatePortfolio } from "~/trpc/invalidate";
+import { plural } from "~/lib/format";
 import { formatCurrency, formatSignedCurrency, gainTone } from "./format";
+import { CAUSE_HINT, CAUSE_LABEL, formatQuantity } from "./reconciliation-copy";
+import { ResolveReconciliationDialog } from "./ResolveReconciliationDialog";
 
 interface ReconciliationCardProps {
   reconciliation: Reconciliation;
-}
-
-function formatQuantity(value: number): string {
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 6 }).format(
-    value,
-  );
 }
 
 function formatPercentOf(value: number): string {
@@ -31,21 +33,6 @@ function formatPercentOf(value: number): string {
     maximumFractionDigits: 2,
   }).format(value);
 }
-
-/** What the mismatch means, in the terms that decide what to do about it. */
-const CAUSE_LABEL: Record<string, string> = {
-  quantity: "Quantidade diferente",
-  price: "Preço diferente",
-  gain: "Rentabilidade diferente",
-};
-
-const CAUSE_HINT: Record<string, string> = {
-  quantity:
-    "O histórico importado não cobre toda a posição — compras anteriores à janela do Open Finance. Lance a diferença à mão ou use a posição inicial na sincronização.",
-  price:
-    "Mesma quantidade dos dois lados, valores diferentes: a cota ou a cotação usada aqui é de outro dia, ou o banco já desconta o IR provisionado.",
-  gain: "Posição e valor batem, mas o ganho não: os preços de compra registrados aqui não são os que o banco tem. Confira as transações desses ativos — o preço médio e a rentabilidade saem errados mesmo com o total certo.",
-};
 
 /**
  * Checks the portfolio against the institution's own numbers, side by side.
@@ -57,14 +44,16 @@ const CAUSE_HINT: Record<string, string> = {
  */
 export function ReconciliationCard({
   reconciliation,
-}: ReconciliationCardProps) {
+}: Readonly<ReconciliationCardProps>) {
+  const [resolving, setResolving] = useState(false);
+
   // Nothing the bank reported: no Open Finance connection, or a sync that
   // predates this check. Silence is right — there is nothing to compare.
   if (reconciliation.providerTotal === 0 && reconciliation.appTotal === 0) {
     return null;
   }
 
-  const { mismatches, difference, differencePercent, syncedAt } =
+  const { mismatches, accepted, difference, differencePercent, syncedAt } =
     reconciliation;
   const agrees = mismatches.length === 0;
 
@@ -78,11 +67,20 @@ export function ReconciliationCard({
             <AlertTriangle className="text-destructive h-5 w-5 shrink-0" />
           )}
           Conferência com o banco
+          {!agrees && (
+            <Button
+              size="sm"
+              className="ml-auto"
+              onClick={() => setResolving(true)}
+            >
+              Resolver divergências
+            </Button>
+          )}
         </CardTitle>
         <p className="text-muted-foreground text-sm">
           {agrees
             ? "A carteira bate com o que a instituição informou na última sincronização."
-            : `${mismatches.length} ativo${mismatches.length !== 1 ? "s" : ""} não bate${mismatches.length !== 1 ? "m" : ""} com o que a instituição informou.`}
+            : `${mismatches.length} ${plural(mismatches.length, "ativo não bate", "ativos não batem")} com o que a instituição informou.`}
           {syncedAt
             ? ` Números do banco de ${new Date(syncedAt).toLocaleDateString("pt-BR")}.`
             : ""}
@@ -201,7 +199,68 @@ export function ReconciliationCard({
             </div>
           </>
         )}
+
+        {accepted.length > 0 && <AcceptedList entries={accepted} />}
       </CardContent>
+
+      <ResolveReconciliationDialog
+        open={resolving}
+        onOpenChange={setResolving}
+        mismatches={mismatches}
+      />
     </Card>
+  );
+}
+
+/**
+ * Mismatches the owner has looked at and chosen to keep. Still listed, so a
+ * decision is never invisible, and undoable in place.
+ */
+function AcceptedList({
+  entries,
+}: Readonly<{ entries: Reconciliation["accepted"] }>) {
+  const utils = api.useUtils();
+  const { mutate: undo, isPending } =
+    api.investments.undoReconciliationDecision.useMutation({
+      onSuccess: () => void invalidatePortfolio(utils),
+      onError: (error) => toast.error("Erro ao desfazer: " + error.message),
+    });
+
+  return (
+    <div className="grid gap-1 text-sm">
+      <p className="text-muted-foreground">
+        {entries.length} divergência{entries.length !== 1 ? "s" : ""} aceita
+        {entries.length !== 1 ? "s" : ""} como est
+        {entries.length !== 1 ? "ão" : "á"}: o banco informa outro número e você
+        preferiu manter o de cá.
+      </p>
+      <ul className="grid gap-1">
+        {entries.map((entry) => (
+          <li
+            key={entry.assetName}
+            className="flex flex-wrap items-center justify-between gap-2 border-b py-1"
+          >
+            <span className="font-medium">
+              {entry.label ?? entry.assetName}
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {formatCurrency(entry.appValue)} aqui ·{" "}
+              {entry.providerValue === null
+                ? "—"
+                : formatCurrency(entry.providerValue)}{" "}
+              no banco
+            </span>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={isPending}
+              onClick={() => undo({ assetName: entry.assetName })}
+            >
+              Desfazer
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

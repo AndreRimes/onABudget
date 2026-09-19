@@ -8,7 +8,10 @@ export const categoryRouter = createTRPCRouter({
     .input(
       z.object({
         name: z.string().max(200).min(1, "Informe o nome da categoria"),
-        color: z.string().max(200).min(1, "Informe a cor"),
+        // The picker only ever emits `#rrggbb`; anything else is a crafted
+        // request, and a colour ends up inside style attributes and chart
+        // CSS, which is no place for free text.
+        color: z.string().regex(/^#[0-9a-f]{6}$/i, "Cor inválida"),
         description: z.string().max(500).optional(),
       }),
     )

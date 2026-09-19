@@ -227,14 +227,14 @@ function ExpensesTable({
   categoryMap,
   onEdit,
   onDelete,
-}: {
+}: Readonly<{
   expenses: ExpenseRow[];
   isLoading: boolean;
   filters: ExpenseFilterState;
   categoryMap: CategoryMap;
   onEdit: (expense: EditableExpense) => void;
   onDelete: (id: number) => void;
-}) {
+}>) {
   let body;
   if (isLoading) {
     body = (
@@ -299,12 +299,12 @@ function ExpenseTableRow({
   categoryName,
   onEdit,
   onDelete,
-}: {
+}: Readonly<{
   expense: ExpenseRow;
   categoryName: string;
   onEdit: (expense: EditableExpense) => void;
   onDelete: (id: number) => void;
-}) {
+}>) {
   const color = expense.expense_categories.color || "var(--muted)";
   return (
     <TableRow>
@@ -504,8 +504,8 @@ export default function CheckingPage() {
     });
 
   const handleSaveBudget = () => {
-    const value = parseFloat(budgetInput.replace(",", "."));
-    if (isNaN(value) || value <= 0) {
+    const value = Number.parseFloat(budgetInput.replace(",", "."));
+    if (Number.isNaN(value) || value <= 0) {
       toast.error("Insira um valor válido");
       return;
     }
@@ -698,10 +698,14 @@ export default function CheckingPage() {
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">
+                    <label
+                      htmlFor="budget-amount"
+                      className="text-sm font-medium"
+                    >
                       Orçamento Mensal (R$)
                     </label>
                     <Input
+                      id="budget-amount"
                       type="number"
                       step="0.01"
                       placeholder="Ex: 3000.00"

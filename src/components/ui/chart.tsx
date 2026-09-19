@@ -48,10 +48,11 @@ function ChartContainer({
   >["children"];
 }) {
   const uniqueId = React.useId();
-  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`;
+  const chartId = `chart-${id || uniqueId.replaceAll(":", "")}`;
+  const contextValue = React.useMemo(() => ({ config }), [config]);
 
   return (
-    <ChartContext.Provider value={{ config }}>
+    <ChartContext.Provider value={contextValue}>
       <div
         data-slot="chart"
         data-chart={chartId}
@@ -70,9 +71,20 @@ function ChartContainer({
   );
 }
 
+/**
+ * What may be interpolated into the generated stylesheet below. The config
+ * is static today, but the block is written with `dangerouslySetInnerHTML`,
+ * so a key or colour that ever came from user data could close the `<style>`
+ * tag or smuggle in a `url()`. Keys are CSS custom-property names; colours
+ * are hex, `rgb()`/`hsl()`/`oklch()`, `var(--x)` or a named colour — none of
+ * which need `<`, `>`, `;`, `{`, `}`, quotes, `/` or `\`.
+ */
+const SAFE_CSS_KEY = /^[\w-]+$/;
+const SAFE_CSS_COLOR = /^[\w\s#(),.%-]+$/;
+
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(
-    ([, config]) => config.theme ?? config.color,
+    ([key, config]) => (config.theme ?? config.color) && SAFE_CSS_KEY.test(key),
   );
 
   if (!colorConfig.length) {
@@ -91,7 +103,9 @@ ${colorConfig
     const color =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
+    return color && SAFE_CSS_COLOR.test(color)
+      ? `  --color-${key}: ${color};`
+      : null;
   })
   .join("\n")}
 }
@@ -331,15 +345,13 @@ function getPayloadConfigFromPayload(
     key in payload &&
     typeof payload[key as keyof typeof payload] === "string"
   ) {
-    configLabelKey = payload[key as keyof typeof payload] as string;
+    configLabelKey = payload[key as keyof typeof payload];
   } else if (
     payloadPayload &&
     key in payloadPayload &&
     typeof payloadPayload[key as keyof typeof payloadPayload] === "string"
   ) {
-    configLabelKey = payloadPayload[
-      key as keyof typeof payloadPayload
-    ] as string;
+    configLabelKey = payloadPayload[key as keyof typeof payloadPayload];
   }
 
   return configLabelKey in config ? config[configLabelKey] : config[key];

@@ -36,11 +36,11 @@ describe("pluggyAssetTypeLabel", () => {
   // A wrong type is worse than no suggestion: the import writes it into the
   // ledger and the allocation chart reads it back as fact.
   it("suggests nothing when the classification says nothing", () => {
-    expect(pluggyAssetTypeLabel("OTHER", null)).toBe(null);
-    expect(pluggyAssetTypeLabel("OTHER", "OTHER")).toBe(null);
-    expect(pluggyAssetTypeLabel("SOMETHING_NEW", null)).toBe(null);
-    expect(pluggyAssetTypeLabel(null, null)).toBe(null);
-    expect(pluggyAssetTypeLabel("", "")).toBe(null);
+    expect(pluggyAssetTypeLabel("OTHER", null)).toBeNull();
+    expect(pluggyAssetTypeLabel("OTHER", "OTHER")).toBeNull();
+    expect(pluggyAssetTypeLabel("SOMETHING_NEW", null)).toBeNull();
+    expect(pluggyAssetTypeLabel(null, null)).toBeNull();
+    expect(pluggyAssetTypeLabel("", "")).toBeNull();
   });
 
   it("still resolves an unknown type through a known subtype", () => {

@@ -51,6 +51,7 @@ function snapshot(input: {
   tesouroCandles?: Map<string, CandlePoint[]>;
   fundCandles?: Map<string, CandlePoint[]>;
   assetLabels?: Map<string, string>;
+  pinnedPrices?: Map<string, number>;
   benchmarks?: Map<string, Map<string, number>>;
   range?: TimeRange;
   today?: string;
@@ -65,6 +66,7 @@ function snapshot(input: {
     tesouroCandles: input.tesouroCandles ?? new Map<string, CandlePoint[]>(),
     fundCandles: input.fundCandles ?? new Map<string, CandlePoint[]>(),
     assetLabels: input.assetLabels ?? new Map<string, string>(),
+    pinnedPrices: input.pinnedPrices,
     benchmarks: input.benchmarks ?? new Map<string, Map<string, number>>(),
     range: input.range ?? "max",
     today: input.today ?? "2026-01-10",
@@ -80,6 +82,64 @@ describe("computePortfolioSnapshot", () => {
     expect(result.series).toEqual([]);
     expect(result.summary.totalValue).toBe(0);
     expect(result.summary.totalInvested).toBe(0);
+  });
+
+  describe("pinned prices", () => {
+    it("marks today at the pinned price instead of the quote, and says so", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 100, totalAmount: 1000 })],
+        quotes: new Map([["PETR4", quote(12, 11)]]),
+        pinnedPrices: new Map([["PETR4", 15]]),
+      });
+
+      const holding = result.holdings[0]!;
+      expect(holding.currentPrice).toBe(15);
+      expect(holding.currentValue).toBe(1500);
+      expect(holding.priceStatus).toBe("provider");
+      expect(result.summary.totalValue).toBe(1500);
+    });
+
+    it("leaves the history alone: only today's mark is the bank's", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 100, totalAmount: 1000 })],
+        candles: new Map([
+          [
+            "PETR4",
+            candles([
+              ["2026-01-05", 10],
+              ["2026-01-09", 12],
+            ]),
+          ],
+        ]),
+        quotes: new Map([["PETR4", quote(12)]]),
+        pinnedPrices: new Map([["PETR4", 15]]),
+      });
+
+      const byDate = new Map(result.series.map((p) => [p.date, p.value]));
+      expect(byDate.get("2026-01-09")).toBe(1200);
+      expect(byDate.get("2026-01-10")).toBe(1500);
+    });
+
+    it("silences the quote issue for a holding priced by the bank", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 100, totalAmount: 1000 })],
+        quotes: new Map([
+          [
+            "PETR4",
+            {
+              price: null,
+              previousClose: null,
+              status: "not_found",
+              asOf: null,
+            },
+          ],
+        ]),
+        pinnedPrices: new Map([["PETR4", 15]]),
+      });
+
+      expect(result.issues).toEqual([]);
+      expect(result.holdings[0]?.currentValue).toBe(1500);
+    });
   });
 
   describe("cost basis", () => {

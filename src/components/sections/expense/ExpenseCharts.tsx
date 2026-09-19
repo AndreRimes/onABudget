@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentProps } from "react";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -22,6 +23,7 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import type { ChartConfig } from "~/components/ui/chart";
+import { DonutCenterLabel } from "~/components/ui/donut-center-label";
 import {
   ChartContainer,
   ChartTooltip,
@@ -77,13 +79,61 @@ const pieChartConfig = {
  * can be loaded on demand (see ~/components/lazy-charts) and so a keystroke in
  * the search box re-renders the table, not the charts.
  */
+/**
+ * Tooltip row for a category slice: swatch, name, value and share of the
+ * period's total. Kept out of the chart so it is a stable component rather
+ * than a formatter recreated on every render.
+ */
+function CategoryTooltipContent({
+  totalExpenses,
+  ...props
+}: Readonly<
+  ComponentProps<typeof ChartTooltipContent> & { totalExpenses: number }
+>) {
+  return (
+    <ChartTooltipContent
+      {...props}
+      hideLabel
+      formatter={(value, _name, item) => {
+        // recharts types `item.payload` as `any`; this is the shape
+        // `categoryChartData` actually puts in it.
+        const slice = item.payload as { fill?: string; category?: string };
+        const amount = value as number;
+        return (
+          <>
+            <div className="flex items-center gap-2">
+              <div
+                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={{ backgroundColor: slice.fill }}
+              />
+              <span className="font-medium">{slice.category}</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <span className="text-muted-foreground">Valor:</span>
+              <span className="text-foreground font-bold">
+                {new Intl.NumberFormat("pt-BR", {
+                  style: "currency",
+                  currency: "BRL",
+                }).format(amount)}
+              </span>
+              <span className="text-foreground">
+                ({((amount / totalExpenses) * 100).toFixed(1)}%)
+              </span>
+            </div>
+          </>
+        );
+      }}
+    />
+  );
+}
+
 export function ExpenseCharts({
   chartData,
   isDailyChart,
   monthlyBudget,
   categoryChartData,
   totalExpenses,
-}: ExpenseChartsProps) {
+}: Readonly<ExpenseChartsProps>) {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Card>
@@ -147,10 +197,10 @@ export function ExpenseCharts({
                     <ChartTooltipContent
                       indicator="line"
                       labelFormatter={(value, payload) => {
-                        const entry = payload?.[0] as
-                          | { payload?: { date?: string } }
+                        const entry = payload?.[0]?.payload as
+                          | { date?: string }
                           | undefined;
-                        const date = entry?.payload?.date;
+                        const date = entry?.date;
                         if (!date) return String(value);
                         return isDailyChart
                           ? format(parseISO(date), "dd/MM/yyyy", {
@@ -217,51 +267,7 @@ export function ExpenseCharts({
                 <ChartTooltip
                   cursor={false}
                   content={
-                    <ChartTooltipContent
-                      hideLabel
-                      formatter={(value, name, item) => {
-                        // recharts types `item.payload` as `any`; this is the
-                        // shape `categoryChartData` actually puts in it.
-                        const slice = item.payload as {
-                          fill?: string;
-                          category?: string;
-                        };
-                        return (
-                          <>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-                                style={{
-                                  backgroundColor: slice.fill,
-                                }}
-                              />
-                              <span className="font-medium">
-                                {slice.category}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <span className="text-muted-foreground">
-                                Valor:
-                              </span>
-                              <span className="text-foreground font-bold">
-                                {new Intl.NumberFormat("pt-BR", {
-                                  style: "currency",
-                                  currency: "BRL",
-                                }).format(value as number)}
-                              </span>
-                              <span className="text-foreground">
-                                (
-                                {(
-                                  ((value as number) / totalExpenses) *
-                                  100
-                                ).toFixed(1)}
-                                %)
-                              </span>
-                            </div>
-                          </>
-                        );
-                      }}
-                    />
+                    <CategoryTooltipContent totalExpenses={totalExpenses} />
                   }
                 />
                 <Pie
@@ -272,40 +278,21 @@ export function ExpenseCharts({
                   strokeWidth={5}
                 >
                   <Label
-                    content={({ viewBox }) => {
-                      if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                        return (
-                          <text
-                            x={viewBox.cx}
-                            y={viewBox.cy}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                          >
-                            <tspan
-                              x={viewBox.cx}
-                              y={(viewBox.cy ?? 0) - 6}
-                              className="fill-foreground text-2xl font-bold"
-                            >
-                              {/* Whole reais only: the cents pushed the
-                                total wider than the hole and it spilled
-                                over the ring. */}
-                              {new Intl.NumberFormat("pt-BR", {
-                                style: "currency",
-                                currency: "BRL",
-                                maximumFractionDigits: 0,
-                              }).format(totalExpenses)}
-                            </tspan>
-                            <tspan
-                              x={viewBox.cx}
-                              y={(viewBox.cy ?? 0) + 18}
-                              className="fill-muted-foreground text-xs"
-                            >
-                              Total
-                            </tspan>
-                          </text>
-                        );
-                      }
-                    }}
+                    content={
+                      <DonutCenterLabel
+                        // Whole reais only: the cents pushed the total wider
+                        // than the hole and it spilled over the ring.
+                        primary={new Intl.NumberFormat("pt-BR", {
+                          style: "currency",
+                          currency: "BRL",
+                          maximumFractionDigits: 0,
+                        }).format(totalExpenses)}
+                        secondary="Total"
+                        primaryClassName="fill-foreground text-2xl font-bold"
+                        primaryOffset={-6}
+                        secondaryOffset={18}
+                      />
+                    }
                   />
                 </Pie>
               </PieChart>

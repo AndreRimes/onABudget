@@ -8,10 +8,10 @@ import { formatCurrency } from "~/lib/format";
 export function BudgetStatus({
   budgetAmount,
   spent,
-}: {
+}: Readonly<{
   budgetAmount: number;
   spent: number;
-}) {
+}>) {
   if (budgetAmount <= 0) {
     return (
       <div className="text-muted-foreground space-y-1">

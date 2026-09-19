@@ -118,11 +118,11 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
       return;
     }
     const payload = {
-      accountId: parseInt(form.accountId),
-      categoryId: parseInt(form.categoryId),
+      accountId: Number.parseInt(form.accountId),
+      categoryId: Number.parseInt(form.categoryId),
       description: form.description,
-      amount: parseFloat(form.amount),
-      dayOfMonth: parseInt(form.dayOfMonth),
+      amount: Number.parseFloat(form.amount),
+      dayOfMonth: Number.parseInt(form.dayOfMonth),
       startMonth: form.startMonth,
       endMonth: form.endMonth || null,
     };
@@ -133,6 +133,9 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
   const categoryName = (categoryId: number) =>
     categories?.find((category) => category.id === categoryId)?.name ??
     "Sem categoria";
+
+  const submitLabel =
+    form.id === null ? "Criar despesa fixa" : "Salvar alterações";
 
   return (
     <Dialog
@@ -367,11 +370,7 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
                 disabled={isCreating || isUpdating}
                 className="justify-self-start"
               >
-                {isCreating || isUpdating
-                  ? "Salvando..."
-                  : form.id === null
-                    ? "Criar despesa fixa"
-                    : "Salvar alterações"}
+                {isCreating || isUpdating ? "Salvando..." : submitLabel}
               </Button>
             </div>
           ) : (

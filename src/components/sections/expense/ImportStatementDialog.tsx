@@ -34,6 +34,7 @@ import {
   type ControllableOpenProps,
 } from "~/lib/use-controllable-open";
 import { cn } from "~/lib/utils";
+import { withRenderKeys } from "~/lib/render-keys";
 import { StatementPreviewPanel } from "./StatementPreviewPanel";
 import { parseOfx } from "./ofx-parser";
 import {
@@ -225,11 +226,15 @@ export function ImportStatementDialog(props: ControllableOpenProps = {}) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {pendingMapping.sampleRows.map((row, index) => (
-                      <TableRow key={index}>
-                        {row.map((cell, cellIndex) => (
-                          <TableCell key={cellIndex}>{cell}</TableCell>
-                        ))}
+                    {withRenderKeys(pendingMapping.sampleRows, (row) =>
+                      row.join("\u001f"),
+                    ).map(({ key, item: row }) => (
+                      <TableRow key={key}>
+                        {withRenderKeys(row, (cell) => cell).map(
+                          ({ key: cellKey, item: cell }) => (
+                            <TableCell key={cellKey}>{cell}</TableCell>
+                          ),
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
