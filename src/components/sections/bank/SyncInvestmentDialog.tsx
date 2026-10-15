@@ -241,7 +241,9 @@ export function SyncInvestmentDialog({
   // rather than its history, so they should be a deliberate choice.
   const [includePositions, setIncludePositions] = useState(false);
   const requested = useRef<number | null>(null);
-  const { data: assetTypes } = api.assetTypes.getAll.useQuery();
+  const { data: assetTypes } = api.assetTypes.getAll.useQuery(undefined, {
+    enabled: connectionId != null,
+  });
 
   const { mutate: previewRows, isPending: isPreviewing } =
     api.bank.previewInvestmentTransactions.useMutation({

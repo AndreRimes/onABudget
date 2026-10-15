@@ -85,8 +85,12 @@ export function ImportB3Dialog(props: ControllableOpenProps = {}) {
   >({});
 
   const utils = api.useUtils();
-  const { data: accounts } = api.account.getAll.useQuery();
-  const { data: assetTypes } = api.assetTypes.getAll.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
+  const { data: assetTypes } = api.assetTypes.getAll.useQuery(undefined, {
+    enabled: open,
+  });
   const investmentAccounts =
     accounts?.filter((account) => account.accountType === "INVESTMENT") ?? [];
 

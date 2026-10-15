@@ -68,7 +68,9 @@ export function EditTransactionDialog({
   }, [transaction]);
 
   const utils = api.useUtils();
-  const { data: accounts } = api.account.getAll.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
   const investmentAccounts =
     accounts?.filter((account) => account.accountType === "INVESTMENT") ?? [];
 

@@ -52,7 +52,9 @@ export function EditExpenseDialog({
   const [description, setDescription] = useState("");
 
   const utils = api.useUtils();
-  const { data: categories } = api.category.getAll.useQuery();
+  const { data: categories } = api.category.getAll.useQuery(undefined, {
+    enabled: expense !== null,
+  });
 
   // Reload the form whenever a different expense is opened.
   useEffect(() => {

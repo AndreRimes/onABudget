@@ -25,11 +25,8 @@ export const dynamic = "force-dynamic";
 export default function DashboardPage() {
   void api.account.getAll.prefetch();
   void api.budget.getLatest.prefetch();
-  // Much the slowest of the three — it reaches out for quotes and benchmarks.
-  void api.investments.getPortfolioSnapshot.prefetch({
-    range: "max",
-    includeSeries: false,
-  });
+  // Match the client query so hydration shares the same portfolio replay.
+  void api.account.getDashboardOverview.prefetch({ chartRange: "1y" });
 
   return (
     <HydrateClient>

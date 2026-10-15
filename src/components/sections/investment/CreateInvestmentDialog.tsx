@@ -51,8 +51,12 @@ export function CreateInvestmentDialog() {
   const utils = api.useUtils();
 
   // Fetch accounts and asset types
-  const { data: accounts } = api.account.getAll.useQuery();
-  const { data: assetTypes } = api.assetTypes.getAll.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
+  const { data: assetTypes } = api.assetTypes.getAll.useQuery(undefined, {
+    enabled: open,
+  });
 
   // Ticker suggestions (skipped for fixed income, which has free-form names).
   // Debounced: every distinct query is an upstream brapi request, and typing
@@ -61,7 +65,7 @@ export function CreateInvestmentDialog() {
   const { data: tickerSuggestions } = api.investments.searchStocks.useQuery(
     { query: tickerQuery },
     {
-      enabled: !isFixedIncome && tickerQuery.length >= 3,
+      enabled: open && !isFixedIncome && tickerQuery.length >= 3,
       staleTime: 60 * 60 * 1000,
     },
   );

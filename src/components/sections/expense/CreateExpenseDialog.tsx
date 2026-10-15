@@ -54,8 +54,12 @@ export function CreateExpenseDialog() {
   const utils = api.useUtils();
 
   // Fetch accounts and categories
-  const { data: accounts } = api.account.getAll.useQuery();
-  const { data: categories } = api.category.getAll.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
+  const { data: categories } = api.category.getAll.useQuery(undefined, {
+    enabled: open,
+  });
 
   const spendingAccounts = accounts?.filter(isSpendingAccount) ?? [];
 

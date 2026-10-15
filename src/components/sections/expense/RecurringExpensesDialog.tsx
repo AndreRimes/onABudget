@@ -49,9 +49,15 @@ export function RecurringExpensesDialog(props: ControllableOpenProps = {}) {
   const [showForm, setShowForm] = useState(false);
 
   const utils = api.useUtils();
-  const { data: accounts } = api.account.getAll.useQuery();
-  const { data: categories } = api.category.getAll.useQuery();
-  const { data: rules } = api.expenses.listRecurring.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
+  const { data: categories } = api.category.getAll.useQuery(undefined, {
+    enabled: open,
+  });
+  const { data: rules } = api.expenses.listRecurring.useQuery(undefined, {
+    enabled: open,
+  });
   const spendingAccounts = accounts?.filter(isSpendingAccount) ?? [];
 
   const refresh = () => {

@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     // Mirrors the `~/*` path in tsconfig.json. Kept as a literal alias rather
     // than a tsconfig-paths plugin so the test runner has no extra dependency

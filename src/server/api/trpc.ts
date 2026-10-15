@@ -7,8 +7,6 @@
  * need to use are documented accordingly near the end.
  */
 
-import { randomInt } from "node:crypto";
-
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
@@ -97,20 +95,8 @@ export const createCallerFactory = t.createCallerFactory;
  */
 export const createTRPCRouter = t.router;
 
-/**
- * Records Prometheus metrics for every procedure, and adds an artificial delay
- * in development.
- *
- * The dev delay simulates network latency that would occur in production but
- * not locally, which helps catch unwanted waterfalls. It is applied *before*
- * the timer starts so the fake latency doesn't dominate dev histograms.
- */
+/** Records Prometheus metrics for every procedure. */
 const metricsMiddleware = t.middleware(async ({ next, path, type }) => {
-  if (t._config.isDev) {
-    const waitMs = randomInt(100, 500);
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
-
   const labels = { procedure: path, type };
   const stop = trpcRequestDuration.startTimer(labels);
   trpcRequestsInFlight.inc({ type });

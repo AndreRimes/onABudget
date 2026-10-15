@@ -69,7 +69,9 @@ export function AddDividendDialog(props: ControllableOpenProps = {}) {
   const [paymentDate, setPaymentDate] = useState(todayDisplayDate());
 
   const utils = api.useUtils();
-  const { data: accounts } = api.account.getAll.useQuery();
+  const { data: accounts } = api.account.getAll.useQuery(undefined, {
+    enabled: open,
+  });
   const investmentAccounts =
     accounts?.filter((account) => account.accountType === "INVESTMENT") ?? [];
 

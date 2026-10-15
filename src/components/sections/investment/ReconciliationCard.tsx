@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { useId, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import type { Reconciliation } from "~/server/api/investments/reconcile";
@@ -46,6 +51,8 @@ export function ReconciliationCard({
   reconciliation,
 }: Readonly<ReconciliationCardProps>) {
   const [resolving, setResolving] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
 
   // Nothing the bank reported: no Open Finance connection, or a sync that
   // predates this check. Silence is right — there is nothing to compare.
@@ -58,7 +65,10 @@ export function ReconciliationCard({
   const agrees = mismatches.length === 0;
 
   return (
-    <Card className={agrees ? undefined : "border-destructive"}>
+    <Card
+      size={expanded ? "default" : "sm"}
+      className={agrees ? undefined : "border-destructive"}
+    >
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           {agrees ? (
@@ -67,145 +77,172 @@ export function ReconciliationCard({
             <AlertTriangle className="text-destructive h-5 w-5 shrink-0" />
           )}
           Conferência com o banco
-          {!agrees && (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               size="sm"
-              className="ml-auto"
-              onClick={() => setResolving(true)}
+              variant="outline"
+              aria-expanded={expanded}
+              aria-controls={detailsId}
+              onClick={() => setExpanded((value) => !value)}
             >
-              Resolver divergências
+              {expanded ? <ChevronUp /> : <ChevronDown />}
+              {expanded ? "Minimizar" : "Ver detalhes"}
             </Button>
-          )}
+            {!agrees && (
+              <Button size="sm" onClick={() => setResolving(true)}>
+                Resolver divergências
+              </Button>
+            )}
+          </div>
         </CardTitle>
         <p className="text-muted-foreground text-sm">
           {agrees
-            ? "A carteira bate com o que a instituição informou na última sincronização."
+            ? accepted.length > 0
+              ? "Conferência concluída. As diferenças aceitas estão nos detalhes."
+              : "A carteira bate com o que a instituição informou na última sincronização."
             : `${mismatches.length} ${plural(mismatches.length, "ativo não bate", "ativos não batem")} com o que a instituição informou.`}
           {syncedAt
             ? ` Números do banco de ${new Date(syncedAt).toLocaleDateString("pt-BR")}.`
             : ""}
         </p>
       </CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="border-foreground border-2 p-3">
-            <p className="form-label">onABudget</p>
-            <p className="mt-1 text-lg font-black tabular-nums">
-              {formatCurrency(reconciliation.appTotal)}
-            </p>
-          </div>
-          <div className="border-foreground border-2 p-3">
-            <p className="form-label">Banco</p>
-            <p className="mt-1 text-lg font-black tabular-nums">
-              {formatCurrency(reconciliation.providerTotal)}
-            </p>
-          </div>
-          <div className="border-foreground border-2 p-3">
-            <p className="form-label">Diferença</p>
-            <p
-              className={`mt-1 text-lg font-black tabular-nums ${
-                agrees ? "" : gainTone(difference)
-              }`}
-            >
-              {formatSignedCurrency(difference)}
-            </p>
-            <p className="text-muted-foreground font-mono text-[11px]">
-              {formatPercentOf(differencePercent)}
-            </p>
-          </div>
-        </div>
-
-        {reconciliation.unreported > 0 && (
-          <p className="text-muted-foreground text-sm">
-            {reconciliation.unreported} ativo
-            {reconciliation.unreported !== 1 ? "s" : ""} fora da comparação: a
-            instituição não os informa (lançamento manual ou outra corretora).
-          </p>
-        )}
-
-        {mismatches.length > 0 && (
+      <CardContent
+        id={detailsId}
+        className={expanded ? "grid gap-4" : "hidden"}
+      >
+        {expanded && (
           <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ativo</TableHead>
-                  <TableHead className="text-right">Qtd. aqui</TableHead>
-                  <TableHead className="text-right">Qtd. no banco</TableHead>
-                  <TableHead className="text-right">Valor aqui</TableHead>
-                  <TableHead className="text-right">Valor no banco</TableHead>
-                  <TableHead className="text-right">Ganho aqui</TableHead>
-                  <TableHead className="text-right">Ganho no banco</TableHead>
-                  <TableHead className="text-right">Diferença</TableHead>
-                  <TableHead>Motivo</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mismatches.map((entry) => (
-                  <TableRow key={entry.assetName}>
-                    <TableCell className="font-medium">
-                      {entry.label ?? entry.assetName}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatQuantity(entry.appQuantity)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.providerQuantity === null
-                        ? "—"
-                        : formatQuantity(entry.providerQuantity)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatCurrency(entry.appValue)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.providerValue === null
-                        ? "—"
-                        : formatCurrency(entry.providerValue)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatSignedCurrency(entry.appGain)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.providerGain === null
-                        ? "—"
-                        : formatSignedCurrency(entry.providerGain)}
-                    </TableCell>
-                    <TableCell
-                      className={`text-right tabular-nums ${gainTone(entry.difference ?? 0)}`}
-                    >
-                      {entry.difference === null
-                        ? "—"
-                        : formatSignedCurrency(entry.difference)}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {CAUSE_LABEL[entry.cause] ?? entry.cause}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-
-            <div className="text-muted-foreground grid gap-1 text-sm">
-              {[...new Set(mismatches.map((entry) => entry.cause))].map(
-                (cause) =>
-                  CAUSE_HINT[cause] ? (
-                    <p key={cause}>
-                      <span className="text-foreground font-medium">
-                        {CAUSE_LABEL[cause]}:
-                      </span>{" "}
-                      {CAUSE_HINT[cause]}
-                    </p>
-                  ) : null,
-              )}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="border-foreground border-2 p-3">
+                <p className="form-label">onABudget</p>
+                <p className="mt-1 text-lg font-black tabular-nums">
+                  {formatCurrency(reconciliation.appTotal)}
+                </p>
+              </div>
+              <div className="border-foreground border-2 p-3">
+                <p className="form-label">Banco</p>
+                <p className="mt-1 text-lg font-black tabular-nums">
+                  {formatCurrency(reconciliation.providerTotal)}
+                </p>
+              </div>
+              <div className="border-foreground border-2 p-3">
+                <p className="form-label">Diferença</p>
+                <p
+                  className={`mt-1 text-lg font-black tabular-nums ${
+                    agrees ? "" : gainTone(difference)
+                  }`}
+                >
+                  {formatSignedCurrency(difference)}
+                </p>
+                <p className="text-muted-foreground font-mono text-[11px]">
+                  {formatPercentOf(differencePercent)}
+                </p>
+              </div>
             </div>
+
+            {reconciliation.unreported > 0 && (
+              <p className="text-muted-foreground text-sm">
+                {reconciliation.unreported} ativo
+                {reconciliation.unreported !== 1 ? "s" : ""} fora da comparação:
+                a instituição não os informa (lançamento manual ou outra
+                corretora).
+              </p>
+            )}
+
+            {mismatches.length > 0 && (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ativo</TableHead>
+                      <TableHead className="text-right">Qtd. aqui</TableHead>
+                      <TableHead className="text-right">
+                        Qtd. no banco
+                      </TableHead>
+                      <TableHead className="text-right">Valor aqui</TableHead>
+                      <TableHead className="text-right">
+                        Valor no banco
+                      </TableHead>
+                      <TableHead className="text-right">Ganho aqui</TableHead>
+                      <TableHead className="text-right">
+                        Ganho no banco
+                      </TableHead>
+                      <TableHead className="text-right">Diferença</TableHead>
+                      <TableHead>Motivo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {mismatches.map((entry) => (
+                      <TableRow key={entry.assetName}>
+                        <TableCell className="font-medium">
+                          {entry.label ?? entry.assetName}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatQuantity(entry.appQuantity)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {entry.providerQuantity === null
+                            ? "—"
+                            : formatQuantity(entry.providerQuantity)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatCurrency(entry.appValue)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {entry.providerValue === null
+                            ? "—"
+                            : formatCurrency(entry.providerValue)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatSignedCurrency(entry.appGain)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {entry.providerGain === null
+                            ? "—"
+                            : formatSignedCurrency(entry.providerGain)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right tabular-nums ${gainTone(entry.difference ?? 0)}`}
+                        >
+                          {entry.difference === null
+                            ? "—"
+                            : formatSignedCurrency(entry.difference)}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {CAUSE_LABEL[entry.cause] ?? entry.cause}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                <div className="text-muted-foreground grid gap-1 text-sm">
+                  {[...new Set(mismatches.map((entry) => entry.cause))].map(
+                    (cause) =>
+                      CAUSE_HINT[cause] ? (
+                        <p key={cause}>
+                          <span className="text-foreground font-medium">
+                            {CAUSE_LABEL[cause]}:
+                          </span>{" "}
+                          {CAUSE_HINT[cause]}
+                        </p>
+                      ) : null,
+                  )}
+                </div>
+              </>
+            )}
+
+            {accepted.length > 0 && <AcceptedList entries={accepted} />}
           </>
         )}
-
-        {accepted.length > 0 && <AcceptedList entries={accepted} />}
       </CardContent>
 
       <ResolveReconciliationDialog
         open={resolving}
-        onOpenChange={setResolving}
+        onOpenChange={(open) => {
+          setResolving(open);
+          if (!open) setExpanded(false);
+        }}
         mismatches={mismatches}
       />
     </Card>
