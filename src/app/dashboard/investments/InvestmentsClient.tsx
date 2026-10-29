@@ -1,4 +1,6 @@
 "use client";
+import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { useDataTiming } from "~/lib/use-data-timing";
 
 import { keepPreviousData } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
@@ -47,6 +49,8 @@ export function InvestmentsClient() {
     { range: timeRange },
     { staleTime: 5 * 60 * 1000, placeholderData: keepPreviousData, retry: 1 },
   );
+
+  useDataTiming("investments", !!snapshot);
 
   let content: ReactNode;
   if (isError && !snapshot) {
@@ -155,6 +159,7 @@ export function InvestmentsClient() {
         </div>
       </div>
 
+      <MarketDataNotice status={snapshot?.marketData} />
       {content}
     </div>
   );

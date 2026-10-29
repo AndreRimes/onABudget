@@ -1,4 +1,7 @@
 "use client";
+import { Skeleton } from "~/components/ui/skeleton";
+import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { useDataTiming } from "~/lib/use-data-timing";
 
 import { endOfMonth, format, startOfMonth, subMonths } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -191,16 +194,20 @@ export function DashboardClient() {
   const currentMonthEnd = format(endOfMonth(now), "yyyy-MM-dd");
 
   // --- Data fetching ---
-  const { data: accounts } = api.account.getAll.useQuery();
+  const { data: accounts, error: accountsError } =
+    api.account.getAll.useQuery();
   // One replay for everything investment-related on this page: the summary
   // cards read `summary`, the net-worth chart reads `netWorth`. Two separate
   // queries here used to walk the entire ledger twice per load.
-  const { data: overview } = api.account.getDashboardOverview.useQuery(
-    { chartRange: "1y" },
-    { staleTime: 5 * 60 * 1000 },
-  );
+  const { data: overview, error: overviewError } =
+    api.account.getDashboardOverview.useQuery(
+      { chartRange: "1y" },
+      { staleTime: 5 * 60 * 1000 },
+    );
+  useDataTiming("dashboard", !!overview);
   const portfolio = overview;
-  const { data: currentBudget } = api.budget.getLatest.useQuery();
+  const { data: currentBudget, error: budgetError } =
+    api.budget.getLatest.useQuery();
 
   // Last 12 months, which is also the window every expense figure on this page
   // is derived from — the current and previous month are slices of it.
@@ -225,12 +232,13 @@ export function DashboardClient() {
   // One grouped query behind every expense number here: the two cards, the
   // twelve-month bar chart and the category pie. It returns a month × category
   // grid, not the ledger.
-  const { data: monthlySummary } = api.expenses.getMonthlySummary.useQuery({
-    dateRange: {
-      startDate: last12Months[0]!.start,
-      endDate: last12Months.at(-1)!.end,
-    },
-  });
+  const { data: monthlySummary, error: expensesError } =
+    api.expenses.getMonthlySummary.useQuery({
+      dateRange: {
+        startDate: last12Months[0]!.start,
+        endDate: last12Months.at(-1)!.end,
+      },
+    });
 
   const { data: recentExpenses = [] } = api.expenses.getRecent.useQuery({
     dateRange: { startDate: currentMonthStart, endDate: currentMonthEnd },
@@ -355,6 +363,7 @@ export function DashboardClient() {
         <h1 className="display">DASHBOARD</h1>
       </div>
 
+      <MarketDataNotice status={overview?.marketData} />
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* Total Patrimony */}
@@ -366,12 +375,20 @@ export function DashboardClient() {
             <Wallet className="text-muted-foreground h-4 w-4" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrency(totalPatrimony)}
-            </div>
-            <p className="text-muted-foreground text-xs">
-              Conta corrente + investimentos
-            </p>
+            {accounts !== undefined && overview !== undefined ? (
+              <>
+                <div className="text-2xl font-bold">
+                  {formatCurrency(totalPatrimony)}
+                </div>
+                <p className="text-muted-foreground text-xs">
+                  Conta corrente + investimentos
+                </p>
+              </>
+            ) : (accountsError ?? overviewError) ? (
+              <p role="alert">Não foi possível carregar este valor.</p>
+            ) : (
+              <Skeleton className="h-14 w-full" />
+            )}
           </CardContent>
         </Card>
 
@@ -384,25 +401,33 @@ export function DashboardClient() {
             <TrendingUp className="text-muted-foreground h-4 w-4" />
           </CardHeader>
           <CardContent>
-            <div
-              className={`flex items-center gap-2 text-2xl font-bold ${
-                investmentGain >= 0 ? "text-profit" : "text-loss"
-              }`}
-            >
-              {investmentGain >= 0 ? (
-                <ArrowUpRight className="h-5 w-5" />
-              ) : (
-                <ArrowDownRight className="h-5 w-5" />
-              )}
-              {formatCurrency(investmentGain)}
-            </div>
-            <p
-              className={`text-xs ${
-                investmentGainPercent >= 0 ? "text-profit" : "text-loss"
-              }`}
-            >
-              {formatPercent(investmentGainPercent)} de rentabilidade
-            </p>
+            {overview !== undefined ? (
+              <>
+                <div
+                  className={`flex items-center gap-2 text-2xl font-bold ${
+                    investmentGain >= 0 ? "text-profit" : "text-loss"
+                  }`}
+                >
+                  {investmentGain >= 0 ? (
+                    <ArrowUpRight className="h-5 w-5" />
+                  ) : (
+                    <ArrowDownRight className="h-5 w-5" />
+                  )}
+                  {formatCurrency(investmentGain)}
+                </div>
+                <p
+                  className={`text-xs ${
+                    investmentGainPercent >= 0 ? "text-profit" : "text-loss"
+                  }`}
+                >
+                  {formatPercent(investmentGainPercent)} de rentabilidade
+                </p>
+              </>
+            ) : overviewError ? (
+              <p role="alert">Não foi possível carregar este valor.</p>
+            ) : (
+              <Skeleton className="h-14 w-full" />
+            )}
           </CardContent>
         </Card>
 
@@ -413,28 +438,36 @@ export function DashboardClient() {
             <DollarSign className="text-muted-foreground h-4 w-4" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrency(monthlySpend)}
-            </div>
-            <div className="flex items-center gap-1 text-xs">
-              {monthOverMonthChange !== 0 && (
-                <>
-                  {monthOverMonthChange > 0 ? (
-                    <ArrowUpRight className="text-loss h-3 w-3" />
-                  ) : (
-                    <ArrowDownRight className="text-profit h-3 w-3" />
+            {monthlySummary !== undefined ? (
+              <>
+                <div className="text-2xl font-bold">
+                  {formatCurrency(monthlySpend)}
+                </div>
+                <div className="flex items-center gap-1 text-xs">
+                  {monthOverMonthChange !== 0 && (
+                    <>
+                      {monthOverMonthChange > 0 ? (
+                        <ArrowUpRight className="text-loss h-3 w-3" />
+                      ) : (
+                        <ArrowDownRight className="text-profit h-3 w-3" />
+                      )}
+                      <span
+                        className={
+                          monthOverMonthChange > 0 ? "text-loss" : "text-profit"
+                        }
+                      >
+                        {Math.abs(monthOverMonthChange).toFixed(1)}%
+                      </span>
+                    </>
                   )}
-                  <span
-                    className={
-                      monthOverMonthChange > 0 ? "text-loss" : "text-profit"
-                    }
-                  >
-                    {Math.abs(monthOverMonthChange).toFixed(1)}%
-                  </span>
-                </>
-              )}
-              <span className="text-muted-foreground">vs mês anterior</span>
-            </div>
+                  <span className="text-muted-foreground">vs mês anterior</span>
+                </div>
+              </>
+            ) : expensesError ? (
+              <p role="alert">Não foi possível carregar este valor.</p>
+            ) : (
+              <Skeleton className="h-14 w-full" />
+            )}
           </CardContent>
         </Card>
 
@@ -494,7 +527,18 @@ export function DashboardClient() {
             </Dialog>
           </CardHeader>
           <CardContent>
-            <BudgetStatus budgetAmount={budgetAmount} spent={monthlySpend} />
+            {currentBudget !== undefined && monthlySummary !== undefined ? (
+              <>
+                <BudgetStatus
+                  budgetAmount={budgetAmount}
+                  spent={monthlySpend}
+                />
+              </>
+            ) : (budgetError ?? expensesError) ? (
+              <p role="alert">Não foi possível carregar este valor.</p>
+            ) : (
+              <Skeleton className="h-14 w-full" />
+            )}
           </CardContent>
         </Card>
       </div>

@@ -1,3 +1,9 @@
+import {
+  emptyMarketDataStatus,
+  type MarketDataStatus,
+} from "~/lib/market-data";
+import { measureStage, measureCalculation } from "~/server/metrics/performance";
+import { marketRefreshQueue } from "~/server/services/market-refresh";
 import { eq, desc, and, between, inArray, sql } from "drizzle-orm";
 import { db } from "~/server/db";
 import {
@@ -239,6 +245,75 @@ const transactionColumns = {
 };
 
 export class InvestmentRepository {
+  private readonly nextRefreshAt = new Map<string, number>();
+
+  refreshMarketData(userId: string, assetName?: string) {
+    const key = JSON.stringify([userId, assetName ?? null]);
+    return marketRefreshQueue.run(`auto:${key}`, async () => {
+      const retryAfterMs = (this.nextRefreshAt.get(key) ?? 0) - Date.now();
+      if (retryAfterMs > 0)
+        return {
+          changed: false,
+          needsMore: true,
+          retryAfterMs,
+          outcome: "cooldown" as const,
+        };
+      const before = await this.getPortfolioSnapshot(
+        userId,
+        "max",
+        true,
+        assetName,
+      );
+      if (!before.marketData.needsRefresh)
+        return {
+          changed: false,
+          needsMore: false,
+          retryAfterMs: 60_000,
+          outcome: "success" as const,
+        };
+      const failuresBefore = marketCacheService.refreshFailures;
+      try {
+        await measureStage("market_refresh", () =>
+          this.buildPortfolioSnapshot(userId, "max", true, assetName, true),
+        );
+        const after = await this.getPortfolioSnapshot(
+          userId,
+          "max",
+          true,
+          assetName,
+        );
+        const changed = JSON.stringify(before) !== JSON.stringify(after);
+        const failed = marketCacheService.refreshFailures > failuresBefore;
+        const needsMore = failed || after.marketData.needsRefresh;
+        return {
+          changed,
+          needsMore,
+          retryAfterMs: 60_000,
+          outcome: failed
+            ? ("failed" as const)
+            : needsMore
+              ? ("partial" as const)
+              : ("success" as const),
+        };
+      } finally {
+        // Bound process-local cooldown bookkeeping without retaining portfolio data.
+        for (const [entry, until] of this.nextRefreshAt)
+          if (until < Date.now()) this.nextRefreshAt.delete(entry);
+        this.nextRefreshAt.set(key, Date.now() + 60_000);
+      }
+    });
+  }
+
+  refreshQuotes(userId: string, assetName?: string) {
+    return marketRefreshQueue.run(
+      JSON.stringify(["manual", userId, assetName ?? null]),
+      () =>
+        measureStage("market_refresh", () =>
+          this.refreshQuotesNow(userId, assetName),
+        ),
+    );
+  }
+
   /** Ids of every account the user owns — the scoping key for all writes. */
   private async userAccountIds(userId: string): Promise<number[]> {
     const userAccounts = await db
@@ -519,7 +594,7 @@ export class InvestmentRepository {
    * `assetName` narrows it to one position. Never throws for an individual
    * asset — a provider that is down simply reports a non-"ok" status.
    */
-  async refreshQuotes(
+  private async refreshQuotesNow(
     userId: string,
     assetName?: string,
   ): Promise<{
@@ -603,25 +678,46 @@ export class InvestmentRepository {
    * single-asset snapshot. The detail page reuses the engine rather than
    * re-deriving per-asset numbers that could drift from the portfolio view.
    */
-  async getPortfolioSnapshot(
+  getPortfolioSnapshot(
     userId: string,
     range: TimeRange = "max",
     includeSeries = true,
     assetName?: string,
-  ): Promise<PortfolioSnapshot & { reconciliation: Reconciliation }> {
+  ) {
+    return this.buildPortfolioSnapshot(userId, range, includeSeries, assetName);
+  }
+
+  private async buildPortfolioSnapshot(
+    userId: string,
+    range: TimeRange,
+    includeSeries: boolean,
+    assetName?: string,
+    refresh = false,
+  ): Promise<
+    PortfolioSnapshot & {
+      reconciliation: Reconciliation;
+      marketData: MarketDataStatus;
+    }
+  > {
+    const marketData = emptyMarketDataStatus();
+    const options = refresh ? {} : { readOnly: marketData };
     // Narrowed in SQL when one asset is being viewed: the detail page used to
     // load the entire ledger and every dividend, then keep one asset's worth.
     // Narrowing here (rather than after the market fetches) also keeps the
     // quote/candle/Tesouro requests down to the single asset being viewed.
-    const [transactions, userDividends, allAssetTypes] = await Promise.all([
-      assetName
-        ? this.findByAssetName(userId, assetName)
-        : this.findByUserId(userId),
-      assetName
-        ? dividendRepository.findByAssetName(userId, assetName)
-        : dividendRepository.findByUserId(userId),
-      db.select().from(assetTypes).where(eq(assetTypes.userId, userId)),
-    ]);
+    const [transactions, userDividends, allAssetTypes] = await measureStage(
+      "ledger",
+      () =>
+        Promise.all([
+          assetName
+            ? this.findByAssetName(userId, assetName)
+            : this.findByUserId(userId),
+          assetName
+            ? dividendRepository.findByAssetName(userId, assetName)
+            : dividendRepository.findByUserId(userId),
+          db.select().from(assetTypes).where(eq(assetTypes.userId, userId)),
+        ]),
+    );
 
     // Which assets need quotes, which Tesouro titles need official prices, and
     // which funds need their CVM quota series.
@@ -637,21 +733,46 @@ export class InvestmentRepository {
     const today = todayIso();
     const fullStart = ledgerStart(transactions, today);
 
-    // Everything below is independent except the fund quotas, which need the
-    // provider's reference quota to pick a subclass — so only that one waits
-    // for the labels; the market fetches start at once.
-    const facts = Promise.all([
-      assetLabelsFor(userId),
-      providerHoldingsFor(userId),
-      reconciliationDecisionsFor(userId),
-    ]);
-    const fundQuotas = facts.then(([labels]) =>
-      marketCacheService.getFundQuotas(
-        heldFunds.map(([, cnpj]) => cnpj),
-        fullStart,
-        { referenceQuotas: referenceQuotasFor(labels, heldFunds) },
-      ),
+    // All market reads are local unless this is the separate refresh mutation.
+    // The provider reference is only needed when choosing CVM subclasses.
+    const facts = measureStage("ledger", () =>
+      Promise.all([
+        assetLabelsFor(userId),
+        providerHoldingsFor(userId),
+        reconciliationDecisionsFor(userId),
+      ]),
     );
+    const market = measureStage("market_cache", async () => {
+      const fundQuotas = facts.then(([labels]) =>
+        marketCacheService.getFundQuotas(
+          heldFunds.map(([, cnpj]) => cnpj),
+          fullStart,
+          {
+            ...options,
+            referenceQuotas: referenceQuotasFor(labels, heldFunds),
+          },
+        ),
+      );
+      return Promise.all([
+        marketCacheService.getQuotes(activeMarketSymbols, options),
+        marketCacheService.getCandles(activeMarketSymbols, fullStart, options),
+        // Always compute every benchmark, not just the ones currently toggled
+        // on: they are cheap once cached, and it lets the chart switch lines on
+        // and off instantly instead of refetching the whole snapshot per toggle.
+        marketCacheService.getBenchmarks(
+          transactions.length ? [...BENCHMARK_IDS] : [],
+          fullStart,
+          options,
+        ),
+        marketCacheService.getTesouroPrices(
+          tesouroTitleKeys,
+          fullStart,
+          options,
+        ),
+        facts,
+        fundQuotas,
+      ]);
+    });
     const [
       quotes,
       candles,
@@ -659,17 +780,7 @@ export class InvestmentRepository {
       tesouroByTitle,
       [labels, providerFacts, decisions],
       quotasByCnpj,
-    ] = await Promise.all([
-      marketCacheService.getQuotes(activeMarketSymbols),
-      marketCacheService.getCandles(activeMarketSymbols, fullStart),
-      // Always compute every benchmark, not just the ones currently toggled
-      // on: they are cheap once cached, and it lets the chart switch lines on
-      // and off instantly instead of refetching the whole snapshot per toggle.
-      marketCacheService.getBenchmarks([...BENCHMARK_IDS], fullStart),
-      marketCacheService.getTesouroPrices(tesouroTitleKeys, fullStart),
-      facts,
-      fundQuotas,
-    ]);
+    ] = await market;
 
     // Re-key the Tesouro price series by assetName so the engine can look them
     // up the same way it looks up equity candles.
@@ -686,48 +797,51 @@ export class InvestmentRepository {
       if (series) fundCandles.set(assetName, series);
     }
 
-    const snapshot = computePortfolioSnapshot({
-      transactions: transactions.map((tx) => ({
-        assetName: tx.assetName,
-        assetTypeId: tx.assetTypeId,
-        transactionType: tx.transactionType,
-        quantity: tx.quantity,
-        totalAmount: tx.totalAmount,
-        transactionDate: tx.transactionDate.slice(0, 10),
-        isFixedIncome: tx.isFixedIncome ?? false,
-        fixedIncomeYieldType: tx.fixedIncomeYieldType,
-        fixedIncomeRate: tx.fixedIncomeRate,
-        fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
-        tesouroTitle: tx.tesouroTitle ?? null,
-        fundCnpj: tx.fundCnpj ?? null,
-      })),
-      dividends: userDividends.map((dividend) => ({
-        assetName: dividend.assetName,
-        amount: dividend.amount,
-        paymentDate: dividend.paymentDate,
-      })),
-      assetTypeNames: new Map(
-        allAssetTypes.map((type) => [type.id, type.name]),
-      ),
-      assetLabels: new Map(
-        labels.map((entry) => [entry.assetName, entry.label]),
-      ),
-      pinnedPrices: pinnedPricesFor(decisions, providerFacts),
-      quotes,
-      candles,
-      tesouroCandles,
-      fundCandles,
-      benchmarks,
-      range,
-      today,
-      includeSeries,
-    });
+    const snapshot = measureCalculation(() =>
+      computePortfolioSnapshot({
+        transactions: transactions.map((tx) => ({
+          assetName: tx.assetName,
+          assetTypeId: tx.assetTypeId,
+          transactionType: tx.transactionType,
+          quantity: tx.quantity,
+          totalAmount: tx.totalAmount,
+          transactionDate: tx.transactionDate.slice(0, 10),
+          isFixedIncome: tx.isFixedIncome ?? false,
+          fixedIncomeYieldType: tx.fixedIncomeYieldType,
+          fixedIncomeRate: tx.fixedIncomeRate,
+          fixedIncomeMaturityDate: tx.fixedIncomeMaturityDate,
+          tesouroTitle: tx.tesouroTitle ?? null,
+          fundCnpj: tx.fundCnpj ?? null,
+        })),
+        dividends: userDividends.map((dividend) => ({
+          assetName: dividend.assetName,
+          amount: dividend.amount,
+          paymentDate: dividend.paymentDate,
+        })),
+        assetTypeNames: new Map(
+          allAssetTypes.map((type) => [type.id, type.name]),
+        ),
+        assetLabels: new Map(
+          labels.map((entry) => [entry.assetName, entry.label]),
+        ),
+        pinnedPrices: pinnedPricesFor(decisions, providerFacts),
+        quotes,
+        candles,
+        tesouroCandles,
+        fundCandles,
+        benchmarks,
+        range,
+        today,
+        includeSeries,
+      }),
+    );
 
     // The bank's own figures ride along with the snapshot: the page that shows
     // the portfolio is exactly where a disagreement with the source has to be
     // visible, and the comparison costs one small table read.
     return {
       ...snapshot,
+      marketData,
       reconciliation: reconcileHoldings(
         snapshot.holdings,
         providerFacts,

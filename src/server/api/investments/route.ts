@@ -269,6 +269,17 @@ export const investmentsRouter = createTRPCRouter({
    * query on purpose: it always hits the external providers and writes the
    * cache, so it must never be replayed by react-query on its own.
    */
+  refreshMarketData: protectedProcedure
+    .input(
+      z.object({ assetName: z.string().max(200).min(1).optional() }).optional(),
+    )
+    .mutation(({ ctx, input }) =>
+      investmentRepository.refreshMarketData(
+        ctx.session.user.id,
+        input?.assetName,
+      ),
+    ),
+
   refreshQuotes: protectedProcedure
     .input(
       z.object({ assetName: z.string().max(200).min(1).optional() }).optional(),

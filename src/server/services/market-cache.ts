@@ -1,3 +1,4 @@
+import type { MarketDataStatus } from "~/lib/market-data";
 // DB-backed cache in front of the external market-data providers.
 // Daily candles and CDI rates are immutable → cached forever; live quotes
 // have a short TTL; unknown tickers are negative-cached so they don't burn
@@ -64,6 +65,8 @@ const LIVE_TAIL_BENCHMARKS = new Set<BenchmarkId>(["IBOV"]);
 export type QuoteStatus = "ok" | "stale" | "not_found" | "unavailable";
 
 export interface RefreshOptions {
+  /** Collect freshness while reading SQLite only; never contact a provider. */
+  readOnly?: MarketDataStatus;
   /**
    * Ignore every cache guard (quote TTL, negative cache, once-a-day sync) and
    * go straight to the provider. For the "atualizar cotação" action: the user
@@ -325,7 +328,7 @@ function groupSeries<T extends { date: string }>(
 }
 
 /** Fetch and store one range of daily CDI rates. Never throws transiently. */
-async function syncCdiRange(start: string, end: string): Promise<void> {
+async function syncCdiRange(start: string, end: string): Promise<boolean> {
   try {
     const rates = await fetchCdiDailyRates(start, end);
     marketSyncTotal.inc({
@@ -344,10 +347,49 @@ async function syncCdiRange(start: string, end: string): Promise<void> {
     if (!(error instanceof MarketUpstreamError)) throw error;
     marketSyncTotal.inc({ kind: "cdi", outcome: "upstream_error" });
     // Transient BCB failure: serve what is cached.
+    return false;
+  }
+  return true;
+}
+
+function observeSeries(
+  status: MarketDataStatus | undefined,
+  dates: string[],
+  fromDate: string,
+): void {
+  if (!status) return;
+  const ordered = [...dates].sort();
+  const first = ordered[0];
+  const last = ordered.at(-1);
+  // Publications can lag weekends/holidays. Coverage is not a freshness timestamp.
+  if (
+    !first ||
+    !last ||
+    daysBetween(fromDate, first) > 7 ||
+    daysBetween(last, todayIso()) > 7
+  ) {
+    status.isPartial = true;
+  }
+  if (last) {
+    const asOf = `${last}T00:00:00.000Z`;
+    if (!status.oldestAvailableAsOf || asOf < status.oldestAvailableAsOf)
+      status.oldestAvailableAsOf = asOf;
   }
 }
 
 export class MarketCacheService {
+  // Refresh jobs are serialized; readers never change this counter.
+  refreshFailures = 0;
+
+  private readonly attemptedAt = new Map<string, number>();
+
+  private canAttempt(key: string, force = false): boolean {
+    const now = Date.now();
+    if (!force && now - (this.attemptedAt.get(key) ?? 0) < 60_000) return false;
+    this.attemptedAt.set(key, now);
+    return true;
+  }
+
   /** symbol -> ISO date of the last candle tail-check, to fetch at most once a day */
   private readonly candlesSyncedOn = new Map<string, string>();
   private cdiSyncedOn: string | null = null;
@@ -376,7 +418,7 @@ export class MarketCacheService {
    */
   async getQuotes(
     symbols: string[],
-    { force = false }: RefreshOptions = {},
+    { force = false, readOnly }: RefreshOptions = {},
   ): Promise<Map<string, QuoteResult>> {
     const results = new Map<string, QuoteResult>();
     if (symbols.length === 0) return results;
@@ -394,7 +436,23 @@ export class MarketCacheService {
       // transiently falls back to the last known price, same as a normal one.
       const cached = force ? null : cachedQuote(metaBySymbol.get(symbol), now);
       if (cached) results.set(symbol, cached);
-      else toFetch.push(symbol);
+      else {
+        if (readOnly) readOnly.needsRefresh = true;
+        if (readOnly || !this.canAttempt(`quote:${symbol}`, force)) {
+          results.set(symbol, lastKnownQuote(metaBySymbol.get(symbol)));
+        } else toFetch.push(symbol);
+      }
+      if (readOnly) {
+        const result = results.get(symbol);
+        if (result?.price == null) readOnly.isPartial = true;
+        const asOf = result?.asOf?.toISOString();
+        if (
+          asOf &&
+          (!readOnly.oldestAvailableAsOf || asOf < readOnly.oldestAvailableAsOf)
+        ) {
+          readOnly.oldestAvailableAsOf = asOf;
+        }
+      }
     }
 
     if (toFetch.length === 0) {
@@ -404,6 +462,7 @@ export class MarketCacheService {
 
     const fetchedAt = new Date();
     const { quoteBySymbol, failedSymbols } = await fetchQuotesTolerant(toFetch);
+    if (failedSymbols.size > 0) this.refreshFailures++;
 
     // Rows to write are collected and upserted in one statement at the end:
     // a cold portfolio of forty tickers used to cost forty serialized writes
@@ -452,6 +511,7 @@ export class MarketCacheService {
   async getCandles(
     symbols: string[],
     fromDate: string,
+    { readOnly }: RefreshOptions = {},
   ): Promise<Map<string, CandlePoint[]>> {
     const result = new Map<string, CandlePoint[]>();
     if (symbols.length === 0) return result;
@@ -465,9 +525,21 @@ export class MarketCacheService {
 
     // Fetch symbols that need (back)filling with bounded concurrency — one slow
     // ticker no longer blocks the rest, and we don't storm the free-tier API.
-    await mapWithConcurrency(symbols, CANDLE_CONCURRENCY, (symbol) =>
-      this.syncCandles(symbol, fromDate, today, metaBySymbol.get(symbol)),
-    );
+    if (readOnly) {
+      readOnly.needsRefresh ||= symbols.some(
+        (symbol) =>
+          this.candleCacheResult(
+            symbol,
+            fromDate,
+            today,
+            metaBySymbol.get(symbol),
+          ) === "miss",
+      );
+    } else {
+      await mapWithConcurrency(symbols, CANDLE_CONCURRENCY, (symbol) =>
+        this.syncCandles(symbol, fromDate, today, metaBySymbol.get(symbol)),
+      );
+    }
 
     const rows = await db
       .select()
@@ -489,6 +561,12 @@ export class MarketCacheService {
       }
     }
 
+    for (const symbol of symbols)
+      observeSeries(
+        readOnly,
+        (result.get(symbol) ?? []).map((point) => point.date),
+        fromDate,
+      );
     return result;
   }
 
@@ -501,7 +579,7 @@ export class MarketCacheService {
   ): Promise<void> {
     const result = this.candleCacheResult(symbol, fromDate, today, meta);
     marketCacheLookups.inc({ kind: "candles", result });
-    if (result !== "miss") return;
+    if (result !== "miss" || !this.canAttempt(`candles:${symbol}`)) return;
 
     // Note: a backfill that doesn't reach `fromDate` is not necessarily a bug —
     // brapi's free plan only ever returns the last ~3 months of candles no
@@ -526,8 +604,8 @@ export class MarketCacheService {
       }
       if (!(error instanceof MarketUpstreamError)) throw error;
       marketSyncTotal.inc({ kind: "candles", outcome: "upstream_error" });
-      // Transient failure: don't hammer it again today; serve cached data.
-      this.candlesSyncedOn.set(symbol, today);
+      // Resource cooldown bounds retries without marking a failed sync as fresh.
+      this.refreshFailures++;
     }
   }
 
@@ -552,7 +630,10 @@ export class MarketCacheService {
    * Daily CDI rates (decimal) from `fromDate` to today, keyed by ISO date.
    * Business days only — absent dates mean no accrual.
    */
-  async getCdiRates(fromDate: string): Promise<Map<string, number>> {
+  async getCdiRates(
+    fromDate: string,
+    { readOnly }: RefreshOptions = {},
+  ): Promise<Map<string, number>> {
     const today = todayIso();
 
     const [bounds] = await db
@@ -569,14 +650,26 @@ export class MarketCacheService {
       marketCacheLookups.inc({ kind: "cdi", result: "miss" }, missing.length);
     }
 
-    for (const [start, end] of missing) await syncCdiRange(start, end);
-    this.cdiSyncedOn = today;
+    if (readOnly) readOnly.needsRefresh ||= missing.length > 0;
+    else if (missing.length > 0 && this.canAttempt("cdi")) {
+      let succeeded = true;
+      for (const [start, end] of missing) {
+        if (!(await syncCdiRange(start, end))) succeeded = false;
+      }
+      if (succeeded) this.cdiSyncedOn = today;
+      else this.refreshFailures++;
+    }
 
     const rows = await db
       .select()
       .from(cdiRates)
       .where(gte(cdiRates.date, fromDate));
 
+    observeSeries(
+      readOnly,
+      rows.map((row) => row.date),
+      fromDate,
+    );
     return new Map(rows.map((row) => [row.date, row.dailyRate]));
   }
 
@@ -615,6 +708,7 @@ export class MarketCacheService {
   async getBenchmarks(
     ids: BenchmarkId[],
     fromDate: string,
+    options: RefreshOptions = {},
   ): Promise<Map<BenchmarkId, Map<string, number>>> {
     const entries = await Promise.all(
       ids.map(
@@ -624,8 +718,8 @@ export class MarketCacheService {
             // `cdi_rates`, so it keeps its own (already correct) path.
             const returns =
               id === "CDI"
-                ? await this.getCdiRates(fromDate)
-                : await this.getBenchmarkReturns(id, fromDate);
+                ? await this.getCdiRates(fromDate, options)
+                : await this.getBenchmarkReturns(id, fromDate, options);
             return returns.size > 0 ? [id, returns] : null;
           } catch (error) {
             if (!(error instanceof MarketUpstreamError)) throw error;
@@ -646,6 +740,7 @@ export class MarketCacheService {
   private async getBenchmarkReturns(
     id: BenchmarkId,
     fromDate: string,
+    { readOnly }: RefreshOptions,
   ): Promise<Map<string, number>> {
     const today = todayIso();
 
@@ -661,14 +756,20 @@ export class MarketCacheService {
     // the day would freeze the benchmark a day behind until tomorrow, showing
     // a flat zero for today while the index moves. For live-price series the
     // tail therefore expires on a TTL instead.
-    const lastSync = this.benchmarkSyncedAt.get(id) ?? 0;
+    const lastSync =
+      this.benchmarkSyncedAt.get(id) ?? coverage?.updatedAt?.getTime() ?? 0;
     const needsTail =
       !!coverage &&
       (LIVE_TAIL_BENCHMARKS.has(id)
         ? Date.now() - lastSync > BENCHMARK_TAIL_TTL_MS
         : coverage.coversTo < today && isoDayOf(lastSync) !== today);
 
-    if (needsBackfill || needsTail) {
+    if (readOnly) readOnly.needsRefresh ||= needsBackfill || needsTail;
+    if (
+      !readOnly &&
+      (needsBackfill || needsTail) &&
+      this.canAttempt(`benchmark:${id}`)
+    ) {
       // Always refetch the whole window rather than stitching edges: these
       // series are small (one point per day) and a single window keeps the
       // day-over-day return maths correct across the seam.
@@ -717,7 +818,9 @@ export class MarketCacheService {
         }
       } catch (error) {
         if (!(error instanceof MarketUpstreamError)) throw error;
-        // Transient upstream failure: serve whatever is already cached.
+        this.refreshFailures++;
+        this.benchmarkSyncedAt.delete(id);
+        // The resource cooldown bounds retries; keep the cache's original age.
       }
     }
 
@@ -731,6 +834,11 @@ export class MarketCacheService {
         ),
       );
 
+    observeSeries(
+      readOnly,
+      rows.map((row) => row.date),
+      fromDate,
+    );
     return new Map(rows.map((row) => [row.date, row.dailyReturn]));
   }
 
@@ -762,7 +870,7 @@ export class MarketCacheService {
   async getTesouroPrices(
     titleKeys: string[],
     fromDate: string,
-    { force = false }: RefreshOptions = {},
+    { force = false, readOnly }: RefreshOptions = {},
   ): Promise<Map<string, CandlePoint[]>> {
     const keys = [...new Set(titleKeys)];
     if (keys.length === 0) return new Map();
@@ -771,7 +879,13 @@ export class MarketCacheService {
     const stale = force
       ? keys
       : keys.filter((key) => this.tesouroSyncedOn.get(key) !== today);
-    if (stale.length > 0) await this.syncTesouroPrices(stale, fromDate, today);
+    if (readOnly) readOnly.needsRefresh ||= stale.length > 0;
+    else {
+      const due = stale.filter((key) =>
+        this.canAttempt(`tesouro:${key}`, force),
+      );
+      if (due.length > 0) await this.syncTesouroPrices(due, fromDate, today);
+    }
 
     const rows = await db
       .select()
@@ -784,6 +898,12 @@ export class MarketCacheService {
       )
       .orderBy(asc(tesouroPrices.date));
 
+    for (const key of keys)
+      observeSeries(
+        readOnly,
+        rows.filter((row) => row.titleKey === key).map((row) => row.date),
+        fromDate,
+      );
     return groupSeries(
       rows,
       (row) => row.titleKey,
@@ -807,6 +927,7 @@ export class MarketCacheService {
       for (const key of keys) this.tesouroSyncedOn.set(key, today);
     } catch (error) {
       if (!(error instanceof MarketUpstreamError)) throw error;
+      this.refreshFailures++;
       // Transient failure: serve whatever is cached and retry next time.
     }
   }
@@ -831,6 +952,7 @@ export class MarketCacheService {
     fromDate: string,
     {
       force = false,
+      readOnly,
       referenceQuotas,
       budgetMs = FUND_BACKFILL_BUDGET_MS,
     }: RefreshOptions & {
@@ -850,13 +972,18 @@ export class MarketCacheService {
       force,
     );
 
+    if (readOnly) readOnly.needsRefresh ||= pending.size > 0;
     const deadline = Date.now() + budgetMs;
     // Newest month first: the most recent quotas matter most under a budget.
     for (const month of [...pending.keys()].sort((a, b) =>
       b.localeCompare(a),
     )) {
-      if (Date.now() > deadline) break;
-      await this.syncFundMonth(pending.get(month)!, month, {
+      if (readOnly || Date.now() > deadline) break;
+      const due = pending
+        .get(month)!
+        .filter((cnpj) => this.canAttempt(`fund:${cnpj}:${month}`, force));
+      if (due.length === 0) continue;
+      await this.syncFundMonth(due, month, {
         fromDate,
         today,
         referenceQuotas,
@@ -871,6 +998,13 @@ export class MarketCacheService {
       )
       .orderBy(asc(fundQuotas.date));
 
+    if (readOnly && pending.size > 0) readOnly.isPartial = true;
+    for (const cnpj of wanted)
+      observeSeries(
+        readOnly,
+        rows.filter((row) => row.cnpj === cnpj).map((row) => row.date),
+        fromDate,
+      );
     return groupSeries(
       rows,
       (row) => row.cnpj,
@@ -964,9 +1098,14 @@ export class MarketCacheService {
     } catch (error) {
       if (!(error instanceof MarketUpstreamError)) throw error;
       marketSyncTotal.inc({ kind: "fund_quotas", outcome: "upstream_error" });
+      this.refreshFailures++;
       // Transient failure: serve what is cached and retry on the next load.
     }
   }
 }
 
-export const marketCacheService = new MarketCacheService();
+const globalForMarketCache = globalThis as unknown as {
+  marketCacheService?: MarketCacheService;
+};
+export const marketCacheService = (globalForMarketCache.marketCacheService ??=
+  new MarketCacheService());

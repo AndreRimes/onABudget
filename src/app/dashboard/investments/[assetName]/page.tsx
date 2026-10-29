@@ -1,4 +1,6 @@
 "use client";
+import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { useDataTiming } from "~/lib/use-data-timing";
 
 import { keepPreviousData } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
@@ -276,6 +278,7 @@ export default function AssetDetailPage() {
     { staleTime: 5 * 60 * 1000, placeholderData: keepPreviousData, retry: 1 },
   );
 
+  useDataTiming("asset", !!snapshot);
   const holding = snapshot?.holdings[0];
 
   return (
@@ -352,6 +355,7 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
+      <MarketDataNotice status={snapshot?.marketData} assetName={assetName} />
       <AssetDetailBody
         snapshot={snapshot}
         assetName={assetName}

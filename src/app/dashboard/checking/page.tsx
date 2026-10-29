@@ -1,4 +1,5 @@
 "use client";
+import { keepPreviousData } from "@tanstack/react-query";
 
 import {
   eachDayOfInterval,
@@ -227,7 +228,9 @@ function ExpensesTable({
   categoryMap,
   onEdit,
   onDelete,
+  showingPrevious,
 }: Readonly<{
+  showingPrevious: boolean;
   expenses: ExpenseRow[];
   isLoading: boolean;
   filters: ExpenseFilterState;
@@ -285,8 +288,9 @@ function ExpensesTable({
       <CardHeader>
         <CardTitle>Transações</CardTitle>
         <CardDescription>
-          {expenses.length} lançamento
-          {expenses.length === 1 ? "" : "s"} · {periodLabel(filters)}
+          {showingPrevious
+            ? "Resultados anteriores · atualizando seleção"
+            : `${expenses.length} lançamento${expenses.length === 1 ? "" : "s"} · ${periodLabel(filters)}`}
         </CardDescription>
       </CardHeader>
       <CardContent>{body}</CardContent>
@@ -372,18 +376,27 @@ export default function CheckingPage() {
     null,
   );
 
-  const { data: expensesFromUser } = api.expenses.getAllFromUser.useQuery(
+  const userExpenses = api.expenses.getAllFromUser.useQuery(
     { dateRange },
-    { enabled: selectedAccount === "all" },
+    { enabled: selectedAccount === "all", placeholderData: keepPreviousData },
   );
-  const { data: expensesFromAccount, isLoading: isLoadingAccount } =
-    api.expenses.getAllFromAccount.useQuery(
-      { accountId: selectedAccount as number, dateRange },
-      { enabled: selectedAccount !== "all" },
-    );
+  const accountExpenses = api.expenses.getAllFromAccount.useQuery(
+    { accountId: selectedAccount as number, dateRange },
+    { enabled: selectedAccount !== "all", placeholderData: keepPreviousData },
+  );
 
-  const isLoading =
-    selectedAccount === "all" ? !expensesFromUser : isLoadingAccount;
+  const expenseQuery =
+    selectedAccount === "all" ? userExpenses : accountExpenses;
+  const previousExpenses = useRef<ExpenseRow[] | undefined>(undefined);
+  useEffect(() => {
+    if (expenseQuery.data && !expenseQuery.isPlaceholderData)
+      previousExpenses.current = expenseQuery.data;
+  }, [expenseQuery.data, expenseQuery.isPlaceholderData]);
+  const visibleExpenses = expenseQuery.data ?? previousExpenses.current;
+  const isLoading = expenseQuery.isPending && !visibleExpenses;
+  const showingPrevious =
+    !!visibleExpenses && (expenseQuery.isPlaceholderData || !expenseQuery.data);
+  const expensesError = expenseQuery.error;
 
   // Months that have spending, so the period picker only offers real ones.
   const { data: expenseMonths } = api.expenses.getMonths.useQuery({
@@ -400,20 +413,8 @@ export default function CheckingPage() {
 
   const allExpenses = useMemo(
     () =>
-      filterExpenses(
-        selectedAccount === "all"
-          ? (expensesFromUser ?? [])
-          : (expensesFromAccount ?? []),
-        filters.categoryIds,
-        searchTerm,
-      ),
-    [
-      selectedAccount,
-      expensesFromUser,
-      expensesFromAccount,
-      filters.categoryIds,
-      searchTerm,
-    ],
+      filterExpenses(visibleExpenses ?? [], filters.categoryIds, searchTerm),
+    [visibleExpenses, filters.categoryIds, searchTerm],
   );
 
   // Calculate statistics
@@ -742,14 +743,31 @@ export default function CheckingPage() {
         totalExpenses={totalExpenses}
       />
 
-      <ExpensesTable
-        expenses={sortedExpenses}
-        isLoading={isLoading}
-        filters={filters}
-        categoryMap={categoryMap}
-        onEdit={setEditingExpense}
-        onDelete={setDeletingExpenseId}
-      />
+      {showingPrevious && (
+        <p role="status" className="text-muted-foreground text-sm">
+          Exibindo resultados do filtro anterior enquanto os novos dados
+          carregam.
+        </p>
+      )}
+      {expensesError && (
+        <div role="alert" className="text-destructive text-sm">
+          Não foi possível carregar as despesas.{" "}
+          <Button variant="link" onClick={() => void expenseQuery.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+      {(!expensesError || visibleExpenses) && (
+        <ExpensesTable
+          expenses={sortedExpenses}
+          isLoading={isLoading}
+          filters={filters}
+          categoryMap={categoryMap}
+          onEdit={setEditingExpense}
+          onDelete={setDeletingExpenseId}
+          showingPrevious={showingPrevious}
+        />
+      )}
 
       <Dialog
         open={deletingExpenseId !== null}

@@ -1,3 +1,7 @@
+import {
+  measureStage,
+  withPerformanceSource,
+} from "~/server/metrics/performance";
 /**
  * YOU PROBABLY DON'T NEED TO EDIT THIS FILE, UNLESS:
  * 1. You want to modify request context (see Part 1).
@@ -33,9 +37,13 @@ import { withUpstreamFanoutScope } from "~/server/metrics/upstream";
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
-  const session = await auth.api.getSession({
-    headers: opts.headers,
-  });
+  const session = await withPerformanceSource(
+    opts.headers.get("x-trpc-source") === "rsc" ? "rsc" : "http",
+    () =>
+      measureStage("session", () =>
+        auth.api.getSession({ headers: opts.headers }),
+      ),
+  );
   return {
     db,
     session,
@@ -96,7 +104,7 @@ export const createCallerFactory = t.createCallerFactory;
 export const createTRPCRouter = t.router;
 
 /** Records Prometheus metrics for every procedure. */
-const metricsMiddleware = t.middleware(async ({ next, path, type }) => {
+const metricsMiddleware = t.middleware(async ({ next, path, type, ctx }) => {
   const labels = { procedure: path, type };
   const stop = trpcRequestDuration.startTimer(labels);
   trpcRequestsInFlight.inc({ type });
@@ -104,7 +112,10 @@ const metricsMiddleware = t.middleware(async ({ next, path, type }) => {
   try {
     // Scope outbound provider calls to this procedure, so we can measure how
     // many brapi/BCB requests one procedure costs (see ~/server/metrics/upstream).
-    const result = await withUpstreamFanoutScope(path, () => next());
+    const result = await withPerformanceSource(
+      ctx.headers.get("x-trpc-source") === "rsc" ? "rsc" : "http",
+      () => withUpstreamFanoutScope(path, () => next()),
+    );
 
     // tRPC catches downstream errors and returns them as `{ ok: false, error }`
     // rather than throwing, so the result must be inspected — a try/catch alone

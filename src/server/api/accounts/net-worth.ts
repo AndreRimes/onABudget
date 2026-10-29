@@ -170,5 +170,9 @@ export async function getDashboardOverview(
     true,
   );
   const netWorth = await getNetWorthSeries(userId, chartRange, snapshot);
-  return { summary: snapshot.summary, netWorth };
+  return {
+    summary: snapshot.summary,
+    netWorth,
+    marketData: snapshot.marketData,
+  };
 }
