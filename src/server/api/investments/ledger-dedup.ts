@@ -90,7 +90,7 @@ function transactionSource(sourceHash: string | null): MovementSource {
   return bare.startsWith("pluggy:") ? "PLUGGY" : "B3";
 }
 
-function isReconciliationPlug(
+export function isReconciliationPlug(
   sourceHash: string | null,
   assetName: string,
 ): boolean {

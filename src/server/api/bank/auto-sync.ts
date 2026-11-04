@@ -35,11 +35,8 @@ import {
   refreshConnections,
   refreshLinkedBalances,
 } from "./sync";
-import {
-  createAssetType,
-  importPluggyInvestmentRows,
-  previewPluggyInvestmentRows,
-} from "./investment-import";
+import { importPluggyInvestmentRows } from "./investment-import";
+import { isReconciliationPlug } from "../investments/ledger-dedup";
 
 /**
  * Short against the 15-minute quote TTL: a tick only fetches what expired,
@@ -237,55 +234,53 @@ async function importNewExpenses(
   return inserted;
 }
 
+/**
+ * Assets the owner holds by a trade of their own — not by a reconciliation
+ * plug alone. The background sync keeps these in step with the bank and
+ * never adds others: the same holding often already sits in the ledger under
+ * another name (a B3 report's product name, a hand-typed one) that nothing
+ * here can tell is the same asset as the bank's code. Bringing in a holding
+ * the ledger has never seen is left to the sync dialog, where the owner sees
+ * what is new.
+ */
+async function assetsHeld(userId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({
+      assetName: investmentTransactions.assetName,
+      sourceHash: investmentTransactions.sourceHash,
+    })
+    .from(investmentTransactions)
+    .innerJoin(
+      accounts,
+      eq(accounts.id, investmentTransactions.investmentAccountId),
+    )
+    .where(eq(accounts.userId, userId));
+  return new Set(
+    rows
+      .filter((row) => !isReconciliationPlug(row.sourceHash, row.assetName))
+      .map((row) => row.assetName),
+  );
+}
+
 async function syncInvestments(
   userId: string,
   connectionId: number,
   investmentAccountId: number,
-  fallbackType: () => Promise<number | undefined>,
 ) {
   const fetched = await fetchConnectionInvestmentRows({ userId, connectionId });
-  // Opening positions only, and only for assets the ledger has never seen:
-  // a "shortfall" position is measured against the connector's window, not
-  // the ledger, and would double what earlier syncs already brought in.
-  // `reconcileWithBank` closes any remaining gap against the ledger itself.
-  const openings = fetched.positions.filter(
-    (row) => row.kind === "position" && row.movementId === "opening",
-  );
-  const candidates = [...fetched.rows, ...openings];
-  if (candidates.length === 0) return fetched.reportedAssets;
-  const preview = await previewPluggyInvestmentRows(userId, candidates);
-
-  const assetTypeByAsset: Record<string, number> = {};
-  const pluggyTypeAssets = new Set<string>();
-  const skippedOpenings = new Set<string>();
-  for (const entry of preview) {
-    const { row } = entry;
-    if (entry.status !== "new" || row.kind === "income") continue;
-    if (row.kind === "position" && entry.knownAssetTypeId != null) {
-      skippedOpenings.add(row.assetName);
-      continue;
-    }
-    if (entry.knownAssetTypeId != null) continue;
-    if (assetTypeByAsset[row.assetName] || pluggyTypeAssets.has(row.assetName))
-      continue;
-    if (entry.providerAssetTypeId != null)
-      assetTypeByAsset[row.assetName] = entry.providerAssetTypeId;
-    else if (entry.providerAssetType) pluggyTypeAssets.add(row.assetName);
-    else {
-      const id = await fallbackType();
-      if (id !== undefined) assetTypeByAsset[row.assetName] = id;
-    }
+  // Movements only: an opening or "shortfall" position is a snapshot, and
+  // `reconcileWithBank` closes any gap against the ledger itself.
+  const held = await assetsHeld(userId);
+  const rows = fetched.rows.filter((row) => held.has(row.assetName));
+  if (rows.length > 0) {
+    await importPluggyInvestmentRows({
+      userId,
+      investmentAccountId,
+      assetTypeByAsset: {},
+      pluggyTypeAssets: [],
+      rows,
+    });
   }
-
-  await importPluggyInvestmentRows({
-    userId,
-    investmentAccountId,
-    assetTypeByAsset,
-    pluggyTypeAssets: [...pluggyTypeAssets],
-    rows: candidates.filter(
-      (row) => !(row.kind === "position" && skippedOpenings.has(row.assetName)),
-    ),
-  });
   return fetched.reportedAssets;
 }
 
@@ -294,9 +289,6 @@ async function syncOwner(
   userId: string,
   connections: Array<typeof bankConnections.$inferSelect>,
 ) {
-  let fallbackTypeId: Promise<number | undefined> | undefined;
-  const fallbackType = () =>
-    (fallbackTypeId ??= createAssetType(userId, FALLBACK_NAME));
   // Asset -> how many connections reported it on this run; and whether every
   // investment fetch came back, without which the set is not the whole story.
   const reportedBy = new Map<string, number>();
@@ -338,7 +330,6 @@ async function syncOwner(
         userId,
         connection.id,
         connection.investmentAccountId,
-        fallbackType,
       );
       for (const asset of new Set(reported))
         reportedBy.set(asset, (reportedBy.get(asset) ?? 0) + 1);
@@ -352,8 +343,7 @@ async function syncOwner(
     }
   }
 
-  const [homeAccount] = connectedAccounts;
-  if (homeAccount === undefined) return;
+  if (connectedAccounts.size === 0) return;
   // Only with every connection's holdings in hand can the bank's silence be
   // read as "no longer held". Short of that, the healthy connections are
   // still settled — a consent that expired at one bank must not quietly stop
@@ -454,12 +444,7 @@ async function syncOwner(
 
   // After every connection, not after each: a gap closed against one
   // connection's fresh figures and another's stale ones would be booked twice.
-  await reconcileWithBank(userId, plan, async () => {
-    const assetTypeId = await fallbackType();
-    return assetTypeId === undefined
-      ? null
-      : { investmentAccountId: homeAccount, assetTypeId };
-  });
+  await reconcileWithBank(userId, plan);
 }
 
 export async function syncAllBanks() {

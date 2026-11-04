@@ -139,6 +139,23 @@ const investment: PluggyInvestment = {
   rateType: null,
   fixedAnnualRate: null,
 };
+// A CDB the owner already keeps under its B3 product name; the bank knows it
+// by its own code, with no movements — only a position to open.
+const unknownCdb: PluggyInvestment = {
+  ...investment,
+  id: "inv-cdb",
+  name: "CDB - BANCO DIGIMAIS S.A.",
+  code: "CDBA251SW5G",
+  type: "FIXED_INCOME",
+  subtype: "CDB",
+  quantity: 3,
+  value: 1173.24,
+  amount: 3519.71,
+  balance: 3519.71,
+  issueDate: "2025-10-01",
+  amountOriginal: 3000,
+  amountProfit: 519.71,
+};
 const movements: PluggyInvestmentTransaction[] = [
   {
     id: "mv-1",
@@ -171,8 +188,10 @@ vi.mock("~/server/services/pluggy", () => ({
     },
   ],
   listTransactions: async () => transactions,
-  listInvestments: async () => (holdingReported ? [investment] : []),
-  listInvestmentTransactions: async () => movements,
+  listInvestments: async () =>
+    holdingReported ? [investment, unknownCdb] : [],
+  listInvestmentTransactions: async (id: string) =>
+    id === investment.id ? movements : [],
 }));
 
 const { db } = (await import("~/server/db")) as unknown as { db: TestDb };
@@ -244,6 +263,19 @@ beforeAll(async () => {
     userId: baseline.userId,
     dismissedAt: new Date(),
   });
+  // PETR3's movement came in through an earlier sync in the dialog.
+  await db.insert(investmentTransactions).values({
+    investmentAccountId: baseline.investmentAccountId,
+    assetTypeId: baseline.assetTypeId,
+    assetName: "PETR3",
+    transactionType: "BUY",
+    quantity: 6,
+    pricePerUnit: 30,
+    totalAmount: 180,
+    transactionDate: "2026-03-10",
+    isFixedIncome: false,
+    sourceHash: ownerHash(baseline.userId, "pluggy:investment:inv-1:mv-1"),
+  });
   // A holding the bank reported once and no longer does.
   await db.insert(providerHoldings).values({
     userId: baseline.userId,
@@ -303,20 +335,27 @@ describe("syncAllBanks", () => {
         .map((row) => `${row.category}:${row.amount}`)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(["Alimentação:25", "Alimentação:80", "Mercado:80"]);
-    // Nothing booked against the figure the bank stopped reporting.
+    // Nothing booked against the figure the bank stopped reporting, and
+    // nothing added for the CDB the ledger does not hold by that name.
     expect(first.snapshot.holdings.map((holding) => holding.assetName)).toEqual(
       ["PETR3"],
     );
     expect(
-      (await db.select().from(providerHoldings)).map((row) => row.assetName),
-    ).toEqual(["PETR3"]);
+      (await db.select().from(providerHoldings))
+        .map((row) => row.assetName)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(["CDBA251SW5G", "PETR3"]);
 
     const [petr] = first.snapshot.holdings;
     expect(petr?.assetName).toBe("PETR3");
     expect(petr?.quantity).toBeCloseTo(14, 9);
     expect(petr?.currentValue).toBeCloseTo(560, 6);
     expect(petr?.unrealizedGain).toBeCloseTo(140, 6);
-    expect(first.snapshot.reconciliation.mismatches).toEqual([]);
+    // Only the CDB disagrees — the bank holds it, the ledger keeps it under
+    // another name — and it is left for the owner, not booked twice.
+    expect(
+      first.snapshot.reconciliation.mismatches.map((entry) => entry.assetName),
+    ).toEqual(["CDBA251SW5G"]);
 
     await idleSinceAnHour();
     await syncAllBanks();

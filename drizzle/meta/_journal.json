@@ -183,6 +183,13 @@
       "when": 1793790870545,
       "tag": "0025_drop_reconciliation_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1793816352598,
+      "tag": "0026_undo_autosync_new_assets",
+      "breakpoints": true
     }
   ]
 }

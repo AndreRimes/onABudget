@@ -145,11 +145,6 @@ async function ledgerRows(assetName: string) {
     .where(eq(investmentTransactions.assetName, assetName));
 }
 
-const HOME = async () => ({
-  investmentAccountId: baseline.investmentAccountId,
-  assetTypeId: baseline.assetTypeId,
-});
-
 describe("the bank's figures as today's mark", () => {
   it("keeps a fresh quote for a listed asset, with the bank's cost", async () => {
     await buy("PETR3", 14, 30);
@@ -392,20 +387,17 @@ describe("settleQuantity", () => {
     expect(await sales()).toEqual([["2026-09-18", 2, 84]]);
   });
 
-  it("needs a home for an asset the ledger never saw", async () => {
-    await bankSays("HGLG11", { quantity: 30, value: 4500 });
-
-    await expect(
-      settleQuantity(baseline.userId, "HGLG11"),
-    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
-
-    await settleQuantity(baseline.userId, "HGLG11", HOME);
-    // Nothing to date it against: the sync day is the only day known.
-    expect((await ledgerRows("HGLG11"))[0]).toMatchObject({
-      quantity: 30,
-      totalAmount: 4500,
-      transactionDate: "2026-09-15",
+  it("never books an asset the ledger has no trade of", async () => {
+    // The bank's code may name a holding the ledger keeps under another name
+    // (a B3 report's product name): booking it would hold it twice.
+    await bankSays("CDBA251SW5G", {
+      quantity: 3,
+      value: 3519.71,
+      profit: 519.71,
     });
+
+    expect(await settleQuantity(baseline.userId, "CDBA251SW5G")).toBe(false);
+    expect(await ledgerRows("CDBA251SW5G")).toEqual([]);
   });
 
   it("does not re-price a buy at each day's value when the bank gives no cost", async () => {
@@ -420,25 +412,27 @@ describe("settleQuantity", () => {
     expect(plug?.totalAmount).toBe(320); // 8 × R$40, as first booked
   });
 
-  it("keeps the buy it booked for an asset known only to the bank", async () => {
-    // No trade of its own and no cost figure from the bank.
-    await bankSays("HGLG11", { quantity: 30, value: 4500 });
-    await settleQuantity(baseline.userId, "HGLG11", HOME);
-
-    // The next day's sync: a new figure, a new sync time, the same units.
-    today = "2026-09-18";
-    await bankSays(
-      "HGLG11",
-      { quantity: 30, value: 4650 },
-      baseline.userId,
-      new Date("2026-09-16T12:00:00Z"),
-    );
-    expect(await settleQuantity(baseline.userId, "HGLG11", HOME)).toBe(false);
-
-    expect((await ledgerRows("HGLG11"))[0]).toMatchObject({
-      transactionDate: "2026-09-15",
-      totalAmount: 4500,
+  it("takes back plugs left on an asset with no trade of its own", async () => {
+    await bankSays("CDBA251SW5G", {
+      quantity: 3,
+      value: 3519.71,
+      profit: 519.71,
     });
+    await db.insert(investmentTransactions).values({
+      investmentAccountId: baseline.investmentAccountId,
+      assetTypeId: baseline.assetTypeId,
+      assetName: "CDBA251SW5G",
+      transactionType: "BUY",
+      quantity: 3,
+      pricePerUnit: 1000,
+      totalAmount: 3000,
+      transactionDate: "2026-09-15",
+      isFixedIncome: false,
+      sourceHash: `${baseline.userId}:reconcile:CDBA251SW5G`,
+    });
+
+    expect(await settleQuantity(baseline.userId, "CDBA251SW5G")).toBe(true);
+    expect(await ledgerRows("CDBA251SW5G")).toEqual([]);
   });
 
   it("changes nothing the second time", async () => {
@@ -542,12 +536,10 @@ describe("reconcileWithBank", () => {
     await bankSays("PETR3", { quantity: 14, value: 560, profit: 140 });
     await buy("VALE3", 10, 50);
     await bankSays("VALE3", { quantity: 10, value: 600, profit: 50 });
-    await bankSays("HGLG11", { quantity: 30, value: 4500, profit: 300 });
 
     const result = await reconcileWithBank(
       baseline.userId,
-      await planFor(["PETR3", "VALE3", "HGLG11"]),
-      HOME,
+      await planFor(["PETR3", "VALE3"]),
     );
 
     expect(result.failed).toBe(0);
