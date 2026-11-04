@@ -15,7 +15,11 @@ import { nextCategoryColor } from "~/lib/category-colors";
 import { chunk } from "~/lib/chunk";
 import { isCardBillPayment, normalizeMerchant } from "~/lib/merchant";
 import { db } from "~/server/db";
-import { expenseCategories, expenses } from "~/server/db/schema";
+import {
+  dismissedStatementRows,
+  expenseCategories,
+  expenses,
+} from "~/server/db/schema";
 import { computeHashes } from "./statement-hash";
 import { matchAccountId } from "../accounts/match";
 import { accountRepository } from "../accounts/repository";
@@ -283,6 +287,12 @@ export async function importStatementRows(input: {
   /** Hashes the user marked as "not an expense". */
   ignoredHashes: string[];
   rows: StatementRow[];
+  /**
+   * Remember the rows left without a category as the owner's choice not to
+   * import them, so the background sync leaves them out too. Off for the
+   * background sync itself: nobody looked at its rows.
+   */
+  rememberDismissed?: boolean;
 }) {
   const {
     userId,
@@ -304,6 +314,7 @@ export async function importStatementRows(input: {
 
   const candidates: ImportCandidate[] = [];
   const toIgnore: Array<string | null> = [];
+  const dismissed: string[] = [];
   let skipped = 0;
 
   rows.forEach((row, index) => {
@@ -325,6 +336,7 @@ export async function importStatementRows(input: {
       categoryId === undefined &&
       !(acceptedPluggy.has(hash) && providerCategory)
     ) {
+      dismissed.push(hash);
       skipped++;
       return;
     }
@@ -362,6 +374,20 @@ export async function importStatementRows(input: {
   // Learn from what the user confirmed, so the next import is pre-filled.
   await rememberCategories(userId, imported);
   if (toIgnore.length > 0) await rememberIgnored(userId, toIgnore);
+  if (input.rememberDismissed !== false) {
+    for (const batch of chunk(dismissed, INSERT_CHUNK_SIZE)) {
+      await db
+        .insert(dismissedStatementRows)
+        .values(
+          batch.map((sourceHash) => ({
+            sourceHash,
+            userId,
+            dismissedAt: new Date(),
+          })),
+        )
+        .onConflictDoNothing();
+    }
+  }
 
   return { inserted, skipped };
 }

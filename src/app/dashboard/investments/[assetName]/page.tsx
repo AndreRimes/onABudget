@@ -1,5 +1,5 @@
 "use client";
-import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { MarketDataRefresher } from "~/components/sections/investment/MarketDataRefresher";
 import { useDataTiming } from "~/lib/use-data-timing";
 
 import { keepPreviousData } from "@tanstack/react-query";
@@ -355,7 +355,7 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
-      <MarketDataNotice status={snapshot?.marketData} assetName={assetName} />
+      <MarketDataRefresher status={snapshot?.marketData} assetName={assetName} />
       <AssetDetailBody
         snapshot={snapshot}
         assetName={assetName}

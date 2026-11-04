@@ -32,21 +32,13 @@ export function AssetTitle({ holding }: Readonly<{ holding: Holding }>) {
  * price is trustworthy, so it can be dropped next to any asset name.
  */
 export function PriceStatusBadge({ holding }: Readonly<{ holding: Holding }>) {
-  if (holding.priceStatus === "ok" || holding.priceStatus === "fixed_income") {
+  // The bank's own figure is the price of record for what it holds.
+  if (
+    holding.priceStatus === "ok" ||
+    holding.priceStatus === "fixed_income" ||
+    holding.priceStatus === "provider"
+  ) {
     return null;
-  }
-  // Trustworthy by the owner's own choice, but worth saying: it is not a
-  // market quote and will not move until the bank reports a new figure.
-  if (holding.priceStatus === "provider") {
-    return (
-      <Badge
-        variant="outline"
-        title="Avaliado pelo preço que o banco informou na última sincronização, por escolha sua na conferência."
-        className="bg-highlight text-[10px]"
-      >
-        Preço do banco
-      </Badge>
-    );
   }
   const label =
     holding.priceStatus === "not_found" ? "Sem cotação" : "Desatualizada";

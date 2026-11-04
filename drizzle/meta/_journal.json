@@ -169,6 +169,20 @@
       "when": 1789646104940,
       "tag": "0023_reconciliation_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1793790870030,
+      "tag": "0024_auto_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1793790870545,
+      "tag": "0025_drop_reconciliation_decisions",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 "use client";
-import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { MarketDataRefresher } from "~/components/sections/investment/MarketDataRefresher";
 import { useDataTiming } from "~/lib/use-data-timing";
 
 import { keepPreviousData } from "@tanstack/react-query";
@@ -20,7 +20,6 @@ import { CreateInvestmentDialog } from "~/components/sections/investment/CreateI
 import { InvestmentActions } from "~/components/sections/investment/InvestmentActions";
 import { HoldingsSection } from "~/components/sections/investment/HoldingsSection";
 import { InvestmentsSkeleton } from "~/components/sections/investment/InvestmentsSkeleton";
-import { ReconciliationCard } from "~/components/sections/investment/ReconciliationCard";
 import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { SummaryCards } from "~/components/sections/investment/SummaryCards";
 
@@ -99,8 +98,6 @@ export function InvestmentsClient() {
 
         <SummaryCards summary={snapshot.summary} />
 
-        <ReconciliationCard reconciliation={snapshot.reconciliation} />
-
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
             <PerformanceChart series={snapshot.series} />
@@ -159,7 +156,7 @@ export function InvestmentsClient() {
         </div>
       </div>
 
-      <MarketDataNotice status={snapshot?.marketData} />
+      <MarketDataRefresher status={snapshot?.marketData} />
       {content}
     </div>
   );

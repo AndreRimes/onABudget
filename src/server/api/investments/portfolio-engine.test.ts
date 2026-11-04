@@ -4,6 +4,7 @@ import type { CandlePoint } from "~/server/services/brapi";
 import type { QuoteResult } from "~/server/services/market-cache";
 import {
   computePortfolioSnapshot,
+  type BankMark,
   type EngineDividend,
   type EngineTransaction,
   type TimeRange,
@@ -51,7 +52,7 @@ function snapshot(input: {
   tesouroCandles?: Map<string, CandlePoint[]>;
   fundCandles?: Map<string, CandlePoint[]>;
   assetLabels?: Map<string, string>;
-  pinnedPrices?: Map<string, number>;
+  bankMarks?: Map<string, BankMark>;
   benchmarks?: Map<string, Map<string, number>>;
   range?: TimeRange;
   today?: string;
@@ -66,12 +67,17 @@ function snapshot(input: {
     tesouroCandles: input.tesouroCandles ?? new Map<string, CandlePoint[]>(),
     fundCandles: input.fundCandles ?? new Map<string, CandlePoint[]>(),
     assetLabels: input.assetLabels ?? new Map<string, string>(),
-    pinnedPrices: input.pinnedPrices,
+    bankMarks: input.bankMarks,
     benchmarks: input.benchmarks ?? new Map<string, Map<string, number>>(),
     range: input.range ?? "max",
     today: input.today ?? "2026-01-10",
     includeSeries: input.includeSeries ?? true,
   });
+}
+
+/** A bank mark that only sets the unit price. */
+function unitMark(price: number): BankMark {
+  return { quantity: 1, value: price, cost: null };
 }
 
 describe("computePortfolioSnapshot", () => {
@@ -84,12 +90,23 @@ describe("computePortfolioSnapshot", () => {
     expect(result.summary.totalInvested).toBe(0);
   });
 
-  describe("pinned prices", () => {
-    it("marks today at the pinned price instead of the quote, and says so", () => {
+  describe("bank marks", () => {
+    it("keeps a fresh quote for a listed asset", () => {
       const result = snapshot({
         transactions: [trade({ quantity: 100, totalAmount: 1000 })],
         quotes: new Map([["PETR4", quote(12, 11)]]),
-        pinnedPrices: new Map([["PETR4", 15]]),
+        bankMarks: new Map([["PETR4", unitMark(15)]]),
+      });
+
+      expect(result.holdings[0]?.currentValue).toBe(1200);
+      expect(result.holdings[0]?.priceStatus).toBe("ok");
+    });
+
+    it("marks today at the bank's price when the quote is not fresh, and says so", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 100, totalAmount: 1000 })],
+        quotes: new Map([["PETR4", { ...quote(12, 11), status: "stale" }]]),
+        bankMarks: new Map([["PETR4", unitMark(15)]]),
       });
 
       const holding = result.holdings[0]!;
@@ -111,8 +128,8 @@ describe("computePortfolioSnapshot", () => {
             ]),
           ],
         ]),
-        quotes: new Map([["PETR4", quote(12)]]),
-        pinnedPrices: new Map([["PETR4", 15]]),
+        quotes: new Map([["PETR4", { ...quote(12), status: "stale" }]]),
+        bankMarks: new Map([["PETR4", unitMark(15)]]),
       });
 
       const byDate = new Map(result.series.map((p) => [p.date, p.value]));
@@ -134,11 +151,39 @@ describe("computePortfolioSnapshot", () => {
             },
           ],
         ]),
-        pinnedPrices: new Map([["PETR4", 15]]),
+        bankMarks: new Map([["PETR4", unitMark(15)]]),
       });
 
       expect(result.issues).toEqual([]);
       expect(result.holdings[0]?.currentValue).toBe(1500);
+    });
+
+    it("shows the bank's cost without rewriting the cash that went in", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 100, totalAmount: 1000 })],
+        // The bank holds 50 of them, at R$12 apiece, which cost it R$550.
+        bankMarks: new Map([
+          ["PETR4", { quantity: 50, value: 600, cost: 550 }],
+        ]),
+      });
+
+      const holding = result.holdings[0]!;
+      expect(holding.currentValue).toBe(1200);
+      expect(holding.totalCost).toBe(1100);
+      expect(holding.unrealizedGain).toBe(100);
+      expect(result.summary.totalInvested).toBe(1000);
+    });
+
+    it("takes the bank's totals as they are when it reports no quantity", () => {
+      const result = snapshot({
+        transactions: [trade({ quantity: 1, totalAmount: 1000 })],
+        bankMarks: new Map([
+          ["PETR4", { quantity: null, value: 1100, cost: 1000 }],
+        ]),
+      });
+
+      expect(result.holdings[0]?.currentValue).toBe(1100);
+      expect(result.holdings[0]?.unrealizedGain).toBe(100);
     });
   });
 

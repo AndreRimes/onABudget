@@ -90,6 +90,20 @@ function transactionSource(sourceHash: string | null): MovementSource {
   return bare.startsWith("pluggy:") ? "PLUGGY" : "B3";
 }
 
+function isReconciliationPlug(
+  sourceHash: string | null,
+  assetName: string,
+): boolean {
+  if (!sourceHash) return false;
+  const bare = sourceHash.slice(sourceHash.indexOf(":") + 1);
+  // Only the background sync's plugs — `reconcile:{asset}` and its dated
+  // sales `reconcile:{asset}@{day}`. A trade the owner booked through the old
+  // reconciliation card (`reconcile:{asset}:{ms}`) is part of the ledger's
+  // history and keeps blocking its duplicate like any other row.
+  const plug = `reconcile:${assetName}`;
+  return bare === plug || bare.startsWith(`${plug}@`);
+}
+
 function dividendSource(source: string): MovementSource {
   if (source === "PLUGGY_IMPORT") return "PLUGGY";
   if (source === "B3_IMPORT") return "B3";
@@ -159,6 +173,9 @@ export async function loadForeignMovementKeys(
 
     for (const trade of trades) {
       if (transactionSource(trade.sourceHash) === source) continue;
+      // The bank-reconciliation plug is not a movement anyone reported: it
+      // stands in for the ones still missing, so the real one must get in.
+      if (isReconciliationPlug(trade.sourceHash, trade.assetName)) continue;
       keys.add(tradeMovementKey(trade));
     }
     for (const entry of income) {
