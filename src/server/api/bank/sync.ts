@@ -417,7 +417,10 @@ export async function fetchConnectionInvestmentRows(input: {
   // Names, fund CNPJs and reported quota values, for every holding the
   // provider returned — recorded here so they land even when every movement
   // turns out to be a duplicate and nothing is imported.
-  await recordProviderAssetFacts(input.userId, investments);
+  const reportedAssets = await recordProviderAssetFacts(
+    input.userId,
+    investments,
+  );
 
   const rows: PluggyInvestmentRow[] = [];
   // Holdings with no movement history at all, offered separately: they are a
@@ -486,6 +489,7 @@ export async function fetchConnectionInvestmentRows(input: {
     droppedWithoutQuantity,
     droppedUnusable,
     shortfalls,
+    reportedAssets,
   };
 }
 

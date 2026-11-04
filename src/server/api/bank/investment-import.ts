@@ -531,11 +531,13 @@ export function normalizeInvestmentMovements(
  * never reach the importer at all. None of it is ledger data: labels are
  * display, the CNPJ and quota are pricing keys, and re-syncing is the only way
  * a holding imported before this existed can acquire them.
+ *
+ * Returns the asset names it recorded — what the provider reports right now.
  */
 export async function recordProviderAssetFacts(
   userId: string,
   investments: PluggyInvestment[],
-): Promise<void> {
+): Promise<string[]> {
   const facts = new Map<
     string,
     {
@@ -572,7 +574,8 @@ export async function recordProviderAssetFacts(
           : null,
     });
   }
-  if (facts.size === 0) return;
+  if (facts.size === 0) return [];
+  const recorded = [...facts.keys()];
 
   // Every holding, not only the ones with a readable label: this is the
   // independent record the ledger gets checked against, and a ticker needs
@@ -630,14 +633,14 @@ export async function recordProviderAssetFacts(
   // Backfill the pricing key onto rows imported before it was collected. Only
   // ever fills a null: an asset that already carries a CNPJ keeps it.
   const funds = [...facts.entries()].filter(([, fact]) => fact.cnpj);
-  if (funds.length === 0) return;
+  if (funds.length === 0) return recorded;
   const accountIds = (
     await db
       .select({ id: accounts.id })
       .from(accounts)
       .where(eq(accounts.userId, userId))
   ).map((account) => account.id);
-  if (accountIds.length === 0) return;
+  if (accountIds.length === 0) return recorded;
 
   // One statement for every fund rather than one per fund: the CNPJ each row
   // gets is chosen by a CASE on its asset name. Runs on every sync, and after
@@ -663,6 +666,7 @@ export async function recordProviderAssetFacts(
         isNull(investmentTransactions.fundCnpj),
       ),
     );
+  return recorded;
 }
 
 async function userTransactions(userId: string) {
@@ -785,7 +789,7 @@ function acceptedTypeLabels(
 }
 
 /** Create the asset type `label` for the user and return its id. */
-async function createAssetType(
+export async function createAssetType(
   userId: string,
   label: string,
 ): Promise<number | undefined> {

@@ -201,3 +201,36 @@ describe("movements of the same source", () => {
     expect(await importPluggy([second])).toEqual({ inserted: 1, skipped: 0 });
   });
 });
+
+describe("reconciliation rows", () => {
+  async function bookAs(sourceHash: string, assetName: string) {
+    await db.insert(investmentTransactions).values({
+      investmentAccountId: baseline.investmentAccountId,
+      assetTypeId: baseline.assetTypeId,
+      assetName,
+      transactionType: "BUY",
+      quantity: 47,
+      pricePerUnit: 44.22,
+      totalAmount: 2078.34,
+      transactionDate: "2026-01-16",
+      isFixedIncome: false,
+      sourceHash,
+    });
+  }
+
+  it("never hide the real movement a background-sync plug stands in for", async () => {
+    await bookAs(`${baseline.userId}:reconcile:PLUG3`, "PLUG3");
+    const [entry] = await previewPluggyInvestmentRows(baseline.userId, [
+      pluggyTrade({ assetName: "PLUG3", investmentId: "inv-plug3" }),
+    ]);
+    expect(entry?.status).toBe("new");
+  });
+
+  it("still block a duplicate when booked through the old reconciliation card", async () => {
+    await bookAs(`${baseline.userId}:reconcile:CARD3:1789000000000`, "CARD3");
+    const [entry] = await previewPluggyInvestmentRows(baseline.userId, [
+      pluggyTrade({ assetName: "CARD3", investmentId: "inv-card3" }),
+    ]);
+    expect(entry?.status).toBe("duplicate");
+  });
+});

@@ -4,7 +4,7 @@ import {
 } from "~/lib/market-data";
 import { measureStage, measureCalculation } from "~/server/metrics/performance";
 import { marketRefreshQueue } from "~/server/services/market-refresh";
-import { eq, desc, and, between, inArray, sql } from "drizzle-orm";
+import { eq, desc, and, between, inArray } from "drizzle-orm";
 import { db } from "~/server/db";
 import {
   investmentTransactions,
@@ -13,7 +13,6 @@ import {
   assetTypes,
   dividends,
   providerHoldings,
-  reconciliationDecisions,
 } from "~/server/db/schema";
 import type { CandlePoint } from "~/server/services/brapi";
 import {
@@ -24,14 +23,14 @@ import {
 import { dividendRepository } from "../dividends/repository";
 import { BENCHMARK_IDS } from "./benchmarks";
 import {
-  decisionApplies,
+  bankCost,
   reconcileHoldings,
   type ProviderHoldingFact,
   type Reconciliation,
-  type ReconciliationDecision,
 } from "./reconcile";
 import {
   computePortfolioSnapshot,
+  type BankMark,
   type FixedIncomeYieldType,
   type PortfolioSnapshot,
   type TimeRange,
@@ -162,6 +161,7 @@ export async function providerHoldingsFor(
       assetName: providerHoldings.assetName,
       quantity: providerHoldings.quantity,
       value: providerHoldings.value,
+      applied: providerHoldings.applied,
       profit: providerHoldings.profit,
       syncedAt: providerHoldings.syncedAt,
     })
@@ -169,41 +169,32 @@ export async function providerHoldingsFor(
     .where(eq(providerHoldings.userId, userId));
 }
 
-/** Every reconciliation decision this owner recorded, lapsed ones included. */
-export async function reconciliationDecisionsFor(
-  userId: string,
-): Promise<ReconciliationDecision[]> {
-  return await db
-    .select({
-      assetName: reconciliationDecisions.assetName,
-      decision: reconciliationDecisions.decision,
-      providerQuantity: reconciliationDecisions.providerQuantity,
-      providerValue: reconciliationDecisions.providerValue,
-      providerProfit: reconciliationDecisions.providerProfit,
-    })
-    .from(reconciliationDecisions)
-    .where(eq(reconciliationDecisions.userId, userId));
-}
-
 /**
- * assetName -> the bank's unit price, for holdings the owner chose to value
- * the bank's way — while the bank still reports the figures that choice was
- * made against. A lapsed decision pins nothing.
+ * How long a bank figure stays the price of record. The background sync
+ * refreshes it every few hours; one that stopped arriving (consent expired,
+ * connection removed) yields back to market data instead of freezing the
+ * position at an old number.
  */
-function pinnedPricesFor(
-  decisions: ReconciliationDecision[],
+const BANK_MARK_MAX_AGE_DAYS = 3;
+
+/** The bank's figures as today's mark for every holding it reports. */
+function bankMarksFor(
   facts: ProviderHoldingFact[],
-): Map<string, number> {
-  const factByAsset = new Map(facts.map((fact) => [fact.assetName, fact]));
-  const pinned = new Map<string, number>();
-  for (const decision of decisions) {
-    if (decision.decision !== "bank_price") continue;
-    const fact = factByAsset.get(decision.assetName);
-    if (!decisionApplies(decision, fact)) continue;
-    if (!fact?.quantity || fact.quantity <= 0 || fact.value == null) continue;
-    pinned.set(decision.assetName, fact.value / fact.quantity);
+  today: string,
+): Map<string, BankMark> {
+  const oldest = new Date(`${today}T00:00:00Z`);
+  oldest.setUTCDate(oldest.getUTCDate() - BANK_MARK_MAX_AGE_DAYS);
+  const marks = new Map<string, BankMark>();
+  for (const fact of facts) {
+    if (!fact.syncedAt || fact.syncedAt < oldest || fact.value == null)
+      continue;
+    marks.set(fact.assetName, {
+      quantity: fact.quantity,
+      value: fact.value,
+      cost: bankCost(fact),
+    });
   }
-  return pinned;
+  return marks;
 }
 
 /** CNPJ -> provider-reported quota, for the funds actually held. */
@@ -515,38 +506,6 @@ export class InvestmentRepository {
   }
 
   /**
-   * Multiply the cost of every buy of an asset by `factor`, so the position's
-   * total cost lands on a figure the ledger had wrong — the bank's, when the
-   * owner accepts it. Sells are left alone: the engine prices what a sell
-   * cost from the average cost at the time, which scales along with the buys,
-   * so the remaining cost basis ends up scaled by exactly `factor` too.
-   */
-  async rescaleBuyCostByAssetName(
-    userId: string,
-    assetName: string,
-    factor: number,
-  ): Promise<number> {
-    const accountIds = await this.userAccountIds(userId);
-    if (accountIds.length === 0) return 0;
-
-    const updated = await db
-      .update(investmentTransactions)
-      .set({
-        pricePerUnit: sql`${investmentTransactions.pricePerUnit} * ${factor}`,
-        totalAmount: sql`${investmentTransactions.totalAmount} * ${factor}`,
-      })
-      .where(
-        and(
-          inArray(investmentTransactions.investmentAccountId, accountIds),
-          eq(investmentTransactions.assetName, assetName),
-          eq(investmentTransactions.transactionType, "BUY"),
-        ),
-      )
-      .returning({ id: investmentTransactions.id });
-    return updated.length;
-  }
-
-  /**
    * Set the fixed-income yield metadata (yield type / rate / maturity) on every
    * transaction the user holds under a given asset name. B3 imports arrive with
    * these blank, so this lets the user fill them in afterward and have the
@@ -736,11 +695,7 @@ export class InvestmentRepository {
     // All market reads are local unless this is the separate refresh mutation.
     // The provider reference is only needed when choosing CVM subclasses.
     const facts = measureStage("ledger", () =>
-      Promise.all([
-        assetLabelsFor(userId),
-        providerHoldingsFor(userId),
-        reconciliationDecisionsFor(userId),
-      ]),
+      Promise.all([assetLabelsFor(userId), providerHoldingsFor(userId)]),
     );
     const market = measureStage("market_cache", async () => {
       const fundQuotas = facts.then(([labels]) =>
@@ -778,7 +733,7 @@ export class InvestmentRepository {
       candles,
       benchmarks,
       tesouroByTitle,
-      [labels, providerFacts, decisions],
+      [labels, providerFacts],
       quotasByCnpj,
     ] = await market;
 
@@ -824,7 +779,7 @@ export class InvestmentRepository {
         assetLabels: new Map(
           labels.map((entry) => [entry.assetName, entry.label]),
         ),
-        pinnedPrices: pinnedPricesFor(decisions, providerFacts),
+        bankMarks: bankMarksFor(providerFacts, today),
         quotes,
         candles,
         tesouroCandles,
@@ -842,11 +797,7 @@ export class InvestmentRepository {
     return {
       ...snapshot,
       marketData,
-      reconciliation: reconcileHoldings(
-        snapshot.holdings,
-        providerFacts,
-        decisions,
-      ),
+      reconciliation: reconcileHoldings(snapshot.holdings, providerFacts),
     };
   }
 }

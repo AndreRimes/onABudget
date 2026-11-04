@@ -1,6 +1,6 @@
 "use client";
 import { Skeleton } from "~/components/ui/skeleton";
-import { MarketDataNotice } from "~/components/sections/investment/MarketDataNotice";
+import { MarketDataRefresher } from "~/components/sections/investment/MarketDataRefresher";
 import { useDataTiming } from "~/lib/use-data-timing";
 
 import { endOfMonth, format, startOfMonth, subMonths } from "date-fns";
@@ -363,7 +363,7 @@ export function DashboardClient() {
         <h1 className="display">DASHBOARD</h1>
       </div>
 
-      <MarketDataNotice status={overview?.marketData} />
+      <MarketDataRefresher status={overview?.marketData} />
       {/* Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {/* Total Patrimony */}

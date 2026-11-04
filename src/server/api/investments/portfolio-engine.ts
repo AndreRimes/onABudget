@@ -172,16 +172,45 @@ interface EngineInput {
   /** assetName -> readable name, for assets whose key is a code. */
   assetLabels: Map<string, string>;
   /**
-   * assetName -> unit price the bank reported, for holdings the owner chose
-   * to value the bank's way. Applies to today only: it is the bank's current
-   * figure, not a history.
+   * assetName -> what the bank reports for the position. Applies to today
+   * only: it is the bank's current figure, not a history.
    */
-  pinnedPrices?: Map<string, number>;
+  bankMarks?: Map<string, BankMark>;
   /** benchmark id -> (ISO date -> decimal daily return) */
   benchmarks: Map<string, Map<string, number>>;
   range: TimeRange;
   today: string; // YYYY-MM-DD
   includeSeries: boolean;
+}
+
+/**
+ * The bank's figures for one position. With a quantity they are scaled to the
+ * ledger's units (a unit price, a unit cost); without one they are taken as
+ * the position's totals.
+ */
+export interface BankMark {
+  quantity: number | null;
+  value: number;
+  /** What the bank says the position cost; null when it does not say. */
+  cost: number | null;
+}
+
+/** Whether the bank's figure, not the market's, values `assetName` today. */
+function bankValues(
+  input: EngineInput,
+  assetName: string,
+  state: Pick<AssetState, "isFixedIncome" | "tesouroTitle" | "fundCnpj">,
+): boolean {
+  if (!input.bankMarks?.has(assetName)) return false;
+  const quoted = !state.isFixedIncome && !state.tesouroTitle && !state.fundCnpj;
+  return !(quoted && input.quotes.get(assetName)?.status === "ok");
+}
+
+/** A bank total for `quantity` ledger units. */
+function scaled(mark: BankMark, total: number, quantity: number): number {
+  return mark.quantity && mark.quantity > 0
+    ? (total / mark.quantity) * quantity
+    : total;
 }
 
 function emptySnapshot(): PortfolioSnapshot {
@@ -511,14 +540,23 @@ class PortfolioReplay {
       const quote = this.input.quotes.get(assetName);
       if (quote?.price != null) state.lastPrice = quote.price;
     }
-    // The owner's choice to trust the bank's price wins over every source —
-    // that is what the choice means — but only for today's mark.
-    if (day === this.input.today) {
-      const pinned = this.input.pinnedPrices?.get(assetName);
-      if (pinned != null) state.lastPrice = pinned;
-    }
     const fallback = state.quantity > 0 ? state.costBasis / state.quantity : 0;
     state.marketValue = state.quantity * (state.lastPrice ?? fallback);
+  }
+
+  /**
+   * The bank's figure is today's mark wherever no live market price beats it:
+   * fixed income (whose compounded estimate yields to it), funds and Tesouro
+   * (priced on a published series a day or more old), and any quote that is
+   * not fresh. A listed asset with a fresh quote keeps it — the bank's own
+   * figure for it is the previous close.
+   */
+  private applyBankMark(assetName: string, state: AssetState): void {
+    if (!bankValues(this.input, assetName, state)) return;
+    const mark = this.input.bankMarks!.get(assetName)!;
+    if (state.quantity <= 0) return;
+    state.marketValue = scaled(mark, mark.value, state.quantity);
+    state.lastPrice = state.marketValue / state.quantity;
   }
 
   /** Mark every asset to the day's price and return the portfolio total. */
@@ -529,6 +567,7 @@ class PortfolioReplay {
     for (const [assetName, state] of this.assets) {
       // Accrual fixed income keeps its compounded marketValue (step 1).
       if (!isAccrualFixedIncome(state)) this.priceAsset(assetName, state, day);
+      if (day === this.input.today) this.applyBankMark(assetName, state);
       totalValue += state.marketValue;
     }
     return totalValue;
@@ -580,12 +619,20 @@ function buildHolding(
   input: EngineInput,
   dividends12m: number,
 ): SnapshotHolding {
-  const averageCost = state.costBasis / state.quantity;
+  // The bank's cost basis, when it reports one, is the cost of record for the
+  // position — shown, not written: the ledger's own trades keep their amounts
+  // (cross-source dedup matches on them) and cash flows drive every total.
+  const mark = input.bankMarks?.get(assetName);
+  const costBasis =
+    mark?.cost != null
+      ? scaled(mark, mark.cost, state.quantity)
+      : state.costBasis;
+  const averageCost = costBasis / state.quantity;
   const currentPrice =
     state.quantity > 0 ? state.marketValue / state.quantity : 0;
-  const unrealizedGain = state.marketValue - state.costBasis;
+  const unrealizedGain = state.marketValue - costBasis;
   const periodGain = assetTotalGain(state) - state.startGain;
-  const periodBase = state.startValue > 0 ? state.startValue : state.costBasis;
+  const periodBase = state.startValue > 0 ? state.startValue : costBasis;
 
   return {
     assetName,
@@ -598,14 +645,14 @@ function buildHolding(
     priceStatus: priceStatusFor(
       state,
       quote,
-      input.pinnedPrices?.has(assetName) ?? false,
+      bankValues(input, assetName, state),
     ),
     priceAsOf: quote?.asOf ? quote.asOf.toISOString() : null,
     currentValue: state.marketValue,
-    totalCost: state.costBasis,
+    totalCost: costBasis,
     unrealizedGain,
     unrealizedGainPercent:
-      state.costBasis > 0 ? (unrealizedGain / state.costBasis) * 100 : 0,
+      costBasis > 0 ? (unrealizedGain / costBasis) * 100 : 0,
     periodGain,
     periodGainPercent: periodBase > 0 ? (periodGain / periodBase) * 100 : 0,
     dividendsTotal: state.dividendsAccumulated,
@@ -650,8 +697,12 @@ function buildHoldings(
       state.isFixedIncome || state.fundCnpj
         ? undefined
         : input.quotes.get(assetName);
-    const pinned = input.pinnedPrices?.has(assetName) ?? false;
-    if (!state.isFixedIncome && !pinned && quote && quote.status !== "ok") {
+    if (
+      !state.isFixedIncome &&
+      !bankValues(input, assetName, state) &&
+      quote &&
+      quote.status !== "ok"
+    ) {
       result.issues.push({
         assetName,
         status: quote.status,

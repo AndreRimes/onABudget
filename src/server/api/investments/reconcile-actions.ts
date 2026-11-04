@@ -1,22 +1,18 @@
-// What happens when the owner settles a disagreement between the ledger and
-// the bank — the one place the reconciliation is allowed to change things.
+// Makes the ledger hold what the bank holds. Runs after every background sync
+// and always sides with the bank.
 //
-// "Keep onABudget" records that the difference was seen and is fine, against
-// the bank's figures of the moment. "Accept the bank" does whatever makes the
-// ledger agree, and that depends on why they disagree: a quantity gap is a
-// trade the ledger is missing, a price gap is a valuation choice, a gain gap
-// is a cost the ledger got wrong. The figures are always recomputed here from
-// the ledger and the stored bank facts — the client only names the asset and
-// the choice.
+// A quantity gap is closed by one adjusting trade per asset — the "plug" —
+// recomputed from scratch on every run against the ledger *without* it. So it
+// heals itself: a bank that lags the ledger (a buy typed in before the bank
+// shows it), or a position that arrives before its movement, produces a plug
+// for a while and none once both sides agree, instead of a trail of invented
+// buys and sells. Value and cost need nothing here — the bank's figures are
+// already today's mark (see `bankMarksFor`).
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "~/server/db";
-import {
-  investmentTransactions,
-  providerHoldings,
-  reconciliationDecisions,
-} from "~/server/db/schema";
+import { investmentTransactions, providerHoldings } from "~/server/db/schema";
 import { todayIso } from "~/server/services/market-cache";
 import { ownerHash } from "../owner-hash";
 import {
@@ -24,61 +20,38 @@ import {
   type InvestmentTransaction,
   type InvestmentTransactionInsert,
 } from "./repository";
-import type { ReconciliationCause, ReconciliationEntry } from "./reconcile";
-import type { SnapshotHolding } from "./portfolio-engine";
+import { bankCost, QUANTITY_TOLERANCE } from "./reconcile";
 
-export type ReconciliationChoice = "app" | "bank";
-
-export type ReconciliationOutcome =
-  | { action: "kept" }
-  | {
-      action: "adjusted";
-      side: "BUY" | "SELL";
-      quantity: number;
-      totalAmount: number;
-      date: string;
-    }
-  | { action: "price_pinned"; price: number }
-  | { action: "cost_rescaled"; factor: number; targetCost: number };
-
-export interface ResolveReconciliationInput {
-  userId: string;
-  assetName: string;
-  choice: ReconciliationChoice;
-  /** Only read for an asset the ledger has no row for: the trade needs a home. */
-  assetTypeId?: number;
-  investmentAccountId?: number;
+/** The adjusting trade an asset needs right now, or null when none. */
+export interface Plug {
+  side: "BUY" | "SELL";
+  quantity: number;
+  totalAmount: number;
+  date: string;
 }
 
-/** The bank's row for one asset, `applied` included — the fact plus its cost. */
-interface StoredFact {
-  quantity: number | null;
-  value: number | null;
-  applied: number | null;
-  profit: number | null;
-  syncedAt: Date | null;
+/** Where an asset the ledger never saw is booked. */
+export type PlugHome = () => Promise<{
+  investmentAccountId: number;
+  assetTypeId: number;
+} | null>;
+
+function precondition(message: string): TRPCError {
+  return new TRPCError({ code: "PRECONDITION_FAILED", message });
 }
 
-async function storedFact(
-  userId: string,
-  assetName: string,
-): Promise<StoredFact | undefined> {
-  const [fact] = await db
-    .select({
-      quantity: providerHoldings.quantity,
-      value: providerHoldings.value,
-      applied: providerHoldings.applied,
-      profit: providerHoldings.profit,
-      syncedAt: providerHoldings.syncedAt,
-    })
-    .from(providerHoldings)
-    .where(
-      and(
-        eq(providerHoldings.userId, userId),
-        eq(providerHoldings.assetName, assetName),
-      ),
-    );
-  return fact;
+function plugHash(userId: string, assetName: string): string {
+  return ownerHash(userId, `reconcile:${assetName}`);
+}
+
+/** Float noise in a unit count, as opposed to a gap worth booking. */
+const EPSILON = 1e-9;
+
+/** The calendar day of `date` in the server's zone, as `todayIso` counts days. */
+function localDay(date: Date): string {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 /** The day before `date` — the latest day a missing buy can have happened. */
@@ -88,141 +61,21 @@ function previousDay(date: string): string {
   return parsed.toISOString().slice(0, 10);
 }
 
-function isoDay(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function precondition(message: string): TRPCError {
-  return new TRPCError({ code: "PRECONDITION_FAILED", message });
-}
-
-async function upsertDecision(
-  input: ResolveReconciliationInput,
-  decision: "app" | "bank_price",
-  cause: ReconciliationCause,
-  fact: StoredFact,
-): Promise<void> {
-  const values = {
-    decision,
-    cause,
-    providerQuantity: fact.quantity,
-    providerValue: fact.value,
-    providerProfit: fact.profit,
-    decidedAt: new Date(),
-  };
-  await db
-    .insert(reconciliationDecisions)
-    .values({ userId: input.userId, assetName: input.assetName, ...values })
-    .onConflictDoUpdate({
-      target: [
-        reconciliationDecisions.userId,
-        reconciliationDecisions.assetName,
-      ],
-      set: values,
-    });
-}
-
-async function deleteDecision(userId: string, assetName: string) {
-  await db
-    .delete(reconciliationDecisions)
-    .where(
-      and(
-        eq(reconciliationDecisions.userId, userId),
-        eq(reconciliationDecisions.assetName, assetName),
-      ),
-    );
+/** Signed units a ledger row adds to the position. */
+function units(
+  row: Pick<InvestmentTransaction, "transactionType" | "quantity">,
+) {
+  return row.transactionType === "SELL" ? -row.quantity : row.quantity;
 }
 
 /**
- * The trade that closes a quantity gap. Missing units are a buy the ledger
- * never saw; surplus units are a sell it never saw.
- *
- * A buy's cost follows the same arithmetic as the sync's shortfall position:
- * what the bank says was applied in total, less what the ledger already
- * accounts for, is what bought the missing units. When the bank gives no
- * usable applied figure the units are costed at the bank's current unit
- * price — a position with no gain of its own, which is at least honest about
- * not knowing. The buy is dated the day before the ledger's first trade in the
- * asset (the latest day it could have happened), or the sync day when the
- * ledger has nothing; a sell is dated today, since it cannot predate what it
- * sells.
- */
-async function adjustQuantity(
-  input: ResolveReconciliationInput,
-  entry: ReconciliationEntry,
-  holding: SnapshotHolding | undefined,
-  fact: StoredFact,
-): Promise<ReconciliationOutcome> {
-  if (!fact.quantity || fact.quantity <= 0 || !fact.value || !fact.syncedAt) {
-    throw precondition("O banco não informou quantidade para este ativo");
-  }
-  const missing = fact.quantity - entry.appQuantity;
-  const unitPrice = fact.value / fact.quantity;
-
-  const history = await investmentRepository.findByAssetName(
-    input.userId,
-    input.assetName,
-  );
-  const template = await tradeTemplate(input, history);
-
-  let side: "BUY" | "SELL";
-  let quantity: number;
-  let totalAmount: number;
-  let date: string;
-  if (missing > 0) {
-    side = "BUY";
-    quantity = missing;
-    const ledgerCost = holding?.totalCost ?? 0;
-    const fromApplied =
-      fact.applied && fact.applied > ledgerCost
-        ? fact.applied - ledgerCost
-        : null;
-    totalAmount = fromApplied ?? missing * unitPrice;
-    const earliest = history
-      .map((tx) => tx.transactionDate.slice(0, 10))
-      .sort((a, b) => a.localeCompare(b))[0];
-    date = earliest ? previousDay(earliest) : isoDay(fact.syncedAt);
-  } else {
-    side = "SELL";
-    quantity = -missing;
-    totalAmount = quantity * unitPrice;
-    date = todayIso();
-  }
-
-  // Keyed on the sync it answers: resolving the same finding twice — a retry,
-  // a second look before the next sync — must not book the trade twice.
-  const sourceHash = ownerHash(
-    input.userId,
-    `reconcile:${input.assetName}:${fact.syncedAt.getTime()}`,
-  );
-  await db
-    .insert(investmentTransactions)
-    .values({
-      ...template,
-      assetName: input.assetName,
-      transactionType: side,
-      quantity,
-      pricePerUnit: totalAmount / quantity,
-      totalAmount,
-      transactionDate: date,
-      sourceHash,
-    })
-    .onConflictDoNothing({ target: investmentTransactions.sourceHash });
-
-  // The ledger now says what the bank says; an earlier "keep" is moot.
-  await deleteDecision(input.userId, input.assetName);
-
-  return { action: "adjusted", side, quantity, totalAmount, date };
-}
-
-/**
- * Where the adjusting trade goes and what it looks like: the asset's own most
- * recent row when it has one (same account, type and fixed-income terms), or
- * the account and type the caller chose for an asset the ledger never saw.
+ * Where the plug goes and what it looks like: the asset's own most recent
+ * row when it has one (same account, type and fixed-income terms), or the
+ * caller's home for an asset the ledger never saw.
  */
 async function tradeTemplate(
-  input: ResolveReconciliationInput,
   history: InvestmentTransaction[],
+  home: PlugHome | undefined,
 ): Promise<
   Pick<
     InvestmentTransactionInsert,
@@ -249,118 +102,362 @@ async function tradeTemplate(
       fundCnpj: latest.fundCnpj,
     };
   }
-  if (input.assetTypeId == null || input.investmentAccountId == null) {
-    throw precondition("Escolha o tipo e a conta do ativo");
-  }
-  return {
-    investmentAccountId: input.investmentAccountId,
-    assetTypeId: input.assetTypeId,
-    isFixedIncome: false,
-  };
+  const target = await home?.();
+  if (!target) throw precondition("Escolha o tipo e a conta do ativo");
+  return { ...target, isFixedIncome: false };
 }
 
-/** The bank's cost basis as implied by its value less its profit. */
-function providerCost(entry: ReconciliationEntry): number | null {
-  if (entry.providerValue === null || entry.providerGain === null) return null;
-  return entry.providerValue - entry.providerGain;
+function samePlug(a: Plug | null, b: Plug | null): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.side === b.side &&
+    a.date === b.date &&
+    Math.abs(a.quantity - b.quantity) <= 1e-9 * Math.max(1, b.quantity) &&
+    Math.abs(a.totalAmount - b.totalAmount) <= 0.005
+  );
+}
+
+/** What the bank holds of one asset, as far as a plug needs to know. */
+export interface BankPosition {
+  /** Zero when the bank holds none of it. */
+  quantity: number;
+  unitPrice: number | null;
+  unitCost: number | null;
+  syncedAt: Date;
 }
 
 /**
- * Rewrite the buys so the position costs what the bank says it cost. The
- * bank's cost is what it reports as applied, or failing that its value less
- * its profit — the same figure from the other side.
+ * The bank's position from its stored figure, or undefined when the figure
+ * cannot say how many units it holds (a value without a quantity).
  */
-async function rescaleCost(
-  input: ResolveReconciliationInput,
-  entry: ReconciliationEntry,
-  holding: SnapshotHolding | undefined,
-  fact: StoredFact,
-): Promise<ReconciliationOutcome> {
-  const targetCost =
-    fact.applied && fact.applied > 0 ? fact.applied : providerCost(entry);
-  const ledgerCost = holding?.totalCost ?? 0;
-  if (targetCost === null || targetCost <= 0) {
-    throw precondition("O banco não informou o custo deste ativo");
+export function bankPosition(
+  fact: typeof providerHoldings.$inferSelect,
+): BankPosition | undefined {
+  if (!fact.syncedAt) return undefined;
+  if (fact.quantity && fact.quantity > 0 && fact.value && fact.value > 0) {
+    const cost = bankCost(fact);
+    return {
+      quantity: fact.quantity,
+      unitPrice: fact.value / fact.quantity,
+      unitCost: cost == null ? null : cost / fact.quantity,
+      syncedAt: fact.syncedAt,
+    };
   }
-  if (ledgerCost <= 0) {
-    throw precondition("Não há compras registradas para ajustar");
+  // Reported with neither units nor worth: fully redeemed.
+  if (!fact.quantity && !fact.value) {
+    return {
+      quantity: 0,
+      unitPrice: null,
+      unitCost: null,
+      syncedAt: fact.syncedAt,
+    };
   }
-  const factor = targetCost / ledgerCost;
-  await investmentRepository.rescaleBuyCostByAssetName(
-    input.userId,
-    input.assetName,
-    factor,
-  );
-  await deleteDecision(input.userId, input.assetName);
-  return { action: "cost_rescaled", factor, targetCost };
+  return undefined;
 }
 
-export async function resolveReconciliation(
-  input: ResolveReconciliationInput,
-): Promise<ReconciliationOutcome> {
-  // The bank facts are read for every asset regardless of the narrowing, so
-  // the entry is there even when the ledger has no row for the asset.
-  const snapshot = await investmentRepository.getPortfolioSnapshot(
-    input.userId,
-    "max",
-    false,
-    input.assetName,
-  );
-  const entry = snapshot.reconciliation.entries.find(
-    (candidate) => candidate.assetName === input.assetName,
-  );
-  if (!entry) {
-    throw new TRPCError({
-      code: "NOT_FOUND",
-      message: "Ativo não encontrado na conferência",
-    });
+/** Average cost per unit the ledger's own trades leave the position at. */
+function averageCost(history: InvestmentTransaction[]): number {
+  let quantity = 0;
+  let cost = 0;
+  for (const row of [...history].sort((a, b) =>
+    a.transactionDate.localeCompare(b.transactionDate),
+  )) {
+    if (row.transactionType === "BUY") {
+      quantity += row.quantity;
+      cost += row.totalAmount;
+    } else if (quantity > 0) {
+      cost -= (cost / quantity) * row.quantity;
+      quantity -= row.quantity;
+    }
   }
+  return quantity > 0 ? cost / quantity : 0;
+}
+
+/**
+ * Recompute an asset's plugs against what the bank holds and write what
+ * changed. Returns whether the ledger changed. `bank` null means no single
+ * bank figure stands behind the asset any more (two connections report it):
+ * the plugs, which only ever answered to such a figure, go.
+ *
+ * Units the ledger is missing are one buy, costing what the bank says the
+ * position cost less what the ledger already paid for it, dated the day
+ * before the ledger's first real trade (the latest day it could have
+ * happened) — or, with none, the day it was first booked.
+ *
+ * Units the ledger has too many of are sales, one per day the surplus grew,
+ * each at that day's bank price (or, for a redeemed position the bank no
+ * longer prices, the ledger's average cost — no gain it cannot vouch for).
+ * A sale once booked keeps its day and price. A surplus that shrinks because
+ * the real sales arrived takes back the oldest plugs first (they arrive in
+ * the order they happened); one that shrinks for any other reason takes
+ * back the newest first.
+ *
+ * ponytail: an asset the ledger knows only through its buy plug vanishes
+ * from history, rather than shows as sold, once the bank stops reporting it
+ * — the bank never reported a movement for it either way.
+ */
+export async function settleQuantityTo(
+  userId: string,
+  assetName: string,
+  bank: BankPosition | null,
+  home?: PlugHome,
+): Promise<boolean> {
+  const buyHash = plugHash(userId, assetName);
+  const rows = await investmentRepository.findByAssetName(userId, assetName);
+  const isPlug = (row: InvestmentTransaction) =>
+    row.sourceHash === buyHash || !!row.sourceHash?.startsWith(`${buyHash}@`);
+  const history = rows.filter((row) => !isPlug(row));
+  const buyRow =
+    rows.find((row) => isPlug(row) && row.transactionType === "BUY") ?? null;
+  const sellRows = rows
+    .filter((row) => isPlug(row) && row.transactionType === "SELL")
+    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+  const held = history.reduce((total, row) => total + units(row), 0);
+
+  const missing = bank ? bank.quantity - held : 0;
+  const tolerance = Math.max(
+    QUANTITY_TOLERANCE * Math.max(bank?.quantity ?? 0, held),
+    1e-9,
+  );
+  const gap = Math.abs(missing) > tolerance ? missing : 0;
   if (
-    entry.cause === "match" ||
-    entry.cause === "unreported" ||
-    entry.cause === "accepted"
+    gap !== 0 &&
+    new Set(history.map((r) => r.investmentAccountId)).size > 1
   ) {
-    throw precondition("Este ativo não tem divergência a resolver");
+    // The bank's figure covers its own custody only. An asset the ledger
+    // also holds in another account (same ticker at a second broker) cannot
+    // be made to equal it without destroying the other position.
+    throw precondition("Ativo mantido em mais de uma conta");
   }
-  const fact = await storedFact(input.userId, input.assetName);
+
+  const previousBuy: Plug | null = buyRow
+    ? {
+        side: "BUY",
+        quantity: buyRow.quantity,
+        totalAmount: buyRow.totalAmount,
+        date: buyRow.transactionDate.slice(0, 10),
+      }
+    : null;
+  let buy: Plug | null = null;
+  if (bank && gap > 0) {
+    // The money the ledger is missing, not the units times a price: units
+    // that grew at no cost (a split, a bonus the bank never reported as a
+    // movement) must not show up as a deposit nobody made.
+    const totalAmount =
+      bank.unitCost != null
+        ? Math.max(
+            0,
+            bank.unitCost * bank.quantity - averageCost(history) * held,
+          )
+        : gap * (bank.unitPrice ?? 0);
+    const earliest = history
+      .map((row) => row.transactionDate.slice(0, 10))
+      .sort((a, b) => a.localeCompare(b))[0];
+    buy = {
+      side: "BUY",
+      quantity: gap,
+      totalAmount,
+      date: earliest
+        ? previousDay(earliest)
+        : (previousBuy?.date ?? localDay(bank.syncedAt)),
+    };
+    // Without a cost figure the amount is only today's price times the
+    // units; re-pricing it daily would rewrite deposits that never moved.
+    if (
+      previousBuy &&
+      bank.unitCost == null &&
+      Math.abs(previousBuy.quantity - gap) <= 1e-9 * Math.max(1, gap)
+    ) {
+      buy = { ...buy, totalAmount: previousBuy.totalAmount };
+    }
+  }
+
+  const writes: Array<(tx: DbTransaction) => Promise<unknown>> = [];
+  if (!samePlug(previousBuy, buy)) {
+    if (buyRow) writes.push((tx) => deleteRow(tx, buyRow.id));
+    if (buy) {
+      const plug = buy;
+      const template = await tradeTemplate(
+        history.length ? history : rows,
+        home,
+      );
+      writes.push((tx) => insertPlug(tx, template, assetName, plug, buyHash));
+    }
+  }
+
+  const surplus = gap < 0 ? -gap : 0;
+  const booked = sellRows.reduce((total, row) => total + row.quantity, 0);
+  if (surplus - booked > tolerance && bank) {
+    const extra = surplus - booked;
+    const price = bank.unitPrice ?? averageCost(history);
+    const day = todayIso();
+    const todays = sellRows.find(
+      (row) => row.transactionDate.slice(0, 10) === day,
+    );
+    if (todays) {
+      const quantity = todays.quantity + extra;
+      const totalAmount = todays.totalAmount + extra * price;
+      writes.push((tx) => resizeRow(tx, todays.id, quantity, totalAmount));
+    } else {
+      const template = await tradeTemplate(
+        history.length ? history : rows,
+        home,
+      );
+      writes.push((tx) =>
+        insertPlug(
+          tx,
+          template,
+          assetName,
+          {
+            side: "SELL",
+            quantity: extra,
+            totalAmount: extra * price,
+            date: day,
+          },
+          `${buyHash}@${day}`,
+        ),
+      );
+    }
+  } else if (booked - surplus > tolerance) {
+    // Two reasons a surplus shrinks. Real sales arriving — recorded after
+    // the plugs that stood in for them — replace the oldest plugs first, in
+    // the order the sales happened. Anything else (a buy the bank catches up
+    // with, a count that comes back) unwinds the newest plug first, keeping
+    // the earlier sales as booked.
+    const since = sellRows
+      .map((row) => row.createdAt ?? "")
+      .sort((x, y) => x.localeCompare(y))[0];
+    const arrived = history
+      .filter(
+        (row) =>
+          row.transactionType === "SELL" &&
+          since !== undefined &&
+          (row.createdAt ?? "") >= since,
+      )
+      .reduce((total, row) => total + row.quantity, 0);
+    let excess = booked - surplus;
+    const replaced = Math.min(excess, arrived);
+    const left = new Map(sellRows.map((row) => [row.id, row.quantity]));
+    const take = (rows: InvestmentTransaction[], amount: number) => {
+      let remaining = amount;
+      for (const row of rows) {
+        if (remaining <= EPSILON) break;
+        const quantity = left.get(row.id) ?? 0;
+        const taken = Math.min(quantity, remaining);
+        left.set(row.id, quantity - taken);
+        remaining -= taken;
+      }
+      return amount - remaining;
+    };
+    excess -= take(sellRows, replaced);
+    take([...sellRows].reverse(), excess);
+    for (const row of sellRows) {
+      const quantity = left.get(row.id) ?? 0;
+      // Row by row only float noise counts as nothing: the bank's tolerance
+      // is for the whole gap, and spent per row it would add up past itself.
+      if (quantity <= EPSILON) {
+        writes.push((tx) => deleteRow(tx, row.id));
+      } else if (row.quantity - quantity > EPSILON) {
+        const totalAmount = (row.totalAmount * quantity) / row.quantity;
+        writes.push((tx) => resizeRow(tx, row.id, quantity, totalAmount));
+      }
+    }
+  }
+
+  if (writes.length === 0) return false;
+  await db.transaction(async (tx) => {
+    for (const write of writes) await write(tx);
+  });
+  return true;
+}
+
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function deleteRow(tx: DbTransaction, id: number) {
+  await tx
+    .delete(investmentTransactions)
+    .where(eq(investmentTransactions.id, id));
+}
+
+async function resizeRow(
+  tx: DbTransaction,
+  id: number,
+  quantity: number,
+  totalAmount: number,
+) {
+  await tx
+    .update(investmentTransactions)
+    .set({ quantity, totalAmount, pricePerUnit: totalAmount / quantity })
+    .where(eq(investmentTransactions.id, id));
+}
+
+async function insertPlug(
+  tx: DbTransaction,
+  template: Awaited<ReturnType<typeof tradeTemplate>>,
+  assetName: string,
+  plug: Plug,
+  sourceHash: string,
+) {
+  await tx.insert(investmentTransactions).values({
+    ...template,
+    assetName,
+    transactionType: plug.side,
+    quantity: plug.quantity,
+    pricePerUnit: plug.quantity > 0 ? plug.totalAmount / plug.quantity : 0,
+    totalAmount: plug.totalAmount,
+    transactionDate: plug.date,
+    sourceHash,
+  });
+}
+
+/** `settleQuantityTo` against the bank's stored figure for the asset. */
+export async function settleQuantity(
+  userId: string,
+  assetName: string,
+  home?: PlugHome,
+): Promise<boolean> {
+  const [fact] = await db
+    .select()
+    .from(providerHoldings)
+    .where(
+      and(
+        eq(providerHoldings.userId, userId),
+        eq(providerHoldings.assetName, assetName),
+      ),
+    );
   if (!fact) {
     throw new TRPCError({
       code: "NOT_FOUND",
       message: "O banco não informou este ativo",
     });
   }
-  const holding = snapshot.holdings.find(
-    (candidate) => candidate.assetName === input.assetName,
-  );
-
-  if (input.choice === "app") {
-    await upsertDecision(input, "app", entry.cause, fact);
-    return { action: "kept" };
-  }
-
-  switch (entry.cause) {
-    case "quantity":
-      return await adjustQuantity(input, entry, holding, fact);
-    case "price": {
-      if (holding?.isFixedIncome && !holding.tesouroTitle) {
-        throw precondition(
-          "Renda fixa com rendimento calculado não usa cotação; ajuste a taxa do ativo",
-        );
-      }
-      if (!fact.quantity || fact.quantity <= 0 || fact.value == null) {
-        throw precondition("O banco não informou preço para este ativo");
-      }
-      await upsertDecision(input, "bank_price", entry.cause, fact);
-      return { action: "price_pinned", price: fact.value / fact.quantity };
-    }
-    case "gain":
-      return await rescaleCost(input, entry, holding, fact);
-  }
+  // A figure without units says nothing about a gap; whatever plug the last
+  // good figures called for stands.
+  const bank = bankPosition(fact);
+  return bank ? await settleQuantityTo(userId, assetName, bank, home) : false;
 }
 
-export async function undoReconciliationDecision(
+/**
+ * Settle every asset in `plan` to the bank position given for it. Built by
+ * the caller from one complete, successful fetch: a stored figure outside it
+ * may be stale or shared, and booking a trade against it would fabricate one.
+ */
+export async function reconcileWithBank(
   userId: string,
-  assetName: string,
-): Promise<void> {
-  await deleteDecision(userId, assetName);
+  plan: ReadonlyMap<string, BankPosition | null>,
+  home?: PlugHome,
+): Promise<{ settled: number; failed: number }> {
+  let settled = 0;
+  let failed = 0;
+  for (const [assetName, bank] of plan) {
+    try {
+      if (await settleQuantityTo(userId, assetName, bank, home)) settled++;
+    } catch (error) {
+      failed++;
+      console.warn(
+        `[reconcile] ${assetName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return { settled, failed };
 }

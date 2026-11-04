@@ -437,34 +437,17 @@ export const providerHoldings = sqliteTable(
 );
 
 /**
- * What the owner decided about one disagreement between the ledger and the
- * bank, when that decision has to outlive the next recalculation.
- *
- * Two of the possible resolutions do not touch the ledger and so need a place
- * of their own: keeping the app's figure ("app"), and valuing the holding at
- * the unit price the bank reported ("bank_price"). The other two — an
- * adjusting trade, a rescaled cost — write to the ledger and leave no row here.
- *
- * Each row carries the bank's figures as they were when the decision was
- * taken. A later sync that reports different numbers makes the decision lapse
- * and the mismatch comes back: accepting one disagreement is not accepting
- * every future one.
+ * Statement rows the owner was shown in a sync and chose not to import —
+ * left without a category, or unchecked. The background sync imports
+ * everything new except these, so a transfer the owner left out by hand does
+ * not come back as spending on its own. Keyed by the row's owner-scoped
+ * source hash, the same one `expenses.source_hash` would carry.
  */
-export const reconciliationDecisions = sqliteTable(
-  "reconciliation_decisions",
-  {
-    userId: text("user_id").notNull(),
-    assetName: text("asset_name").notNull(),
-    decision: text("decision", { enum: ["app", "bank_price"] }).notNull(),
-    /** The cause the entry had when decided, for the UI to name it. */
-    cause: text("cause").notNull(),
-    providerQuantity: real("provider_quantity"),
-    providerValue: real("provider_value"),
-    providerProfit: real("provider_profit"),
-    decidedAt: integer("decided_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.assetName] })],
-);
+export const dismissedStatementRows = sqliteTable("dismissed_statement_rows", {
+  sourceHash: text("source_hash").primaryKey(),
+  userId: text("user_id").notNull(),
+  dismissedAt: integer("dismissed_at", { mode: "timestamp_ms" }).notNull(),
+});
 
 /**
  * One consented Open Finance connection (a Pluggy "item"), i.e. one bank the
@@ -520,6 +503,12 @@ export const bankAccountLinks = sqliteTable(
     providerName: text("provider_name"),
     lastBalance: real("last_balance"),
     lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
+    /**
+     * Where the background sync's next window starts. Null until its first
+     * run, which starts at the last manual sync; moved forward only by a run
+     * that succeeded, so a failing one never makes the next look at less.
+     */
+    autoSyncFrom: integer("auto_sync_from", { mode: "timestamp_ms" }),
     createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
