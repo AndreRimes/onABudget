@@ -789,7 +789,7 @@ function acceptedTypeLabels(
 }
 
 /** Create the asset type `label` for the user and return its id. */
-export async function createAssetType(
+async function createAssetType(
   userId: string,
   label: string,
 ): Promise<number | undefined> {

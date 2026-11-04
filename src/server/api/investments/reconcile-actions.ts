@@ -30,12 +30,6 @@ export interface Plug {
   date: string;
 }
 
-/** Where an asset the ledger never saw is booked. */
-export type PlugHome = () => Promise<{
-  investmentAccountId: number;
-  assetTypeId: number;
-} | null>;
-
 function precondition(message: string): TRPCError {
   return new TRPCError({ code: "PRECONDITION_FAILED", message });
 }
@@ -46,13 +40,6 @@ function plugHash(userId: string, assetName: string): string {
 
 /** Float noise in a unit count, as opposed to a gap worth booking. */
 const EPSILON = 1e-9;
-
-/** The calendar day of `date` in the server's zone, as `todayIso` counts days. */
-function localDay(date: Date): string {
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-    .toISOString()
-    .slice(0, 10);
-}
 
 /** The day before `date` — the latest day a missing buy can have happened. */
 function previousDay(date: string): string {
@@ -70,41 +57,31 @@ function units(
 
 /**
  * Where the plug goes and what it looks like: the asset's own most recent
- * row when it has one (same account, type and fixed-income terms), or the
- * caller's home for an asset the ledger never saw.
+ * real trade (same account, type and fixed-income terms).
  */
-async function tradeTemplate(
-  history: InvestmentTransaction[],
-  home: PlugHome | undefined,
-): Promise<
-  Pick<
-    InvestmentTransactionInsert,
-    | "investmentAccountId"
-    | "assetTypeId"
-    | "isFixedIncome"
-    | "fixedIncomeYieldType"
-    | "fixedIncomeRate"
-    | "fixedIncomeMaturityDate"
-    | "tesouroTitle"
-    | "fundCnpj"
-  >
+function tradeTemplate(
+  latest: InvestmentTransaction,
+): Pick<
+  InvestmentTransactionInsert,
+  | "investmentAccountId"
+  | "assetTypeId"
+  | "isFixedIncome"
+  | "fixedIncomeYieldType"
+  | "fixedIncomeRate"
+  | "fixedIncomeMaturityDate"
+  | "tesouroTitle"
+  | "fundCnpj"
 > {
-  const latest = history[0];
-  if (latest) {
-    return {
-      investmentAccountId: latest.investmentAccountId,
-      assetTypeId: latest.assetTypeId,
-      isFixedIncome: latest.isFixedIncome,
-      fixedIncomeYieldType: latest.fixedIncomeYieldType,
-      fixedIncomeRate: latest.fixedIncomeRate,
-      fixedIncomeMaturityDate: latest.fixedIncomeMaturityDate,
-      tesouroTitle: latest.tesouroTitle,
-      fundCnpj: latest.fundCnpj,
-    };
-  }
-  const target = await home?.();
-  if (!target) throw precondition("Escolha o tipo e a conta do ativo");
-  return { ...target, isFixedIncome: false };
+  return {
+    investmentAccountId: latest.investmentAccountId,
+    assetTypeId: latest.assetTypeId,
+    isFixedIncome: latest.isFixedIncome,
+    fixedIncomeYieldType: latest.fixedIncomeYieldType,
+    fixedIncomeRate: latest.fixedIncomeRate,
+    fixedIncomeMaturityDate: latest.fixedIncomeMaturityDate,
+    tesouroTitle: latest.tesouroTitle,
+    fundCnpj: latest.fundCnpj,
+  };
 }
 
 function samePlug(a: Plug | null, b: Plug | null): boolean {
@@ -175,14 +152,16 @@ function averageCost(history: InvestmentTransaction[]): number {
 
 /**
  * Recompute an asset's plugs against what the bank holds and write what
- * changed. Returns whether the ledger changed. `bank` null means no single
+ * changed. Returns whether the ledger changed. A null figure means no single
  * bank figure stands behind the asset any more (two connections report it):
- * the plugs, which only ever answered to such a figure, go.
+ * the plugs, which only ever answered to such a figure, go. So do they for
+ * an asset without a trade of its own — only holdings the ledger already has
+ * are kept in step.
  *
  * Units the ledger is missing are one buy, costing what the bank says the
  * position cost less what the ledger already paid for it, dated the day
  * before the ledger's first real trade (the latest day it could have
- * happened) — or, with none, the day it was first booked.
+ * happened).
  *
  * Units the ledger has too many of are sales, one per day the surplus grew,
  * each at that day's bank price (or, for a redeemed position the bank no
@@ -191,16 +170,11 @@ function averageCost(history: InvestmentTransaction[]): number {
  * the real sales arrived takes back the oldest plugs first (they arrive in
  * the order they happened); one that shrinks for any other reason takes
  * back the newest first.
- *
- * ponytail: an asset the ledger knows only through its buy plug vanishes
- * from history, rather than shows as sold, once the bank stops reporting it
- * — the bank never reported a movement for it either way.
  */
 export async function settleQuantityTo(
   userId: string,
   assetName: string,
-  bank: BankPosition | null,
-  home?: PlugHome,
+  bankFigure: BankPosition | null,
 ): Promise<boolean> {
   const buyHash = plugHash(userId, assetName);
   const rows = await investmentRepository.findByAssetName(userId, assetName);
@@ -213,6 +187,10 @@ export async function settleQuantityTo(
     .filter((row) => isPlug(row) && row.transactionType === "SELL")
     .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
   const held = history.reduce((total, row) => total + units(row), 0);
+  // Without a trade of its own the asset is not the ledger's to settle: the
+  // bank's code may well name a holding the ledger keeps under another name,
+  // and booking it would hold it twice. Whatever plugs it carries go.
+  const bank = history.length > 0 ? bankFigure : null;
 
   const missing = bank ? bank.quantity - held : 0;
   const tolerance = Math.max(
@@ -257,9 +235,7 @@ export async function settleQuantityTo(
       side: "BUY",
       quantity: gap,
       totalAmount,
-      date: earliest
-        ? previousDay(earliest)
-        : (previousBuy?.date ?? localDay(bank.syncedAt)),
+      date: previousDay(earliest!),
     };
     // Without a cost figure the amount is only today's price times the
     // units; re-pricing it daily would rewrite deposits that never moved.
@@ -277,10 +253,7 @@ export async function settleQuantityTo(
     if (buyRow) writes.push((tx) => deleteRow(tx, buyRow.id));
     if (buy) {
       const plug = buy;
-      const template = await tradeTemplate(
-        history.length ? history : rows,
-        home,
-      );
+      const template = tradeTemplate(history[0]!);
       writes.push((tx) => insertPlug(tx, template, assetName, plug, buyHash));
     }
   }
@@ -299,10 +272,7 @@ export async function settleQuantityTo(
       const totalAmount = todays.totalAmount + extra * price;
       writes.push((tx) => resizeRow(tx, todays.id, quantity, totalAmount));
     } else {
-      const template = await tradeTemplate(
-        history.length ? history : rows,
-        home,
-      );
+      const template = tradeTemplate(history[0]!);
       writes.push((tx) =>
         insertPlug(
           tx,
@@ -414,7 +384,6 @@ async function insertPlug(
 export async function settleQuantity(
   userId: string,
   assetName: string,
-  home?: PlugHome,
 ): Promise<boolean> {
   const [fact] = await db
     .select()
@@ -434,7 +403,7 @@ export async function settleQuantity(
   // A figure without units says nothing about a gap; whatever plug the last
   // good figures called for stands.
   const bank = bankPosition(fact);
-  return bank ? await settleQuantityTo(userId, assetName, bank, home) : false;
+  return bank ? await settleQuantityTo(userId, assetName, bank) : false;
 }
 
 /**
@@ -445,13 +414,12 @@ export async function settleQuantity(
 export async function reconcileWithBank(
   userId: string,
   plan: ReadonlyMap<string, BankPosition | null>,
-  home?: PlugHome,
 ): Promise<{ settled: number; failed: number }> {
   let settled = 0;
   let failed = 0;
   for (const [assetName, bank] of plan) {
     try {
-      if (await settleQuantityTo(userId, assetName, bank, home)) settled++;
+      if (await settleQuantityTo(userId, assetName, bank)) settled++;
     } catch (error) {
       failed++;
       console.warn(
