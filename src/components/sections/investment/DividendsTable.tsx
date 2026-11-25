@@ -22,16 +22,13 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import { Skeleton } from "~/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 import { api, type RouterOutputs } from "~/trpc/react";
 import { invalidatePortfolio } from "~/trpc/invalidate";
+import {
+  InvestmentTable,
+  InvestmentTableControls,
+  useInvestmentTable,
+} from "./InvestmentTable";
 import { toDisplayDate } from "./date-input";
 import { formatCurrency } from "./format";
 
@@ -42,6 +39,10 @@ const typeLabels: Record<Dividend["type"], string> = {
   JCP: "JCP",
   RENDIMENTO: "Rendimento",
 };
+
+function sourceLabel(dividend: Dividend): string {
+  return dividend.source === "B3_IMPORT" ? "B3" : "Manual";
+}
 
 export function DividendsTable({ assetName }: Readonly<{ assetName: string }>) {
   const [deleting, setDeleting] = useState<Dividend | null>(null);
@@ -68,6 +69,51 @@ export function DividendsTable({ assetName }: Readonly<{ assetName: string }>) {
       },
     });
 
+  const view = useInvestmentTable<Dividend>([
+    {
+      id: "date",
+      label: "Data de pagamento",
+      value: (dividend) => dividend.paymentDate,
+      format: (dividend) => toDisplayDate(dividend.paymentDate),
+    },
+    {
+      id: "type",
+      label: "Tipo",
+      value: (dividend) => typeLabels[dividend.type],
+    },
+    {
+      id: "amount",
+      label: "Valor",
+      align: "right",
+      value: (dividend) => dividend.amount,
+      format: (dividend) => formatCurrency(dividend.amount),
+      render: (dividend) => <strong>{formatCurrency(dividend.amount)}</strong>,
+    },
+    {
+      id: "source",
+      label: "Origem",
+      value: sourceLabel,
+      render: (dividend) => (
+        <Badge variant="outline">{sourceLabel(dividend)}</Badge>
+      ),
+    },
+    {
+      id: "actions",
+      label: "Ações",
+      width: "w-20",
+      render: (dividend) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          onClick={() => setDeleting(dividend)}
+        >
+          Excluir
+        </Button>
+      ),
+    },
+  ]);
+
   let content: ReactNode;
   if (isPending) {
     content = (
@@ -85,44 +131,14 @@ export function DividendsTable({ assetName }: Readonly<{ assetName: string }>) {
     );
   } else {
     content = (
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Data de Pagamento</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead className="text-right">Valor</TableHead>
-              <TableHead>Origem</TableHead>
-              <TableHead className="w-8" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {dividends.map((dividend) => (
-              <TableRow key={dividend.id}>
-                <TableCell>{toDisplayDate(dividend.paymentDate)}</TableCell>
-                <TableCell>{typeLabels[dividend.type]}</TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatCurrency(dividend.amount)}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-xs">
-                    {dividend.source === "B3_IMPORT" ? "B3" : "Manual"}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => setDeleting(dividend)}
-                  >
-                    Excluir
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="space-y-3">
+        <InvestmentTableControls view={view} searchLabel="Buscar proventos" />
+        <InvestmentTable
+          rows={view.visibleRows(dividends)}
+          rowKey={(dividend) => dividend.id}
+          view={view}
+          label="Proventos"
+        />
       </div>
     );
   }
@@ -130,7 +146,7 @@ export function DividendsTable({ assetName }: Readonly<{ assetName: string }>) {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle>Proventos</CardTitle>
             <CardDescription>

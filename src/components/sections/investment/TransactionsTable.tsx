@@ -29,17 +29,14 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
 import { Skeleton } from "~/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
 import { api, type RouterOutputs } from "~/trpc/react";
 import { invalidatePortfolio } from "~/trpc/invalidate";
 import { EditTransactionDialog } from "./EditTransactionDialog";
+import {
+  InvestmentTable,
+  InvestmentTableControls,
+  useInvestmentTable,
+} from "./InvestmentTable";
 import { toDisplayDate } from "./date-input";
 import { formatCurrency } from "./format";
 
@@ -47,6 +44,10 @@ type Transaction = RouterOutputs["investments"]["getByAssetName"][number];
 
 function sideLabel(transaction: { transactionType: "BUY" | "SELL" }): string {
   return transaction.transactionType === "BUY" ? "Compra" : "Venda";
+}
+
+function sourceLabel(transaction: Transaction): string {
+  return transaction.sourceHash ? "B3" : "Manual";
 }
 
 export function TransactionsTable({
@@ -77,6 +78,98 @@ export function TransactionsTable({
       },
     });
 
+  const view = useInvestmentTable<Transaction>([
+    {
+      id: "date",
+      label: "Data",
+      value: (transaction) => transaction.transactionDate,
+      format: (transaction) => toDisplayDate(transaction.transactionDate),
+    },
+    {
+      id: "type",
+      label: "Tipo",
+      value: sideLabel,
+      render: (transaction) => (
+        <Badge
+          variant={
+            transaction.transactionType === "BUY" ? "default" : "destructive"
+          }
+        >
+          {sideLabel(transaction)}
+        </Badge>
+      ),
+    },
+    {
+      id: "quantity",
+      label: "Quantidade",
+      align: "right",
+      value: (transaction) => transaction.quantity,
+      format: (transaction) =>
+        transaction.quantity.toLocaleString("pt-BR", {
+          maximumFractionDigits: 6,
+        }),
+    },
+    {
+      id: "price",
+      label: "Preço unitário",
+      align: "right",
+      value: (transaction) => transaction.pricePerUnit,
+      format: (transaction) => formatCurrency(transaction.pricePerUnit),
+    },
+    {
+      id: "total",
+      label: "Valor total",
+      align: "right",
+      value: (transaction) => transaction.totalAmount,
+      format: (transaction) => formatCurrency(transaction.totalAmount),
+      render: (transaction) => (
+        <strong>{formatCurrency(transaction.totalAmount)}</strong>
+      ),
+    },
+    {
+      id: "account",
+      label: "Conta",
+      value: (transaction) => accountName(transaction.investmentAccountId),
+    },
+    {
+      id: "source",
+      label: "Origem",
+      value: sourceLabel,
+      render: (transaction) => (
+        <Badge variant="outline">{sourceLabel(transaction)}</Badge>
+      ),
+    },
+    {
+      id: "actions",
+      label: "Ações",
+      width: "w-12",
+      render: (transaction) => (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Ações da transação"
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditing(transaction)}>
+              Editar
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => setDeleting(transaction)}
+            >
+              Excluir
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ),
+    },
+  ]);
+
   let content: ReactNode;
   if (isPending) {
     content = (
@@ -94,88 +187,14 @@ export function TransactionsTable({
     );
   } else {
     content = (
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Data</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead className="text-right">Quantidade</TableHead>
-              <TableHead className="text-right">Preço Unitário</TableHead>
-              <TableHead className="text-right">Valor Total</TableHead>
-              <TableHead>Conta</TableHead>
-              <TableHead>Origem</TableHead>
-              <TableHead className="w-8" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {transactions.map((transaction) => (
-              <TableRow key={transaction.id}>
-                <TableCell>
-                  {toDisplayDate(transaction.transactionDate)}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      transaction.transactionType === "BUY"
-                        ? "default"
-                        : "destructive"
-                    }
-                  >
-                    {sideLabel(transaction)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {transaction.quantity.toLocaleString("pt-BR", {
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 6,
-                  })}
-                </TableCell>
-                <TableCell className="text-right">
-                  {formatCurrency(transaction.pricePerUnit)}
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatCurrency(transaction.totalAmount)}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {accountName(transaction.investmentAccountId)}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-xs">
-                    {transaction.sourceHash ? "B3" : "Manual"}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        aria-label="Ações da transação"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onSelect={() => setEditing(transaction)}
-                      >
-                        Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onSelect={() => setDeleting(transaction)}
-                      >
-                        Excluir
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="space-y-3">
+        <InvestmentTableControls view={view} searchLabel="Buscar transações" />
+        <InvestmentTable
+          rows={view.visibleRows(transactions)}
+          rowKey={(transaction) => transaction.id}
+          view={view}
+          label="Transações"
+        />
       </div>
     );
   }
