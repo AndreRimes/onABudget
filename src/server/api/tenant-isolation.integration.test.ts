@@ -18,6 +18,7 @@ const { importStatementRows, previewStatementRows } =
   await import("./expenses/statement-import");
 const { budgetRepository } = await import("./budget/repository");
 const { categoryRepository } = await import("./category/repository");
+const { investmentRepository } = await import("./investments/repository");
 const { assetTypeRepository } = await import("./asset-type/repository");
 
 let alice: Awaited<ReturnType<typeof seedBaseline>>;
@@ -222,6 +223,41 @@ describe("client-supplied ids are checked against the caller", () => {
       .from(schema.budget)
       .where(eq(schema.budget.id, mine!.id));
     expect(still?.amount).toBe(100);
+  });
+
+  it("moving an asset to another type moves all of it, and only the owner's", async () => {
+    const [target] = await db
+      .insert(schema.assetTypes)
+      .values({ userId: alice.userId, name: "Destino" })
+      .returning();
+    for (const owner of [alice, alice, bob])
+      await db.insert(schema.investmentTransactions).values({
+        investmentAccountId: owner.investmentAccountId,
+        assetTypeId: owner.assetTypeId,
+        assetName: "MOVE3",
+        transactionType: "BUY",
+        quantity: 1,
+        pricePerUnit: 10,
+        totalAmount: 10,
+        transactionDate: "2026-01-02",
+      });
+
+    expect(
+      await investmentRepository.setAssetTypeByAssetName(
+        alice.userId,
+        "MOVE3",
+        target!.id,
+      ),
+    ).toBe(2);
+    const rows = await db
+      .select()
+      .from(schema.investmentTransactions)
+      .where(eq(schema.investmentTransactions.assetName, "MOVE3"));
+    expect(rows.map((row) => row.assetTypeId)).toEqual([
+      target!.id,
+      target!.id,
+      bob.assetTypeId,
+    ]);
   });
 
   it("ownsAll rejects a foreign or missing category / asset type", async () => {

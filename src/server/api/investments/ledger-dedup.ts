@@ -90,6 +90,44 @@ function transactionSource(sourceHash: string | null): MovementSource {
   return bare.startsWith("pluggy:") ? "PLUGGY" : "B3";
 }
 
+/** The ticker a B3 trade was imported under, whatever its asset is named now. */
+export function b3TickerOf(sourceHash: string | null): string | null {
+  const bare = sourceHash?.slice(sourceHash.indexOf(":") + 1);
+  const [kind, , ticker] = bare?.split("|") ?? [];
+  return kind === "trade" && ticker ? ticker : null;
+}
+
+/**
+ * B3 ticker -> the name its asset goes by now, for the ones the owner renamed.
+ * A ticker whose rows ended up under several names stands for none of them.
+ */
+export async function renamedTickers(
+  userId: string,
+): Promise<Map<string, string>> {
+  const rows = await db
+    .selectDistinct({
+      assetName: investmentTransactions.assetName,
+      sourceHash: investmentTransactions.sourceHash,
+    })
+    .from(investmentTransactions)
+    .innerJoin(
+      accounts,
+      eq(accounts.id, investmentTransactions.investmentAccountId),
+    )
+    .where(eq(accounts.userId, userId));
+  const names = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const ticker = b3TickerOf(row.sourceHash);
+    if (!ticker) continue;
+    names.set(ticker, (names.get(ticker) ?? new Set()).add(row.assetName));
+  }
+  return new Map(
+    [...names]
+      .filter(([, set]) => set.size === 1)
+      .map(([ticker, set]) => [ticker, [...set][0]!]),
+  );
+}
+
 export function isReconciliationPlug(
   sourceHash: string | null,
   assetName: string,

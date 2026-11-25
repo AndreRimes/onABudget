@@ -25,6 +25,7 @@ import {
 import { DeleteAssetDialog } from "~/components/sections/investment/DeleteAssetDialog";
 import { DividendsTable } from "~/components/sections/investment/DividendsTable";
 import { EditFixedIncomeDialog } from "~/components/sections/investment/EditFixedIncomeDialog";
+import { MoveAssetDialog } from "~/components/sections/investment/MoveAssetDialog";
 import { RefreshQuotesButton } from "~/components/sections/investment/RefreshQuotesButton";
 import { RenameAssetDialog } from "~/components/sections/investment/RenameAssetDialog";
 import { TransactionsTable } from "~/components/sections/investment/TransactionsTable";
@@ -340,6 +341,13 @@ export default function AssetDetailPage() {
             assetName={assetName}
             onRenamed={(newName) => router.replace(assetDetailHref(newName))}
           />
+          {holding && (
+            <MoveAssetDialog
+              assetName={assetName}
+              assetLabel={holding.label ?? assetName}
+              assetTypeId={holding.assetTypeId}
+            />
+          )}
           {holding?.isFixedIncome && !holding.tesouroTitle && (
             <EditFixedIncomeDialog
               assetName={assetName}

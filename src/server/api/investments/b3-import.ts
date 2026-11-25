@@ -16,6 +16,7 @@ import { ownerHash } from "../owner-hash";
 import {
   incomeMovementKey,
   loadForeignMovementKeys,
+  renamedTickers,
   tradeMovementKey,
 } from "./ledger-dedup";
 import { b3ImportRows } from "~/server/metrics/instruments";
@@ -68,17 +69,17 @@ export function b3SourceHash(row: B3Row): string {
  * imported. See ledger-dedup.ts: the source hash alone cannot see a trade that
  * also arrived through Open Finance.
  */
-function b3MovementKey(row: B3Row): string {
+function b3MovementKey(row: B3Row, assetName: string): string {
   return row.kind === "trade"
     ? tradeMovementKey({
-        assetName: row.ticker,
+        assetName,
         date: row.date,
         side: row.side,
         quantity: row.quantity,
         amount: row.amount,
       })
     : incomeMovementKey({
-        assetName: row.ticker,
+        assetName,
         date: row.date,
         amount: row.amount,
       });
@@ -94,6 +95,9 @@ async function userInvestmentAccounts(userId: string) {
 }
 
 export async function previewB3Rows(userId: string, rows: B3Row[]) {
+  // Under the names the owner gave them: the file only knows the ticker.
+  const renamed = await renamedTickers(userId);
+  const nameOf = (row: B3Row) => renamed.get(row.ticker) ?? row.ticker;
   const hashes = rows.map((row) => ownerHash(userId, b3SourceHash(row)));
 
   const [existingTx, existingDividends, investAccounts, ledgerKeys] =
@@ -111,11 +115,7 @@ export async function previewB3Rows(userId: string, rows: B3Row[]) {
             .where(inArray(dividends.sourceHash, hashes))
         : Promise.resolve([]),
       userInvestmentAccounts(userId),
-      loadForeignMovementKeys(
-        userId,
-        rows.map((row) => row.ticker),
-        "B3",
-      ),
+      loadForeignMovementKeys(userId, rows.map(nameOf), "B3"),
     ]);
 
   const known = new Set(
@@ -147,7 +147,7 @@ export async function previewB3Rows(userId: string, rows: B3Row[]) {
     // A movement already in the ledger under another source's hash — the same
     // trade imported from Open Finance — is a duplicate too, even though this
     // file has never been imported.
-    const imported = ledgerKeys.has(b3MovementKey(row));
+    const imported = ledgerKeys.has(b3MovementKey(row, nameOf(row)));
     const duplicate = known.has(hash) || seenInFile.has(hash) || imported;
     seenInFile.add(hash);
     return {
@@ -155,7 +155,7 @@ export async function previewB3Rows(userId: string, rows: B3Row[]) {
       status: duplicate ? ("duplicate" as const) : ("new" as const),
       /** True when the duplicate came from another source, not from this file. */
       importedElsewhere: imported && !known.has(hash),
-      knownTicker: row.kind === "income" ? true : knownTickers.has(row.ticker),
+      knownTicker: row.kind === "income" ? true : knownTickers.has(nameOf(row)),
     };
   });
 
@@ -211,9 +211,11 @@ export async function importB3Rows(input: {
   // Movements another source already imported. Only those: within B3 itself
   // the source hash is the authority, and two identical fills on one day are
   // two real trades.
+  const renamed = await renamedTickers(userId);
+  const nameOf = (row: B3Row) => renamed.get(row.ticker) ?? row.ticker;
   const ledgerKeys = await loadForeignMovementKeys(
     userId,
-    rows.map((row) => row.ticker),
+    rows.map(nameOf),
     "B3",
   );
 
@@ -243,7 +245,10 @@ export async function importB3Rows(input: {
     const sourceHash = ownerHash(userId, b3SourceHash(row));
     // Both guards matter: the hash catches this file arriving twice, the
     // movement key catches the same trade already imported from Pluggy.
-    if (seenInFile.has(sourceHash) || ledgerKeys.has(b3MovementKey(row))) {
+    if (
+      seenInFile.has(sourceHash) ||
+      ledgerKeys.has(b3MovementKey(row, nameOf(row)))
+    ) {
       record(row.kind, "skipped");
       continue;
     }
@@ -257,7 +262,7 @@ export async function importB3Rows(input: {
 
     if (row.kind === "trade") {
       const assetTypeId =
-        assetTypeByTicker[row.ticker] ?? knownTickers.get(row.ticker);
+        assetTypeByTicker[row.ticker] ?? knownTickers.get(nameOf(row));
       if (assetTypeId === undefined) {
         record("trade", "skipped");
         continue;
@@ -265,7 +270,7 @@ export async function importB3Rows(input: {
       tradeValues.push({
         investmentAccountId,
         assetTypeId,
-        assetName: row.ticker,
+        assetName: nameOf(row),
         transactionType: row.side,
         quantity: row.quantity,
         pricePerUnit: row.price,
@@ -281,7 +286,7 @@ export async function importB3Rows(input: {
     } else {
       incomeValues.push({
         investmentAccountId,
-        assetName: row.ticker,
+        assetName: nameOf(row),
         type: row.type,
         amount: row.amount,
         paymentDate: row.date,

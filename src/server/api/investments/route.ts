@@ -217,6 +217,29 @@ export const investmentsRouter = createTRPCRouter({
       );
     }),
 
+  moveAsset: protectedProcedure
+    .input(
+      z.object({
+        assetName: z.string().max(200).min(1),
+        assetTypeId: z.number(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertOwnsAssetTypes(ctx.session.user.id, [input.assetTypeId]);
+      const moved = await investmentRepository.setAssetTypeByAssetName(
+        ctx.session.user.id,
+        input.assetName,
+        input.assetTypeId,
+      );
+      if (moved === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Ativo não encontrado",
+        });
+      }
+      return moved;
+    }),
+
   setFixedIncomeYield: protectedProcedure
     .input(
       z.object({
