@@ -36,6 +36,7 @@ import {
   type HoldingShortfall,
   type PluggyInvestmentRow,
 } from "./investment-import";
+import { identifyHoldings } from "./ledger-identity";
 import { toStatementRow } from "./map-transaction";
 
 /** How far back a sync reaches by default. Pluggy keeps ~12 months. */
@@ -407,11 +408,16 @@ export async function fetchConnectionInvestmentRows(input: {
   }
 
   const investments = await listInvestments(connection.itemId);
-  const batches = await Promise.all(
-    investments.map(async (investment) => ({
-      investment,
-      movements: await listInvestmentTransactions(investment.id),
-    })),
+  // Under the names the ledger already keeps them, before anything is keyed
+  // by name: the bank's code alone would bring a renamed holding in twice.
+  const { batches, alreadyHeld } = await identifyHoldings(
+    input.userId,
+    await Promise.all(
+      investments.map(async (investment) => ({
+        investment,
+        movements: await listInvestmentTransactions(investment.id),
+      })),
+    ),
   );
 
   // Names, fund CNPJs and reported quota values, for every holding the
@@ -419,7 +425,7 @@ export async function fetchConnectionInvestmentRows(input: {
   // turns out to be a duplicate and nothing is imported.
   const reportedAssets = await recordProviderAssetFacts(
     input.userId,
-    investments,
+    batches.map((batch) => batch.investment),
   );
 
   const rows: PluggyInvestmentRow[] = [];
@@ -444,15 +450,15 @@ export async function fetchConnectionInvestmentRows(input: {
       const position = normalizeOpeningPosition(batch.investment);
       // No acquisition date or amount paid means there is nothing honest to
       // import — the holding is reported, not invented.
-      if (position) positions.push(position);
-      else holdingsWithoutCostBasis++;
+      if (!position) holdingsWithoutCostBasis++;
+      else if (!alreadyHeld(position)) positions.push(position);
       continue;
     }
     const normalized = normalizeInvestmentMovements(
       batch.investment,
       batch.movements,
     );
-    rows.push(...normalized.rows);
+    rows.push(...normalized.rows.filter((row) => !alreadyHeld(row)));
     unsupported += normalized.unsupported.length;
     droppedWithoutQuantity += normalized.dropped.withoutQuantity;
     droppedUnusable += normalized.dropped.unusable;
@@ -467,6 +473,7 @@ export async function fetchConnectionInvestmentRows(input: {
         shortfall,
         normalized.rows,
       );
+      if (reconstructed && alreadyHeld(reconstructed)) continue;
       if (reconstructed) positions.push(reconstructed);
       shortfalls.push({ ...shortfall, offered: reconstructed !== null });
     }

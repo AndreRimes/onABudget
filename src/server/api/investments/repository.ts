@@ -4,7 +4,7 @@ import {
 } from "~/lib/market-data";
 import { measureStage, measureCalculation } from "~/server/metrics/performance";
 import { marketRefreshQueue } from "~/server/services/market-refresh";
-import { eq, desc, and, between, inArray } from "drizzle-orm";
+import { eq, desc, and, between, inArray, like, or } from "drizzle-orm";
 import { db } from "~/server/db";
 import {
   investmentTransactions,
@@ -21,6 +21,7 @@ import {
   type QuoteStatus,
 } from "~/server/services/market-cache";
 import { dividendRepository } from "../dividends/repository";
+import { ownerHash } from "../owner-hash";
 import { BENCHMARK_IDS } from "./benchmarks";
 import {
   bankCost,
@@ -477,6 +478,27 @@ export class InvestmentRepository {
       return { transactionsUpdated: 0, dividendsUpdated: 0 };
     }
 
+    // The reconciliation plugs are keyed by name: under the old one they would
+    // read as real trades. They are rebuilt by the next bank sync.
+    await db
+      .delete(investmentTransactions)
+      .where(
+        and(
+          inArray(investmentTransactions.investmentAccountId, accountIds),
+          eq(investmentTransactions.assetName, oldName),
+          or(
+            eq(
+              investmentTransactions.sourceHash,
+              ownerHash(userId, `reconcile:${oldName}`),
+            ),
+            like(
+              investmentTransactions.sourceHash,
+              ownerHash(userId, `reconcile:${oldName}@%`),
+            ),
+          ),
+        ),
+      );
+
     const updatedTransactions = await db
       .update(investmentTransactions)
       .set({ assetName: newName })
@@ -503,6 +525,33 @@ export class InvestmentRepository {
       transactionsUpdated: updatedTransactions.length,
       dividendsUpdated: updatedDividends.length,
     };
+  }
+
+  /**
+   * Move an asset to another type: every transaction the user holds under the
+   * name, so the importers (which reuse the type an asset already carries)
+   * file its next movements there too. The caller checks the type's owner.
+   */
+  async setAssetTypeByAssetName(
+    userId: string,
+    assetName: string,
+    assetTypeId: number,
+  ): Promise<number> {
+    const accountIds = await this.userAccountIds(userId);
+    if (accountIds.length === 0) return 0;
+
+    const updated = await db
+      .update(investmentTransactions)
+      .set({ assetTypeId })
+      .where(
+        and(
+          inArray(investmentTransactions.investmentAccountId, accountIds),
+          eq(investmentTransactions.assetName, assetName),
+        ),
+      )
+      .returning({ id: investmentTransactions.id });
+
+    return updated.length;
   }
 
   /**

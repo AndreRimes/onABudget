@@ -237,9 +237,8 @@ async function importNewExpenses(
 /**
  * Assets the owner holds by a trade of their own — not by a reconciliation
  * plug alone. The background sync keeps these in step with the bank and
- * never adds others: the same holding often already sits in the ledger under
- * another name (a B3 report's product name, a hand-typed one) that nothing
- * here can tell is the same asset as the bank's code. Bringing in a holding
+ * never adds others: `identifyHoldings` recognises most holdings kept under
+ * another name, but not one it would have to guess at. Bringing in a holding
  * the ledger has never seen is left to the sync dialog, where the owner sees
  * what is new.
  */
