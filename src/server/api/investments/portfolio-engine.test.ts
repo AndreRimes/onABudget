@@ -174,6 +174,72 @@ describe("computePortfolioSnapshot", () => {
       expect(result.summary.totalInvested).toBe(1000);
     });
 
+    describe("fixed income reported net of taxes", () => {
+      const cdb = trade({
+        assetName: "CDB",
+        quantity: 1,
+        totalAmount: 1000,
+        transactionDate: "2025-01-10",
+        isFixedIncome: true,
+        fixedIncomeYieldType: "PREFIXED",
+        fixedIncomeRate: 10,
+      });
+      const at = (range: TimeRange, value: number) =>
+        snapshot({
+          transactions: [cdb],
+          range,
+          bankMarks: new Map([["CDB", unitMark(value)]]),
+        });
+
+      it("does not book the accumulated tax as today's loss", () => {
+        // Grosses 100 in the year; the bank keeps 82.50 of it.
+        const result = at("1d", 1082.5);
+        const day = (1100 - 1100 / Math.pow(1.1, 1 / 365)) * 0.825;
+
+        expect(result.holdings[0]?.currentValue).toBeCloseTo(1082.5, 6);
+        expect(result.holdings[0]?.periodGain).toBeCloseTo(day, 6);
+        expect(result.summary.dailyChange).toBeCloseTo(day, 6);
+      });
+
+      it("still earns exactly what the bank says over the whole history", () => {
+        const result = at("max", 1082.5);
+
+        expect(result.summary.totalValue - 1000).toBeCloseTo(82.5, 6);
+        expect(result.series[0]?.value).toBeCloseTo(1000, 6);
+        const values = result.series.map((point) => point.value);
+        expect(values).toEqual([...values].sort((a, b) => a - b));
+      });
+
+      it.each([990, 1130])(
+        "keeps today's move small when tax cannot explain a value of %d",
+        (value) => {
+          const gain = at("1d", value).holdings[0]!.periodGain;
+          expect(gain).toBeGreaterThan(0);
+          expect(gain).toBeLessThan(0.5);
+        },
+      );
+
+      it("does the same for Tesouro", () => {
+        const result = snapshot({
+          transactions: [{ ...cdb, tesouroTitle: "Tesouro Selic 2029" }],
+          tesouroCandles: new Map([
+            [
+              "CDB",
+              candles([
+                ["2025-01-10", 1000],
+                ["2026-01-09", 1099],
+                ["2026-01-10", 1100],
+              ]),
+            ],
+          ]),
+          range: "1d",
+          bankMarks: new Map([["CDB", unitMark(1082.5)]]),
+        });
+
+        expect(result.holdings[0]?.periodGain).toBeCloseTo(0.825, 6);
+      });
+    });
+
     it("takes the bank's totals as they are when it reports no quantity", () => {
       const result = snapshot({
         transactions: [trade({ quantity: 1, totalAmount: 1000 })],

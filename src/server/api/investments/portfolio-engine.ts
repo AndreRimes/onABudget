@@ -108,7 +108,8 @@ interface AssetState {
   netDeposits: number;
   realizedGain: number;
   dividendsAccumulated: number;
-  marketValue: number; // fixed income: compounded daily; market: derived from price
+  accrued: number; // accrual fixed income: principal compounded daily
+  marketValue: number; // derived from `accrued` or from the price, every day
   lastPrice: number | null;
   candleIndex: number;
   isFixedIncome: boolean;
@@ -242,6 +243,7 @@ function newAssetState(tx: EngineTransaction): AssetState {
     netDeposits: 0,
     realizedGain: 0,
     dividendsAccumulated: 0,
+    accrued: 0,
     marketValue: 0,
     lastPrice: null,
     candleIndex: 0,
@@ -271,10 +273,10 @@ function assetTotalGain(state: AssetState): number {
 function accrueFixedIncome(state: AssetState, cdiRate: number): void {
   if (state.fixedIncomeYieldType === "CDI_PERCENTAGE") {
     const pct = (state.fixedIncomeRate ?? 100) / 100;
-    state.marketValue *= 1 + cdiRate * pct;
+    state.accrued *= 1 + cdiRate * pct;
   } else if (state.fixedIncomeYieldType === "PREFIXED") {
     const annual = (state.fixedIncomeRate ?? 0) / 100;
-    state.marketValue *= Math.pow(1 + annual, PREFIXED_DAILY_EXPONENT);
+    state.accrued *= Math.pow(1 + annual, PREFIXED_DAILY_EXPONENT);
   }
 }
 
@@ -284,7 +286,7 @@ function applyBuy(state: AssetState, tx: EngineTransaction): void {
   state.netDeposits += tx.totalAmount;
   // Accrual fixed income tracks principal directly; Tesouro derives its
   // value from PU × quantity in the price-marking step instead.
-  if (isAccrualFixedIncome(state)) state.marketValue += tx.totalAmount;
+  if (isAccrualFixedIncome(state)) state.accrued += tx.totalAmount;
 }
 
 function applySell(state: AssetState, tx: EngineTransaction): void {
@@ -296,12 +298,12 @@ function applySell(state: AssetState, tx: EngineTransaction): void {
   state.netDeposits -= tx.totalAmount;
   const accrual = isAccrualFixedIncome(state);
   if (accrual) {
-    state.marketValue = Math.max(0, state.marketValue - tx.totalAmount);
+    state.accrued = Math.max(0, state.accrued - tx.totalAmount);
   }
   if (state.quantity <= 1e-9) {
     state.quantity = 0;
     state.costBasis = 0;
-    if (accrual) state.marketValue = 0;
+    if (accrual) state.accrued = 0;
   }
 }
 
@@ -409,6 +411,7 @@ class PortfolioReplay {
     private readonly input: EngineInput,
     private readonly transactions: EngineTransaction[],
     private readonly dividends: EngineDividend[],
+    private readonly bankBasis: ReadonlyMap<string, BankBasis> = new Map(),
   ) {
     this.benchmarkIds = [...input.benchmarks.keys()];
     this.benchmarkValues = new Map(this.benchmarkIds.map((id) => [id, 0]));
@@ -545,6 +548,17 @@ class PortfolioReplay {
   }
 
   /**
+   * Fixed income is estimated gross while the bank reports it net of taxes:
+   * moved onto the bank's basis, so the two never meet as a one-day loss.
+   */
+  private toBankBasis(assetName: string, state: AssetState): void {
+    const basis = this.bankBasis.get(assetName);
+    if (!basis) return;
+    state.marketValue =
+      basis.cost * state.costBasis + basis.value * state.marketValue;
+  }
+
+  /**
    * The bank's figure is today's mark wherever no live market price beats it:
    * fixed income (whose compounded estimate yields to it), funds and Tesouro
    * (priced on a published series a day or more old), and any quote that is
@@ -565,8 +579,10 @@ class PortfolioReplay {
     // over every asset afterwards.
     let totalValue = 0;
     for (const [assetName, state] of this.assets) {
-      // Accrual fixed income keeps its compounded marketValue (step 1).
-      if (!isAccrualFixedIncome(state)) this.priceAsset(assetName, state, day);
+      // Accrual fixed income is worth what it compounded to (step 1).
+      if (isAccrualFixedIncome(state)) state.marketValue = state.accrued;
+      else this.priceAsset(assetName, state, day);
+      this.toBankBasis(assetName, state);
       if (day === this.input.today) this.applyBankMark(assetName, state);
       totalValue += state.marketValue;
     }
@@ -610,6 +626,57 @@ class PortfolioReplay {
       });
     }
   }
+}
+
+/** Weights that turn (cost, estimated value) into a value on the bank's basis. */
+interface BankBasis {
+  cost: number;
+  value: number;
+}
+
+/**
+ * How each fixed-income estimate relates to the bank's figure for it today.
+ *
+ * The bank's is net of IR and IOF, so it normally keeps a share of the gain and
+ * the whole cost; that share then applies to every past day. A difference tax
+ * cannot explain (a rate the ledger does not know, say) scales the value.
+ * Either way the gap is spread over the history instead of landing on today.
+ */
+function bankBasisFor(
+  input: EngineInput,
+  transactions: EngineTransaction[],
+): Map<string, BankBasis> {
+  const result = new Map<string, BankBasis>();
+  const marked = transactions.filter(
+    (tx) =>
+      (tx.isFixedIncome || tx.tesouroTitle) &&
+      tx.transactionDate <= input.today &&
+      input.bankMarks?.has(tx.assetName),
+  );
+  if (marked.length === 0) return result;
+
+  // The estimates alone: same replay, without the bank's figures.
+  const estimate = new PortfolioReplay(
+    { ...input, bankMarks: undefined, includeSeries: false },
+    marked,
+    [],
+  );
+  estimate.run();
+
+  for (const [assetName, state] of estimate.assets) {
+    if (state.quantity <= 0 || state.marketValue <= 0) continue;
+    const mark = input.bankMarks!.get(assetName)!;
+    const bankValue = scaled(mark, mark.value, state.quantity);
+    const gain = state.marketValue - state.costBasis;
+    const share = gain > 0 ? (bankValue - state.costBasis) / gain : -1;
+    result.set(
+      assetName,
+      share >= 0 && share <= 1
+        ? { cost: 1 - share, value: share }
+        : { cost: 0, value: bankValue / state.marketValue },
+    );
+  }
+  return result;
 }
 
 function buildHolding(
@@ -740,7 +807,12 @@ export function computePortfolioSnapshot(
     a.paymentDate.localeCompare(b.paymentDate),
   );
 
-  const replay = new PortfolioReplay(input, transactions, sortedDividends);
+  const replay = new PortfolioReplay(
+    input,
+    transactions,
+    sortedDividends,
+    bankBasisFor(input, transactions),
+  );
   replay.run();
 
   // ---- Final state → holdings + summary --------------------------------
