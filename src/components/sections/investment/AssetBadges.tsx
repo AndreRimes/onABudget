@@ -19,7 +19,7 @@ export function AssetTitle({ holding }: Readonly<{ holding: Holding }>) {
   if (!holding.label) return <>{holding.assetName}</>;
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate">{holding.label}</span>
+      <span>{holding.label}</span>
       <span className="text-muted-foreground font-mono text-[11px] font-normal">
         {holding.assetName}
       </span>

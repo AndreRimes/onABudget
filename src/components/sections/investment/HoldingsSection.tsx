@@ -1,8 +1,6 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
 import {
   Card,
   CardContent,
@@ -11,19 +9,17 @@ import {
   CardTitle,
 } from "~/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "~/components/ui/table";
-import {
   AssetTitle,
   FixedIncomeBadges,
   PriceStatusBadge,
   type Holding,
 } from "./AssetBadges";
+import {
+  InvestmentTable,
+  InvestmentTableControls,
+  type InvestmentColumn,
+  useInvestmentTable,
+} from "./InvestmentTable";
 import { assetDetailHref } from "./asset-href";
 import {
   formatCurrency,
@@ -33,55 +29,6 @@ import {
   gainTone,
 } from "./format";
 
-/** Compact stacked layout for narrow screens, where 9 columns cannot fit. */
-function HoldingCard({
-  holding,
-  totalValue,
-}: Readonly<{
-  holding: Holding;
-  totalValue: number;
-}>) {
-  return (
-    <Link
-      href={assetDetailHref(holding.assetName)}
-      className="hover:bg-accent/50 block border-2 p-3 transition-colors"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <span className="flex flex-wrap items-center gap-2 font-medium">
-            <AssetTitle holding={holding} />
-            <PriceStatusBadge holding={holding} />
-          </span>
-          <FixedIncomeBadges holding={holding} />
-          <p className="text-muted-foreground text-xs tabular-nums">
-            {holding.quantity.toLocaleString("pt-BR", {
-              maximumFractionDigits: 6,
-            })}{" "}
-            × {formatCurrency(holding.currentPrice)}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="font-semibold tabular-nums">
-            {formatCurrency(holding.currentValue)}
-          </p>
-          <p
-            className={`text-sm font-medium tabular-nums ${gainTone(
-              holding.periodGain,
-            )}`}
-          >
-            {formatSignedCurrency(holding.periodGain)}
-          </p>
-          <p className="text-muted-foreground text-xs tabular-nums">
-            {formatSignedPercent(holding.periodGainPercent)}
-            {totalValue > 0 &&
-              ` · ${formatPercent((holding.currentValue / totalValue) * 100)} da carteira`}
-          </p>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 export function HoldingsSection({
   holdings,
   totalValue,
@@ -89,39 +36,153 @@ export function HoldingsSection({
   holdings: Holding[];
   totalValue: number;
 }>) {
-  const groups = useMemo(() => {
-    const map = new Map<string, Holding[]>();
-    for (const holding of holdings) {
-      const list = map.get(holding.assetTypeName);
-      if (list) {
-        list.push(holding);
-      } else {
-        map.set(holding.assetTypeName, [holding]);
-      }
-    }
-    return [...map.entries()];
-  }, [holdings]);
+  const columns: InvestmentColumn<Holding>[] = [
+    {
+      id: "asset",
+      label: "Ativo",
+      width: "w-1/4",
+      value: (holding) => holding.label || holding.assetName,
+      render: (holding) => (
+        <Link
+          href={assetDetailHref(holding.assetName)}
+          className="flex flex-col items-start gap-1 font-medium hover:underline"
+        >
+          <AssetTitle holding={holding} />
+          <PriceStatusBadge holding={holding} />
+          <FixedIncomeBadges holding={holding} />
+        </Link>
+      ),
+    },
+    {
+      id: "quantity",
+      label: "Quantidade",
+      align: "right",
+      value: (holding) => holding.quantity,
+      format: (holding) =>
+        holding.quantity.toLocaleString("pt-BR", { maximumFractionDigits: 6 }),
+    },
+    {
+      id: "average",
+      label: "Preço médio",
+      align: "right",
+      value: (holding) => holding.averageCost,
+      format: (holding) => formatCurrency(holding.averageCost),
+    },
+    {
+      id: "price",
+      label: "Preço atual",
+      align: "right",
+      value: (holding) => holding.currentPrice,
+      format: (holding) => formatCurrency(holding.currentPrice),
+    },
+    {
+      id: "total",
+      label: "Valor total",
+      align: "right",
+      value: (holding) => holding.currentValue,
+      format: (holding) => formatCurrency(holding.currentValue),
+      render: (holding) => (
+        <strong>{formatCurrency(holding.currentValue)}</strong>
+      ),
+    },
+    {
+      id: "weight",
+      label: "% Carteira",
+      align: "right",
+      value: (holding) =>
+        totalValue > 0 ? (holding.currentValue / totalValue) * 100 : 0,
+      format: (holding) =>
+        totalValue > 0
+          ? formatPercent((holding.currentValue / totalValue) * 100)
+          : "—",
+    },
+    {
+      id: "dividends",
+      label: "Proventos",
+      align: "right",
+      value: (holding) => holding.dividendsTotal,
+      format: (holding) =>
+        holding.dividendsTotal > 0
+          ? formatCurrency(holding.dividendsTotal)
+          : "—",
+      render: (holding) =>
+        holding.dividendsTotal > 0 ? (
+          <>
+            {formatCurrency(holding.dividendsTotal)}
+            {holding.dividends12m > 0 && (
+              <span className="text-muted-foreground block text-xs">
+                12m: {formatCurrency(holding.dividends12m)}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      id: "gain",
+      label: "Ganho no período",
+      align: "right",
+      value: (holding) => holding.periodGain,
+      format: (holding) => formatSignedCurrency(holding.periodGain),
+      render: (holding) => (
+        <>
+          <span className={`font-medium ${gainTone(holding.periodGain)}`}>
+            {formatSignedCurrency(holding.periodGain)}
+          </span>
+          <span
+            className={`block text-xs ${gainTone(holding.periodGainPercent)}`}
+          >
+            {formatSignedPercent(holding.periodGainPercent)}
+          </span>
+        </>
+      ),
+    },
+  ];
 
-  if (groups.length === 0) {
+  const view = useInvestmentTable(
+    columns,
+    (holding) => `${holding.assetName} ${holding.assetTypeName}`,
+  );
+  const groups = new Map<string, Holding[]>();
+  for (const holding of holdings) {
+    const group = groups.get(holding.assetTypeName);
+    if (group) group.push(holding);
+    else groups.set(holding.assetTypeName, [holding]);
+  }
+
+  if (groups.size === 0) {
     return (
       <Card>
-        <CardContent className="py-8">
-          <p className="text-muted-foreground text-center">
-            Nenhum investimento encontrado
-          </p>
+        <CardContent className="text-muted-foreground py-8 text-center">
+          Nenhum investimento encontrado
         </CardContent>
       </Card>
     );
   }
 
+  const visibleGroups = [...groups].flatMap(([assetTypeName, group]) => {
+    const rows = view.visibleRows(group);
+    return rows.length ? [{ assetTypeName, group, rows }] : [];
+  });
+
   return (
     <>
-      {groups.map(([assetTypeName, groupHoldings]) => {
-        const groupTotal = groupHoldings.reduce(
+      <InvestmentTableControls
+        view={view}
+        searchLabel="Buscar ativo, código ou tipo"
+      />
+      {visibleGroups.length === 0 && (
+        <p role="status" className="text-muted-foreground py-6 text-center">
+          Nenhum ativo corresponde à busca.
+        </p>
+      )}
+      {visibleGroups.map(({ assetTypeName, group, rows }) => {
+        const groupTotal = group.reduce(
           (sum, holding) => sum + holding.currentValue,
           0,
         );
-        const groupGain = groupHoldings.reduce(
+        const groupGain = group.reduce(
           (sum, holding) => sum + holding.periodGain,
           0,
         );
@@ -129,12 +190,13 @@ export function HoldingsSection({
         return (
           <Card key={assetTypeName}>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <CardTitle>{assetTypeName}</CardTitle>
                   <CardDescription>
-                    {groupHoldings.length} ativo
-                    {groupHoldings.length !== 1 ? "s" : ""}
+                    {rows.length < group.length
+                      ? `${rows.length} de ${group.length} ativos`
+                      : `${group.length} ${group.length === 1 ? "ativo" : "ativos"}`}
                   </CardDescription>
                 </div>
                 <div className="text-right">
@@ -149,126 +211,13 @@ export function HoldingsSection({
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
-              {/* Below lg the 9-column table is unreadable, so the same data
-                  is stacked into per-asset cards instead of forcing a
-                  horizontal scroll. */}
-              <div className="space-y-2 lg:hidden">
-                {groupHoldings.map((holding) => (
-                  <HoldingCard
-                    key={holding.assetName}
-                    holding={holding}
-                    totalValue={totalValue}
-                  />
-                ))}
-              </div>
-
-              <div className="hidden overflow-x-auto lg:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ativo</TableHead>
-                      <TableHead className="text-right">Quantidade</TableHead>
-                      <TableHead className="text-right">Preço Médio</TableHead>
-                      <TableHead className="text-right">Preço Atual</TableHead>
-                      <TableHead className="text-right">Valor Total</TableHead>
-                      <TableHead className="text-right">% Carteira</TableHead>
-                      <TableHead className="text-right">Proventos</TableHead>
-                      <TableHead className="text-right">
-                        Ganho no Período
-                      </TableHead>
-                      <TableHead className="w-8" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {groupHoldings.map((holding) => (
-                      <TableRow key={holding.assetName}>
-                        <TableCell className="font-medium">
-                          {/* The link lives on the name cell so the whole row
-                              stays keyboard-reachable through a single stop. */}
-                          <Link
-                            href={assetDetailHref(holding.assetName)}
-                            className="flex flex-col gap-1 hover:underline"
-                          >
-                            <span className="flex items-center gap-2">
-                              <AssetTitle holding={holding} />
-                              <PriceStatusBadge holding={holding} />
-                            </span>
-                            <FixedIncomeBadges holding={holding} />
-                          </Link>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {holding.quantity.toLocaleString("pt-BR", {
-                            minimumFractionDigits: 0,
-                            maximumFractionDigits: 6,
-                          })}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(holding.averageCost)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCurrency(holding.currentPrice)}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatCurrency(holding.currentValue)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {totalValue > 0
-                            ? formatPercent(
-                                (holding.currentValue / totalValue) * 100,
-                              )
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {holding.dividendsTotal > 0 ? (
-                            <div className="flex flex-col items-end">
-                              <span>
-                                {formatCurrency(holding.dividendsTotal)}
-                              </span>
-                              {holding.dividends12m > 0 && (
-                                <span className="text-muted-foreground text-xs">
-                                  12m: {formatCurrency(holding.dividends12m)}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex flex-col items-end">
-                            <span
-                              className={`font-medium tabular-nums ${gainTone(
-                                holding.periodGain,
-                              )}`}
-                            >
-                              {formatSignedCurrency(holding.periodGain)}
-                            </span>
-                            <span
-                              className={`text-xs tabular-nums ${gainTone(
-                                holding.periodGainPercent,
-                              )}`}
-                            >
-                              {formatSignedPercent(holding.periodGainPercent)}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {/* Per-row edit/rename/delete now live on the detail
-                              page, which has room to explain what they do. */}
-                          <Link
-                            href={assetDetailHref(holding.assetName)}
-                            aria-label={`Ver detalhes de ${holding.assetName}`}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+            <CardContent className="px-3 sm:px-6">
+              <InvestmentTable
+                rows={rows}
+                rowKey={(holding) => holding.assetName}
+                view={view}
+                label={assetTypeName}
+              />
             </CardContent>
           </Card>
         );
